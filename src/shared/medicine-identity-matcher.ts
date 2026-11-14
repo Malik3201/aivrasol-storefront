@@ -110,6 +110,10 @@ export function getCoreMedicineName(rawName: string): string {
     /\b(film[-\s]?coated|fc|fct|sugar[-\s]?free|effervescent|chewable|sublingual|extended[-\s]?release|sustained[-\s]?release|controlled[-\s]?release|modified[-\s]?release|er|sr|cr|xr|mr|dr|retard|plain|advance|forte|fort)\b/gi,
     " "
   );
+  // Remove pack count tokens like 12s, 14s, 100s, 12's, 100's, 200s
+  cleaned = cleaned.replace(/\b\d+\s*['’`]?s\b/gi, " ");
+  // Remove common inventory status/version labels
+  cleaned = cleaned.replace(/\b(new|old|imported|local|reg|regular)\b/gi, " ");
   // Remove common pack packaging words
   cleaned = cleaned.replace(/\b(pack|box|bottle|strip|blister)\b/gi, " ");
   return cleanText(cleaned);
