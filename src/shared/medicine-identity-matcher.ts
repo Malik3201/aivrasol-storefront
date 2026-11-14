@@ -218,7 +218,17 @@ export function resolveProductStrength(product: ProductInput): string | null {
     if (str) return str;
   }
 
-  // 4. From generic composition (e.g. "Amoxicillin 500mg")
+  // 4. From packaging label or unit label (e.g. "Box of 14 (625mg)", "1GM Vial")
+  if (product.packing_label) {
+    const str = extractAndNormalizeStrength(product.packing_label);
+    if (str) return str;
+  }
+  if (product.unit_label) {
+    const str = extractAndNormalizeStrength(product.unit_label);
+    if (str) return str;
+  }
+
+  // 5. From generic composition (e.g. "Amoxicillin 500mg")
   if (product.generic_name) {
     const str = extractAndNormalizeStrength(product.generic_name);
     if (str) return str;
@@ -369,11 +379,13 @@ export function matchMedicineIdentity(
         extractDosageForm(masterMatch.canonical_name);
 
       const strengthConflict = Boolean(
-        prodStrength && canStrength && prodStrength !== canStrength
+        (canStrength && (!prodStrength || prodStrength !== canStrength)) ||
+        (prodStrength && (!canStrength || prodStrength !== canStrength))
       );
       const formConflict = Boolean(prodForm && canForm && prodForm !== canForm);
+      const genericConflict = !areGenericsCompatible(product.generic_name, masterMatch.generic_name);
 
-      if (!strengthConflict && !formConflict) {
+      if (!strengthConflict && !formConflict && !genericConflict) {
         return {
           matched: true,
           matchType: "master_catalog_id",
@@ -406,12 +418,14 @@ export function matchMedicineIdentity(
     const canVariant = extractVariantModifier(singleMatch.canonical_name);
 
     const strengthConflict = Boolean(
-      prodStrength && canStrength && prodStrength !== canStrength
+      (canStrength && (!prodStrength || prodStrength !== canStrength)) ||
+      (prodStrength && (!canStrength || prodStrength !== canStrength))
     );
     const formConflict = Boolean(prodForm && canForm && prodForm !== canForm);
     const variantConflict = Boolean(prodVariant && canVariant && prodVariant !== canVariant);
+    const genericConflict = !areGenericsCompatible(product.generic_name, singleMatch.generic_name);
 
-    if (!strengthConflict && !formConflict && !variantConflict) {
+    if (!strengthConflict && !formConflict && !variantConflict && !genericConflict) {
       return {
         matched: true,
         matchType: "exact_master_name",
@@ -438,11 +452,13 @@ export function matchMedicineIdentity(
         extractDosageForm(barcodeMatch.canonical_name);
 
       const strengthConflict = Boolean(
-        prodStrength && canStrength && prodStrength !== canStrength
+        (canStrength && (!prodStrength || prodStrength !== canStrength)) ||
+        (prodStrength && (!canStrength || prodStrength !== canStrength))
       );
       const formConflict = Boolean(prodForm && canForm && prodForm !== canForm);
+      const genericConflict = !areGenericsCompatible(product.generic_name, barcodeMatch.generic_name);
 
-      if (!strengthConflict && !formConflict) {
+      if (!strengthConflict && !formConflict && !genericConflict) {
         return {
           matched: true,
           matchType: "exact_barcode",
@@ -576,6 +592,9 @@ export function matchMedicineIdentity(
 
       const aliasMatch = aliases.some((al) => {
         if (!al || typeof al !== "string") return false;
+        const alStrength = extractAndNormalizeStrength(al);
+        if (alStrength && canStrength && alStrength !== canStrength) return false;
+        if (alStrength && prodStrength && alStrength !== prodStrength) return false;
         const cleanAl = cleanText(al);
         if (cleanAl === cleanProdName) return true;
         const normAl = normalizeMedicineText(al);

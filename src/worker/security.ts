@@ -241,6 +241,7 @@ export function buildResponseHeaders(options: {
     "Content-Type": "application/json; charset=utf-8",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
+    "Cross-Origin-Resource-Policy": "cross-origin",
     "Referrer-Policy": "strict-origin-when-cross-origin",
     "Vary": "Host, Origin, X-Storefront-Host",
     "Access-Control-Allow-Origin": origin,

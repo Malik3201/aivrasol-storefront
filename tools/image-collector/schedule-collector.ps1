@@ -1,4 +1,4 @@
-﻿# ============================================================================
+# ============================================================================
 # AivraSol Medicine Image Collector — Windows Task Scheduler Automation
 # Automatically runs the local medicine image collector at configured intervals
 # ============================================================================
