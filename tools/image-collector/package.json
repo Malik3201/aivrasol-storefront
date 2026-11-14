@@ -4,9 +4,9 @@
   "description": "AivraSol Pharmacy POS & Storefront SaaS — Automatic Free Medicine Image Collector",
   "type": "module",
   "scripts": {
-    "start": "node ../../node_modules/tsx/dist/cli.mjs collector.ts",
-    "import": "node ../../node_modules/tsx/dist/cli.mjs collector.ts --import",
-    "import:pilot": "node ../../node_modules/tsx/dist/cli.mjs collector.ts --import --max 50"
+    "start": "node ../../../aivrasol-pos/node_modules/tsx/dist/cli.mjs collector.ts",
+    "import": "node ../../../aivrasol-pos/node_modules/tsx/dist/cli.mjs collector.ts --import",
+    "import:pilot": "node ../../../aivrasol-pos/node_modules/tsx/dist/cli.mjs collector.ts --import --max 50"
   }
 }
 
