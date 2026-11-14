@@ -1,0 +1,1918 @@
+/**
+ * Storefront Synchronization & POS Order Inbox Routes (`/api/v1/sync/*`)
+ *
+ * Implements:
+ * - POST /api/v1/sync/auth           : Authenticate sync source & issue scoped sync token
+ * - POST /api/v1/sync/catalog-delta  : Accept versioned product delta with idempotency, branch stock & boundary stripping
+ * - POST /api/v1/sync/catalog-snapshot: Accept approved catalog snapshot
+ * - GET  /api/v1/sync/status         : Read sync status & failure diagnostics
+ * - GET  /api/v1/sync/cursor         : Read last successful sync cursor
+ * - GET  /api/v1/sync/orders/inbox   : Fetch online orders for safe POS Order Inbox review
+ * - POST /api/v1/sync/orders/ack     : Idempotent POS order handoff & fulfillment acknowledgment
+ */
+
+import {
+  STOREFRONT_SYNC_CONTRACT_VERSION,
+  type PosOrderFulfillmentAckRequest,
+  type PosOrderFulfillmentAckResponse,
+  type PosOrderInboxItem,
+  type PosOrderInboxLinePayload,
+  type StorefrontCatalogDeltaItem,
+  type StorefrontCatalogDeltaRequest,
+  type StorefrontCatalogDeltaResponse,
+} from "../../shared/pos-sync-contract";
+import type {
+  PosHandoffStatus,
+  StorefrontOrderItemRecord,
+  StorefrontOrderRecord,
+  StorefrontOrderStatus,
+  StorefrontPaymentStatus,
+  StorefrontRecord,
+  StorefrontSettingsRecord,
+} from "../../shared/types";
+import {
+  matchMedicineIdentity,
+  type ProductInput,
+  type CanonicalMedicineRecord,
+} from "../../shared/medicine-identity-matcher";
+
+function resolveEffectiveOrderStatusSync(ord: Record<string, any>): StorefrontOrderStatus {
+  const outcome = ord.fulfillment_outcome ? String(ord.fulfillment_outcome).trim() : "";
+  if (outcome === "delivered" || outcome === "collected" || outcome === "returned") {
+    return outcome as StorefrontOrderStatus;
+  }
+  if (ord.status === "completed") {
+    return ord.fulfillment_type === "pickup" ? "collected" : "delivered";
+  }
+  return (ord.status || "pending_confirmation") as StorefrontOrderStatus;
+}
+
+function mapStatusToDbFields(
+  requestedStatus: string,
+  fulfillmentType: "delivery" | "pickup"
+): { dbStatus: string; fulfillmentOutcome: string | null } {
+  if (requestedStatus === "delivered") {
+    return { dbStatus: "completed", fulfillmentOutcome: "delivered" };
+  }
+  if (requestedStatus === "collected") {
+    return { dbStatus: "completed", fulfillmentOutcome: "collected" };
+  }
+  if (requestedStatus === "returned") {
+    return { dbStatus: "completed", fulfillmentOutcome: "returned" };
+  }
+  if (requestedStatus === "completed") {
+    return {
+      dbStatus: "completed",
+      fulfillmentOutcome: fulfillmentType === "pickup" ? "collected" : "delivered",
+    };
+  }
+  return { dbStatus: requestedStatus, fulfillmentOutcome: null };
+}
+import { detectForbiddenPrivateKeys, toUrlSlug } from "../../shared/validation";
+import type { D1Database, StorefrontWorkerEnv } from "../env";
+import {
+  buildResponseHeaders,
+  sha256Hex,
+  signSyncToken,
+  timingSafeEqualStr,
+  verifyManagementAuth,
+  verifySyncToken,
+} from "../security";
+import { recordStorefrontUsage, writeStorefrontAuditLog } from "../usage-tracker";
+
+export async function recalculateStorefrontCatalogCounts(
+  db: D1Database,
+  storefrontId: string,
+  pharmacyId: string,
+  options?: { skipCategories?: boolean }
+): Promise<number> {
+  const countRow = await db
+    .prepare(
+      `SELECT COUNT(*) AS cnt
+       FROM storefront_products
+       WHERE storefront_id = ? AND pharmacy_id = ?
+         AND publish_status = 'published' AND is_controlled_substance = 0`
+    )
+    .bind(storefrontId, pharmacyId)
+    .first<{ cnt: number }>();
+
+  const publishedCount = Number(countRow?.cnt || 0);
+  const nowIso = new Date().toISOString();
+
+  await db
+    .prepare(
+      `UPDATE storefronts
+       SET published_products_count = ?, updated_at = ?
+       WHERE id = ? AND pharmacy_id = ?`
+    )
+    .bind(publishedCount, nowIso, storefrontId, pharmacyId)
+    .run();
+
+  // If this is an intermediate batch in a chunked multi-batch sync, skip category recounts
+  // to conserve D1 operations and CPU time. Final batch will perform the full recount.
+  if (options?.skipCategories) {
+    return publishedCount;
+  }
+
+  // Refresh category counts
+  const catCounts = await db
+    .prepare(
+      `SELECT category_name, COUNT(*) AS cnt
+       FROM storefront_products
+       WHERE storefront_id = ? AND pharmacy_id = ?
+         AND publish_status = 'published' AND is_controlled_substance = 0
+       GROUP BY category_name`
+    )
+    .bind(storefrontId, pharmacyId)
+    .all<{ category_name: string; cnt: number }>();
+
+  await db
+    .prepare(
+      `UPDATE storefront_categories
+       SET published_product_count = 0, updated_at = ?
+       WHERE storefront_id = ? AND pharmacy_id = ?`
+    )
+    .bind(nowIso, storefrontId, pharmacyId)
+    .run();
+
+  for (const row of catCounts.results || []) {
+    const catName = String(row.category_name || "General Medicines").trim();
+    const catSlug = toUrlSlug(catName);
+    const existingCat = await db
+      .prepare(
+        `SELECT id FROM storefront_categories
+         WHERE storefront_id = ? AND pharmacy_id = ? AND (LOWER(name) = LOWER(?) OR slug = ?)
+         LIMIT 1`
+      )
+      .bind(storefrontId, pharmacyId, catName, catSlug)
+      .first<{ id: string }>();
+
+    if (existingCat) {
+      await db
+        .prepare(
+          `UPDATE storefront_categories
+           SET published_product_count = ?, updated_at = ?
+           WHERE id = ? AND storefront_id = ?`
+        )
+        .bind(Number(row.cnt || 0), nowIso, existingCat.id, storefrontId)
+        .run();
+    } else {
+      await db
+        .prepare(
+          `INSERT INTO storefront_categories (
+             id, storefront_id, pharmacy_id, slug, name, description,
+             sort_order, is_visible, published_product_count, created_at, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`
+        )
+        .bind(
+          `sfc_${crypto.randomUUID()}`,
+          storefrontId,
+          pharmacyId,
+          catSlug,
+          catName,
+          `${catName} available at our pharmacy`,
+          10,
+          Number(row.cnt || 0),
+          nowIso,
+          nowIso
+        )
+        .run();
+    }
+  }
+
+  return publishedCount;
+}
+
+export async function handleSyncRoutes(
+  req: Request,
+  env: StorefrontWorkerEnv,
+  pathname: string
+): Promise<Response> {
+  const url = new URL(req.url);
+  const headers = buildResponseHeaders({ req, isPrivate: true });
+
+  // 1. POST /api/v1/sync/auth — Authenticate sync source & issue scoped token
+  if (pathname === "/api/v1/sync/auth" && req.method === "POST") {
+    let body: any;
+    try {
+      body = await req.json();
+    } catch {
+      return new Response(JSON.stringify({ ok: false, error: "invalid_json" }), {
+        status: 400,
+        headers,
+      });
+    }
+
+    const syncSecretHeader = req.headers.get("x-storefront-sync-secret") || body?.sync_secret || "";
+    const expectedSecret = env.STOREFRONT_SYNC_SECRET || env.STOREFRONT_ADMIN_SECRET;
+
+    let authorized = false;
+    if (expectedSecret && syncSecretHeader && timingSafeEqualStr(String(syncSecretHeader), expectedSecret)) {
+      authorized = true;
+    } else {
+      const mgmtAuth = await verifyManagementAuth(req, env);
+      if ("actor" in mgmtAuth) {
+        if (
+          mgmtAuth.actor.scopedPharmacyId &&
+          mgmtAuth.actor.scopedPharmacyId !== body?.pharmacy_id
+        ) {
+          return new Response(
+            JSON.stringify({ ok: false, error: "cross_tenant_sync_forbidden" }),
+            { status: 403, headers }
+          );
+        }
+        authorized = true;
+      }
+    }
+
+    if (!authorized) {
+      return new Response(
+        JSON.stringify({ ok: false, error: "unauthorized_sync_source" }),
+        { status: 401, headers }
+      );
+    }
+
+    const pharmacyId = String(body?.pharmacy_id || "").trim();
+    const storefrontId = String(body?.storefront_id || "").trim();
+    const branchId = String(body?.branch_id || "main").trim();
+
+    if (!pharmacyId && !storefrontId) {
+      return new Response(
+        JSON.stringify({ ok: false, error: "missing_tenant_identity" }),
+        { status: 400, headers }
+      );
+    }
+
+    const sf = storefrontId
+      ? await env.DB.prepare("SELECT * FROM storefronts WHERE id = ? AND pharmacy_id = ? LIMIT 1")
+          .bind(storefrontId, pharmacyId)
+          .first<StorefrontRecord>()
+      : await env.DB.prepare("SELECT * FROM storefronts WHERE pharmacy_id = ? LIMIT 1")
+          .bind(pharmacyId)
+          .first<StorefrontRecord>();
+
+    if (!sf) {
+      return new Response(
+        JSON.stringify({ ok: false, error: "storefront_not_found" }),
+        { status: 404, headers }
+      );
+    }
+
+    if (
+      sf.status !== "active" ||
+      Number(sf.website_enabled ?? 1) !== 1 ||
+      sf.entitlement_status === "suspended" ||
+      sf.entitlement_status === "expired" ||
+      sf.entitlement_status === "none"
+    ) {
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          error: "storefront_not_active",
+          message: "Online storefront is not active or has been disabled by Super Admin.",
+        }),
+        { status: 403, headers }
+      );
+    }
+
+    const cursorRow = await env.DB.prepare(
+      `SELECT last_cursor, last_revision, last_sync_at
+       FROM storefront_sync_cursors
+       WHERE storefront_id = ? AND pharmacy_id = ? AND branch_id = ? AND stream_name = 'catalog'
+       LIMIT 1`
+    )
+      .bind(sf.id, sf.pharmacy_id, branchId)
+      .first<{ last_cursor: string; last_revision: number; last_sync_at: string }>();
+
+    const tokenSecret = env.STOREFRONT_SYNC_SECRET || env.STOREFRONT_ADMIN_SECRET;
+    const syncToken = await signSyncToken(
+      {
+        storefrontId: sf.id,
+        pharmacyId: sf.pharmacy_id,
+        branchId,
+        licenseId: sf.license_id || undefined,
+      },
+      tokenSecret,
+      3600
+    );
+
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        sync_token: syncToken,
+        expires_in_seconds: 3600,
+        storefront_id: sf.id,
+        pharmacy_id: sf.pharmacy_id,
+        branch_id: branchId,
+        last_cursor: cursorRow?.last_cursor || null,
+        last_revision: Number(cursorRow?.last_revision || 0),
+        last_sync_at: cursorRow?.last_sync_at || null,
+      }),
+      { status: 200, headers }
+    );
+  }
+
+  // Verify sync token (or management auth) for all remaining `/api/v1/sync/*` endpoints
+  let actor: { storefrontId: string; pharmacyId: string; branchId: string };
+  const syncAuth = await verifySyncToken(req, env);
+  const isPosSyncToken = "actor" in syncAuth;
+  if (isPosSyncToken) {
+    actor = syncAuth.actor;
+  } else {
+    const mgmtAuth = await verifyManagementAuth(req, env);
+    if ("error" in mgmtAuth) {
+      return new Response(
+        JSON.stringify({ ok: false, error: "unauthorized_sync", message: syncAuth.error }),
+        { status: syncAuth.status, headers }
+      );
+    }
+    const qPharm = url.searchParams.get("pharmacy_id") || "";
+    const qSf = url.searchParams.get("storefront_id") || "";
+    const targetPharm = mgmtAuth.actor.scopedPharmacyId || qPharm;
+    const sfRow = qSf
+      ? await env.DB.prepare("SELECT id, pharmacy_id FROM storefronts WHERE id = ? LIMIT 1")
+          .bind(qSf)
+          .first<{ id: string; pharmacy_id: string }>()
+      : await env.DB.prepare("SELECT id, pharmacy_id FROM storefronts WHERE pharmacy_id = ? LIMIT 1")
+          .bind(targetPharm)
+          .first<{ id: string; pharmacy_id: string }>();
+
+    if (
+      !sfRow ||
+      (mgmtAuth.actor.scopedPharmacyId && sfRow.pharmacy_id !== mgmtAuth.actor.scopedPharmacyId)
+    ) {
+      return new Response(
+        JSON.stringify({ ok: false, error: "forbidden_or_missing_storefront" }),
+        { status: 403, headers }
+      );
+    }
+    actor = {
+      storefrontId: sfRow.id,
+      pharmacyId: sfRow.pharmacy_id,
+      branchId: url.searchParams.get("branch_id") || "main",
+    };
+  }
+
+  // Enforce live Super Admin active status on every POS `/api/v1/sync/*` call (blocks cached tokens immediately when disabled/suspended)
+  const activeSfRow = await env.DB.prepare(
+    "SELECT status, website_enabled, entitlement_status FROM storefronts WHERE id = ? AND pharmacy_id = ? LIMIT 1"
+  )
+    .bind(actor.storefrontId, actor.pharmacyId)
+    .first<{ status: string; website_enabled: number; entitlement_status?: string }>();
+
+  const isSuspendedOrMissing =
+    !activeSfRow ||
+    activeSfRow.status === "suspended" ||
+    activeSfRow.entitlement_status === "suspended" ||
+    activeSfRow.entitlement_status === "expired" ||
+    activeSfRow.entitlement_status === "none";
+
+  const isOrderEndpoint = pathname.startsWith("/api/v1/sync/orders/");
+  const isPosBlockedInactive =
+    isPosSyncToken &&
+    (activeSfRow?.status === "disabled" ||
+      (isOrderEndpoint &&
+        (activeSfRow?.status !== "active" || Number(activeSfRow?.website_enabled ?? 1) !== 1)));
+
+  if (isSuspendedOrMissing || isPosBlockedInactive) {
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        error: "storefront_not_active",
+        message: "Online storefront is disabled or suspended by Super Admin.",
+      }),
+      { status: 403, headers }
+    );
+  }
+
+  // 2. GET /api/v1/sync/cursor
+  if (pathname === "/api/v1/sync/cursor" && req.method === "GET") {
+    const branchId = (url.searchParams.get("branch_id") || actor.branchId || "main").trim();
+    const streamName = (url.searchParams.get("stream") || "catalog").trim();
+
+    const row = await env.DB.prepare(
+      `SELECT last_cursor, last_revision, last_event_id, last_sync_at
+       FROM storefront_sync_cursors
+       WHERE storefront_id = ? AND pharmacy_id = ? AND branch_id = ? AND stream_name = ?
+       LIMIT 1`
+    )
+      .bind(actor.storefrontId, actor.pharmacyId, branchId, streamName)
+      .first<Record<string, unknown>>();
+
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        storefront_id: actor.storefrontId,
+        pharmacy_id: actor.pharmacyId,
+        branch_id: branchId,
+        stream_name: streamName,
+        last_cursor: row?.last_cursor ?? null,
+        last_revision: Number(row?.last_revision ?? 0),
+        last_event_id: row?.last_event_id ?? null,
+        last_sync_at: row?.last_sync_at ?? null,
+      }),
+      { status: 200, headers }
+    );
+  }
+
+  // 3. GET /api/v1/sync/status
+  if (pathname === "/api/v1/sync/status" && req.method === "GET") {
+    const [sf, cursorsRes, eventsRes, failuresRes] = await Promise.all([
+      env.DB.prepare(
+        "SELECT id, pharmacy_id, status, published_products_count, last_sync_at FROM storefronts WHERE id = ? AND pharmacy_id = ? LIMIT 1"
+      )
+        .bind(actor.storefrontId, actor.pharmacyId)
+        .first<StorefrontRecord>(),
+      env.DB.prepare(
+        "SELECT branch_id, stream_name, last_cursor, last_revision, last_sync_at FROM storefront_sync_cursors WHERE storefront_id = ? AND pharmacy_id = ?"
+      )
+        .bind(actor.storefrontId, actor.pharmacyId)
+        .all(),
+      env.DB.prepare(
+        "SELECT id, idempotency_key, event_type, source_cursor, next_cursor, items_received, items_applied, items_rejected, status, created_at FROM storefront_sync_events WHERE storefront_id = ? AND pharmacy_id = ? ORDER BY created_at DESC LIMIT 15"
+      )
+        .bind(actor.storefrontId, actor.pharmacyId)
+        .all(),
+      env.DB.prepare(
+        "SELECT id, sync_event_id, pos_product_id, error_code, error_message, created_at FROM storefront_sync_failures WHERE storefront_id = ? AND pharmacy_id = ? ORDER BY created_at DESC LIMIT 15"
+      )
+        .bind(actor.storefrontId, actor.pharmacyId)
+        .all(),
+    ]);
+
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        storefront_id: actor.storefrontId,
+        pharmacy_id: actor.pharmacyId,
+        published_products_count: Number(sf?.published_products_count || 0),
+        last_sync_at: sf?.last_sync_at || null,
+        cursors: cursorsRes.results || [],
+        recent_events: eventsRes.results || [],
+        recent_failures: failuresRes.results || [],
+      }),
+      { status: 200, headers }
+    );
+  }
+
+  // 4. POST /api/v1/sync/catalog-delta & POST /api/v1/sync/catalog-snapshot
+  if (
+    (pathname === "/api/v1/sync/catalog-delta" ||
+      pathname === "/api/v1/sync/catalog-snapshot") &&
+    req.method === "POST"
+  ) {
+    let rawText = "";
+    let body: StorefrontCatalogDeltaRequest;
+    try {
+      rawText = await req.text();
+      body = JSON.parse(rawText);
+    } catch {
+      return new Response(JSON.stringify({ ok: false, error: "invalid_json" }), {
+        status: 400,
+        headers,
+      });
+    }
+
+    if (body.contract_version !== STOREFRONT_SYNC_CONTRACT_VERSION) {
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          error: "unsupported_contract_version",
+          message: `Expected contract_version '${STOREFRONT_SYNC_CONTRACT_VERSION}'.`,
+        }),
+        { status: 400, headers }
+      );
+    }
+
+    try {
+      // Strict tenant isolation check: body tenant_identity MUST match authenticated token claims
+    if (
+      !body.tenant_identity ||
+      body.tenant_identity.storefront_id !== actor.storefrontId ||
+      body.tenant_identity.pharmacy_id !== actor.pharmacyId
+    ) {
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          error: "tenant_mismatch",
+          message: "Payload tenant_identity does not match authenticated sync token.",
+        }),
+        { status: 403, headers }
+      );
+    }
+
+    const idempotencyKey = String(body.idempotency_key || "").trim();
+    const nextCursor = String(body.next_cursor || "").trim();
+    const branchId = String(body.branch_identity?.branch_id || actor.branchId || "main").trim();
+
+    if (!idempotencyKey || !nextCursor || !Array.isArray(body.items)) {
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          error: "missing_required_fields",
+          message: "idempotency_key, next_cursor, and items array are required.",
+        }),
+        { status: 400, headers }
+      );
+    }
+
+    if (body.items.length > 250) {
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          error: "batch_too_large",
+          message: "Maximum 250 product delta items per request to respect D1 Free Tier limits.",
+        }),
+        { status: 400, headers }
+      );
+    }
+
+    const batchIndex = typeof body.batch_index === "number" ? body.batch_index : undefined;
+    const totalBatches = typeof body.total_batches === "number" ? body.total_batches : undefined;
+    const isIntermediateBatch =
+      typeof batchIndex === "number" &&
+      typeof totalBatches === "number" &&
+      totalBatches > 1 &&
+      batchIndex + 1 < totalBatches;
+
+    const requestHash = await sha256Hex(rawText);
+
+    // Check idempotency table (`storefront_import_idempotency`)
+    const existingIdemp = await env.DB.prepare(
+      `SELECT request_hash, response_json
+       FROM storefront_import_idempotency
+       WHERE storefront_id = ? AND idempotency_key = ?
+       LIMIT 1`
+    )
+      .bind(actor.storefrontId, idempotencyKey)
+      .first<{ request_hash: string; response_json: string }>();
+
+    if (existingIdemp) {
+      if (existingIdemp.request_hash !== requestHash) {
+        return new Response(
+          JSON.stringify({
+            ok: false,
+            error: "idempotency_key_conflict",
+            message: "Idempotency key was already used with a different payload.",
+          }),
+          { status: 409, headers }
+        );
+      }
+      const cachedResp = JSON.parse(existingIdemp.response_json) as StorefrontCatalogDeltaResponse;
+      return new Response(
+        JSON.stringify({ ...cachedResp, duplicate: true }),
+        { status: 200, headers }
+      );
+    }
+
+    const sf = await env.DB.prepare(
+      "SELECT * FROM storefronts WHERE id = ? AND pharmacy_id = ? LIMIT 1"
+    )
+      .bind(actor.storefrontId, actor.pharmacyId)
+      .first<StorefrontRecord>();
+
+    if (!sf || sf.status === "suspended" || sf.entitlement_status === "suspended") {
+      return new Response(
+        JSON.stringify({ ok: false, error: "storefront_unavailable_or_suspended" }),
+        { status: 403, headers }
+      );
+    }
+
+    const settings = await env.DB.prepare(
+      "SELECT * FROM storefront_settings WHERE storefront_id = ? AND pharmacy_id = ? LIMIT 1"
+    )
+      .bind(actor.storefrontId, actor.pharmacyId)
+      .first<StorefrontSettingsRecord>();
+
+    const allowControlled = Number(settings?.allow_controlled_medicines ?? 0) === 1;
+    const syncEventId = `sfe_${crypto.randomUUID()}`;
+    const nowIso = new Date().toISOString();
+
+    // Pre-load verified central medicines for automatic image matching
+    const { results: verifiedCanonicalRows } = await env.DB.prepare(
+      `SELECT c.id, c.canonical_name, c.master_catalog_id, c.master_catalog_name, c.normalized_catalog_name,
+              c.brand_name, c.generic_name, c.strength, c.dosage_form,
+              c.manufacturer, c.pack_size, c.pack_unit, c.barcode, c.aliases_json,
+              c.verification_status, c.preferred_media_id, m.public_url AS preferred_image_url
+       FROM central_medicines c
+       INNER JOIN storefront_media m ON c.preferred_media_id = m.id
+       WHERE c.verification_status = 'verified' AND c.preferred_media_id IS NOT NULL`
+    ).all<Record<string, unknown>>();
+
+    const canonicalCatalog: (CanonicalMedicineRecord & { preferred_image_url: string })[] =
+      (verifiedCanonicalRows || []).map((r) => ({
+        id: String(r.id),
+        canonical_name: String(r.canonical_name),
+        master_catalog_id: r.master_catalog_id ? String(r.master_catalog_id) : null,
+        master_catalog_name: r.master_catalog_name ? String(r.master_catalog_name) : null,
+        normalized_catalog_name: r.normalized_catalog_name ? String(r.normalized_catalog_name) : null,
+        brand_name: r.brand_name ? String(r.brand_name) : null,
+        generic_name: r.generic_name ? String(r.generic_name) : null,
+        strength: r.strength ? String(r.strength) : null,
+        dosage_form: r.dosage_form ? String(r.dosage_form) : null,
+        manufacturer: r.manufacturer ? String(r.manufacturer) : null,
+        pack_size: r.pack_size ? Number(r.pack_size) : null,
+        pack_unit: r.pack_unit ? String(r.pack_unit) : null,
+        barcode: r.barcode ? String(r.barcode) : null,
+        aliases_json: r.aliases_json ? String(r.aliases_json) : null,
+        verification_status: String(r.verification_status),
+        preferred_media_id: String(r.preferred_media_id),
+        preferred_image_url: String(r.preferred_image_url),
+      }));
+
+    let itemsApplied = 0;
+    let itemsRejected = 0;
+    const rejections: Array<{ pos_product_id: string; error_code: string; message: string }> = [];
+
+    for (let i = 0; i < body.items.length; i++) {
+      const item = body.items[i] as StorefrontCatalogDeltaItem;
+      const posProdId = String(item?.pos_product_id || `idx_${i}`).trim();
+
+      // 1. Strict Product Data Boundary Check (Section 7)
+      const forbiddenKeys = detectForbiddenPrivateKeys(item);
+      if (forbiddenKeys.length > 0) {
+        itemsRejected++;
+        const msg = `Forbidden private POS fields rejected at boundary: ${forbiddenKeys.join(", ")}`;
+        rejections.push({
+          pos_product_id: posProdId,
+          error_code: "forbidden_private_fields",
+          message: msg,
+        });
+        await env.DB.prepare(
+          `INSERT INTO storefront_sync_failures (id, storefront_id, pharmacy_id, sync_event_id, pos_product_id, error_code, error_message, created_at)
+           VALUES (?, ?, ?, ?, ?, 'forbidden_private_fields', ?, ?)`
+        )
+          .bind(
+            `sff_${crypto.randomUUID()}`,
+            actor.storefrontId,
+            actor.pharmacyId,
+            syncEventId,
+            posProdId,
+            msg,
+            nowIso
+          )
+          .run();
+        continue;
+      }
+
+      // Check existing product revision & branch stock
+      const existingProd = await env.DB.prepare(
+        `SELECT id, slug, sync_version, branch_stock_json, primary_image_url, publish_status
+         FROM storefront_products
+         WHERE storefront_id = ? AND pharmacy_id = ? AND pos_product_id = ?
+         LIMIT 1`
+      )
+        .bind(actor.storefrontId, actor.pharmacyId, posProdId)
+        .first<{
+          id: string;
+          slug: string;
+          sync_version: number;
+          branch_stock_json?: string;
+          primary_image_url?: string | null;
+          publish_status?: string;
+        }>();
+
+      const rev = Number(item?.source_revision ?? 1);
+      if (existingProd && Number(existingProd.sync_version) > rev) {
+        // Idempotently skip older revision
+        itemsApplied++;
+        continue;
+      }
+
+      // Handle soft product deletion / archiving from POS
+      if (item.is_deleted || item.website_visibility === "archived") {
+        if (existingProd) {
+          await env.DB.prepare(
+            `UPDATE storefront_products
+             SET publish_status = 'archived',
+                 availability_status = 'unavailable',
+                 available_qty = 0,
+                 deleted_at = ?,
+                 sync_version = ?,
+                 last_synced_at = ?,
+                 updated_at = ?
+             WHERE id = ? AND storefront_id = ? AND pharmacy_id = ?`
+          )
+            .bind(nowIso, rev, nowIso, nowIso, existingProd.id, actor.storefrontId, actor.pharmacyId)
+            .run();
+        }
+        itemsApplied++;
+        continue;
+      }
+
+      const name = String(item?.product_identity?.name || "").trim();
+      const price = Number(item?.public_selling_price_pkr);
+
+      if (!posProdId || !name || !Number.isFinite(price) || price < 0) {
+        itemsRejected++;
+        const msg = "Invalid product identity or negative public selling price.";
+        rejections.push({
+          pos_product_id: posProdId,
+          error_code: "invalid_product_fields",
+          message: msg,
+        });
+        continue;
+      }
+
+      const isControlled = Boolean(item.product_identity.is_controlled_substance);
+      let effectivePublishStatus = item.website_visibility || existingProd?.publish_status || "draft";
+      let visibilityReason = "owner_approved";
+
+      if (isControlled && !allowControlled) {
+        effectivePublishStatus = "unpublished";
+        visibilityReason = "controlled_blocked";
+      } else if (
+        Number(settings?.auto_unpublish_zero_stock) === 1 &&
+        item.availability === "out_of_stock"
+      ) {
+        effectivePublishStatus = "unpublished";
+        visibilityReason = "out_of_stock_hidden";
+      } else if (
+        (settings?.publishing_mode === "in_stock_approved" || Number((settings as any)?.auto_sync_all_products ?? 0) === 1) &&
+        !isControlled &&
+        item.availability !== "out_of_stock" &&
+        effectivePublishStatus !== "archived" &&
+        !item.is_deleted
+      ) {
+        effectivePublishStatus = "published";
+        visibilityReason = "rule_matched";
+      }
+
+      // Merge per-branch availability without aggregating across branches
+      let branchStockMap: Record<string, any> = {};
+      try {
+        branchStockMap = existingProd?.branch_stock_json
+          ? JSON.parse(existingProd.branch_stock_json)
+          : {};
+      } catch {
+        branchStockMap = {};
+      }
+
+      if (item.branch_availability && typeof item.branch_availability === "object") {
+        branchStockMap = { ...branchStockMap, ...item.branch_availability };
+      } else {
+        branchStockMap[branchId] = {
+          branch_id: branchId,
+          availability_status: item.availability || "in_stock",
+          available_qty: Math.max(0, Number(item.available_qty ?? 0)),
+          updated_at: nowIso,
+        };
+      }
+
+      // Check shared medicine image fallback if no explicit primary_image_url is set
+      let resolvedImageUrl =
+        item.product_identity.primary_image_url || existingProd?.primary_image_url || null;
+      let canonicalMedicineId: string | null = (existingProd as any)?.canonical_medicine_id || null;
+      let selectedMediaId: string | null = (existingProd as any)?.selected_media_id || null;
+      let imageSource: string = (existingProd as any)?.image_source || "none";
+
+      if (item.product_identity.primary_image_url) {
+        imageSource = "owner_override";
+        resolvedImageUrl = item.product_identity.primary_image_url;
+      } else if (imageSource !== "owner_override") {
+        // Try linking with verified Central Medicine Image Library using smart safety-first matcher
+        const prodInput: ProductInput = {
+          name,
+          generic_name: item.product_identity.generic_name || null,
+          strength: item.product_identity.strength || null,
+          dosage_form: item.product_identity.dosage_form || null,
+          brand_name: item.product_identity.brand_name || null,
+          packing_label: item.product_identity.packing_label || null,
+          unit_label: item.product_identity.unit_label || null,
+          sku_code: item.product_identity.sku_code || null,
+          barcode: item.product_identity.sku_code || null,
+          master_medicine_id: item.product_identity.master_medicine_id || null,
+        };
+
+        const matchRes = matchMedicineIdentity(prodInput, canonicalCatalog);
+        if (matchRes.matched && matchRes.canonicalId && matchRes.preferredMediaId) {
+          const cMatch = canonicalCatalog.find((c) => c.id === matchRes.canonicalId);
+          resolvedImageUrl = cMatch?.preferred_image_url || null;
+          canonicalMedicineId = matchRes.canonicalId;
+          selectedMediaId = matchRes.preferredMediaId;
+          imageSource = "shared_library";
+        } else if (imageSource === "shared_library") {
+          resolvedImageUrl = null;
+          canonicalMedicineId = null;
+          selectedMediaId = null;
+          imageSource = "none";
+        }
+      }
+
+      const prodId = existingProd?.id || `sfp_${crypto.randomUUID()}`;
+      let prodSlug = existingProd?.slug || toUrlSlug(name, posProdId);
+      if (!existingProd) {
+        const slugCollision = await env.DB.prepare(
+          "SELECT id FROM storefront_products WHERE storefront_id = ? AND slug = ? LIMIT 1"
+        )
+          .bind(actor.storefrontId, prodSlug)
+          .first<{ id: string }>();
+        if (slugCollision) {
+          prodSlug = `${prodSlug}-${crypto.randomUUID().slice(0, 6)}`;
+        }
+      }
+      const categoryName = String(item.product_identity.category_name || "General Medicines").trim();
+      const searchKeywords = [
+        name,
+        item.product_identity.generic_name,
+        item.product_identity.brand_name,
+        item.product_identity.strength,
+        item.product_identity.dosage_form,
+        categoryName,
+        item.product_identity.sku_code,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+
+      const baseUnitLabel = String(
+        item.base_unit_label || item.product_identity.unit_label || "unit"
+      ).trim();
+      const availableBaseQty = Math.max(
+        0,
+        Number(item.available_base_qty ?? item.available_qty ?? 0)
+      );
+      const sellingUnitsJson = Array.isArray(item.selling_units)
+        ? JSON.stringify(item.selling_units)
+        : "[]";
+
+      await env.DB.prepare(
+        `INSERT INTO storefront_products (
+           id, storefront_id, pharmacy_id, pos_product_id, master_medicine_id,
+           sku_code, slug, name, generic_name, strength, dosage_form,
+           brand_name, packing_label, unit_label, base_unit_label, selling_units_json,
+           public_description, public_selling_price_pkr, compare_at_price_pkr,
+           availability_status, available_qty, available_base_qty, branch_stock_json, category_name, primary_image_url,
+           search_keywords, publish_status, requires_prescription,
+           is_controlled_substance, is_featured, is_popular, max_order_qty,
+           sync_version, last_synced_at, created_at, updated_at,
+           image_source, selected_media_id, canonical_medicine_id
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(storefront_id, pos_product_id) DO UPDATE SET
+           master_medicine_id = COALESCE(excluded.master_medicine_id, storefront_products.master_medicine_id),
+           sku_code = COALESCE(excluded.sku_code, storefront_products.sku_code),
+           name = excluded.name,
+           generic_name = COALESCE(excluded.generic_name, storefront_products.generic_name),
+           strength = COALESCE(excluded.strength, storefront_products.strength),
+           dosage_form = COALESCE(excluded.dosage_form, storefront_products.dosage_form),
+           brand_name = COALESCE(excluded.brand_name, storefront_products.brand_name),
+           packing_label = COALESCE(excluded.packing_label, storefront_products.packing_label),
+           unit_label = excluded.unit_label,
+           base_unit_label = excluded.base_unit_label,
+           selling_units_json = CASE
+             WHEN excluded.selling_units_json != '[]' THEN excluded.selling_units_json
+             ELSE storefront_products.selling_units_json
+           END,
+           public_description = COALESCE(storefront_products.public_description, excluded.public_description),
+           public_selling_price_pkr = excluded.public_selling_price_pkr,
+           compare_at_price_pkr = COALESCE(excluded.compare_at_price_pkr, storefront_products.compare_at_price_pkr),
+           availability_status = excluded.availability_status,
+           available_qty = excluded.available_qty,
+           available_base_qty = excluded.available_base_qty,
+           branch_stock_json = excluded.branch_stock_json,
+           category_name = COALESCE(excluded.category_name, storefront_products.category_name),
+           primary_image_url = CASE
+             WHEN storefront_products.image_source = 'owner_override' THEN storefront_products.primary_image_url
+             WHEN excluded.primary_image_url IS NOT NULL THEN excluded.primary_image_url
+             ELSE storefront_products.primary_image_url
+           END,
+           image_source = CASE
+             WHEN storefront_products.image_source = 'owner_override' THEN 'owner_override'
+             WHEN excluded.image_source != 'none' THEN excluded.image_source
+             ELSE storefront_products.image_source
+           END,
+           canonical_medicine_id = CASE
+             WHEN storefront_products.image_source = 'owner_override' THEN storefront_products.canonical_medicine_id
+             WHEN excluded.canonical_medicine_id IS NOT NULL THEN excluded.canonical_medicine_id
+             ELSE storefront_products.canonical_medicine_id
+           END,
+           selected_media_id = CASE
+             WHEN storefront_products.image_source = 'owner_override' THEN storefront_products.selected_media_id
+             WHEN excluded.selected_media_id IS NOT NULL THEN excluded.selected_media_id
+             ELSE storefront_products.selected_media_id
+           END,
+           search_keywords = excluded.search_keywords,
+           publish_status = excluded.publish_status,
+           requires_prescription = excluded.requires_prescription,
+           is_controlled_substance = excluded.is_controlled_substance,
+           is_featured = CASE WHEN excluded.is_featured = 1 THEN 1 ELSE storefront_products.is_featured END,
+           is_popular = CASE WHEN excluded.is_popular = 1 THEN 1 ELSE storefront_products.is_popular END,
+           max_order_qty = excluded.max_order_qty,
+           deleted_at = NULL,
+           sync_version = excluded.sync_version,
+           last_synced_at = excluded.last_synced_at,
+           updated_at = excluded.updated_at`
+      )
+        .bind(
+          prodId,
+          actor.storefrontId,
+          actor.pharmacyId,
+          posProdId,
+          item.product_identity.master_medicine_id || null,
+          item.product_identity.sku_code || null,
+          prodSlug,
+          name,
+          item.product_identity.generic_name || null,
+          item.product_identity.strength || null,
+          item.product_identity.dosage_form || null,
+          item.product_identity.brand_name || null,
+          item.product_identity.packing_label || null,
+          item.product_identity.unit_label || "Pack",
+          baseUnitLabel,
+          sellingUnitsJson,
+          item.product_identity.public_description || null,
+          price,
+          item.compare_at_price_pkr ?? null,
+          item.availability || "in_stock",
+          Math.max(0, Number(item.available_qty ?? 0)),
+          availableBaseQty,
+          JSON.stringify(branchStockMap),
+          categoryName,
+          resolvedImageUrl,
+          searchKeywords,
+          effectivePublishStatus,
+          item.product_identity.requires_prescription ? 1 : 0,
+          isControlled ? 1 : 0,
+          item.is_featured ? 1 : 0,
+          item.is_popular ? 1 : 0,
+          Math.max(1, Number(item.max_order_qty ?? 20)),
+          rev,
+          nowIso,
+          nowIso,
+          nowIso,
+          imageSource,
+          selectedMediaId,
+          canonicalMedicineId
+        )
+        .run();
+
+      const validReasons = new Set([
+        "owner_approved",
+        "admin_approved",
+        "rule_matched",
+        "manual_hidden",
+        "controlled_blocked",
+        "out_of_stock_hidden",
+      ]);
+      const safeVisibilityReason = validReasons.has(visibilityReason)
+        ? visibilityReason
+        : effectivePublishStatus === "published"
+        ? "owner_approved"
+        : "manual_hidden";
+
+      await env.DB.prepare(
+        `INSERT INTO storefront_product_visibility (
+           id, storefront_id, pharmacy_id, product_id, pos_product_id, branch_id,
+           is_visible, visibility_reason, approved_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(storefront_id, pos_product_id, branch_id) DO UPDATE SET
+           is_visible = excluded.is_visible,
+           visibility_reason = excluded.visibility_reason,
+           updated_at = excluded.updated_at`
+      )
+        .bind(
+          `sfv_${crypto.randomUUID()}`,
+          actor.storefrontId,
+          actor.pharmacyId,
+          prodId,
+          posProdId,
+          branchId,
+          effectivePublishStatus === "published" ? 1 : 0,
+          safeVisibilityReason,
+          nowIso,
+          nowIso
+        )
+        .run();
+
+      itemsApplied++;
+    }
+
+    // Automatically unpublish synthetic starter rows (POS-MED-* / PORTAL-ITEM-*) once real POS sync runs
+    // while preserving rows so historical order foreign keys stay 100% intact.
+    if (body.full_snapshot || pathname === "/api/v1/sync/catalog-snapshot" || itemsApplied > 0) {
+      const syncedPosIds = new Set(
+        body.items.map((it) => String(it?.pos_product_id || "").trim()).filter(Boolean)
+      );
+      const legacyStarterRows = await env.DB.prepare(
+        `SELECT id, pos_product_id FROM storefront_products
+         WHERE storefront_id = ? AND pharmacy_id = ?
+           AND publish_status = 'published'
+           AND (pos_product_id LIKE 'POS-MED-%' OR pos_product_id LIKE 'PORTAL-ITEM-%')`
+      )
+        .bind(actor.storefrontId, actor.pharmacyId)
+        .all<{ id: string; pos_product_id: string }>();
+
+      for (const leg of legacyStarterRows.results || []) {
+        if (!syncedPosIds.has(leg.pos_product_id)) {
+          await env.DB.prepare(
+            `UPDATE storefront_products
+             SET publish_status = 'unpublished', updated_at = ?
+             WHERE id = ? AND storefront_id = ? AND pharmacy_id = ?`
+          )
+            .bind(nowIso, leg.id, actor.storefrontId, actor.pharmacyId)
+            .run();
+        }
+      }
+
+      // Reconcile catalog when all products are transmitted in a single complete batch (e.g. initial setup or post-reset)
+      if (
+        (body.auto_approve_all === true || body.full_snapshot === true) &&
+        Number(body.total_batches || 1) === 1 &&
+        syncedPosIds.size > 0
+      ) {
+        const stalePublishedRows = await env.DB.prepare(
+          `SELECT id, pos_product_id FROM storefront_products
+           WHERE storefront_id = ? AND pharmacy_id = ?
+             AND publish_status = 'published'`
+        )
+          .bind(actor.storefrontId, actor.pharmacyId)
+          .all<{ id: string; pos_product_id: string }>();
+
+        for (const row of stalePublishedRows.results || []) {
+          if (!syncedPosIds.has(row.pos_product_id)) {
+            await env.DB.prepare(
+              `UPDATE storefront_products
+               SET publish_status = 'archived',
+                   availability_status = 'unavailable',
+                   available_qty = 0,
+                   deleted_at = ?,
+                   updated_at = ?
+               WHERE id = ? AND storefront_id = ? AND pharmacy_id = ?`
+            )
+              .bind(nowIso, nowIso, row.id, actor.storefrontId, actor.pharmacyId)
+              .run();
+          }
+        }
+      }
+    }
+
+    const publishedCount = await recalculateStorefrontCatalogCounts(
+      env.DB,
+      actor.storefrontId,
+      actor.pharmacyId,
+      { skipCategories: isIntermediateBatch }
+    );
+
+    // Update storefront last_sync_at
+    await env.DB.prepare(
+      `UPDATE storefronts SET last_sync_at = ?, updated_at = ? WHERE id = ? AND pharmacy_id = ?`
+    )
+      .bind(nowIso, nowIso, actor.storefrontId, actor.pharmacyId)
+      .run();
+
+    // Advance sync cursor
+    await env.DB.prepare(
+      `INSERT INTO storefront_sync_cursors (
+         id, storefront_id, pharmacy_id, branch_id, stream_name,
+         last_cursor, last_revision, last_event_id, last_sync_at, updated_at
+       ) VALUES (?, ?, ?, ?, 'catalog', ?, 1, ?, ?, ?)
+       ON CONFLICT(storefront_id, branch_id, stream_name) DO UPDATE SET
+         last_cursor = excluded.last_cursor,
+         last_revision = storefront_sync_cursors.last_revision + 1,
+         last_event_id = excluded.last_event_id,
+         last_sync_at = excluded.last_sync_at,
+         updated_at = excluded.updated_at`
+    )
+      .bind(
+        `sfc_${crypto.randomUUID()}`,
+        actor.storefrontId,
+        actor.pharmacyId,
+        branchId,
+        nextCursor,
+        syncEventId,
+        nowIso,
+        nowIso
+      )
+      .run();
+
+    const eventType =
+      pathname === "/api/v1/sync/catalog-snapshot" ? "catalog_snapshot" : "catalog_delta";
+    const status =
+      itemsRejected === 0
+        ? "completed"
+        : itemsApplied > 0
+        ? "partial"
+        : "failed";
+
+    await env.DB.prepare(
+      `INSERT INTO storefront_sync_events (
+         id, storefront_id, pharmacy_id, branch_id, idempotency_key,
+         event_type, source_cursor, next_cursor,
+         items_received, items_applied, items_rejected, status, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+      .bind(
+        syncEventId,
+        actor.storefrontId,
+        actor.pharmacyId,
+        branchId,
+        idempotencyKey,
+        eventType,
+        body.source_cursor || null,
+        nextCursor,
+        body.items.length,
+        itemsApplied,
+        itemsRejected,
+        status,
+        nowIso
+      )
+      .run();
+
+    const responsePayload: StorefrontCatalogDeltaResponse = {
+      ok: true,
+      duplicate: false,
+      sync_event_id: syncEventId,
+      storefront_id: actor.storefrontId,
+      pharmacy_id: actor.pharmacyId,
+      branch_id: branchId,
+      applied_cursor: nextCursor,
+      items_received: body.items.length,
+      items_applied: itemsApplied,
+      items_rejected: itemsRejected,
+      published_products_count: publishedCount,
+      ...(typeof batchIndex === "number" ? { batch_index: batchIndex } : {}),
+      ...(typeof totalBatches === "number" ? { total_batches: totalBatches } : {}),
+      ...(rejections.length > 0 ? { rejections } : {}),
+    };
+
+    const expiresAt = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString();
+    await env.DB.prepare(
+      `INSERT INTO storefront_import_idempotency (
+         storefront_id, pharmacy_id, idempotency_key, request_hash, response_json, created_at, expires_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    )
+      .bind(
+        actor.storefrontId,
+        actor.pharmacyId,
+        idempotencyKey,
+        requestHash,
+        JSON.stringify(responsePayload),
+        nowIso,
+        expiresAt
+      )
+      .run();
+
+    await recordStorefrontUsage(env.DB, {
+      storefrontId: actor.storefrontId,
+      pharmacyId: actor.pharmacyId,
+      syncRequests: 1,
+      d1RowsReadEst: body.items.length + 3,
+      d1RowsWrittenEst: itemsApplied * 2 + 4,
+    });
+
+    await writeStorefrontAuditLog(env.DB, {
+      storefrontId: actor.storefrontId,
+      pharmacyId: actor.pharmacyId,
+      action: `catalog_sync_${eventType}`,
+      actorType: "pos_sync",
+      actorId: branchId,
+      entityType: "catalog",
+      entityId: syncEventId,
+      summary: `Synced ${itemsApplied} catalog items (${itemsRejected} rejected); ${publishedCount} total published.`,
+      metadata: {
+        idempotency_key: idempotencyKey,
+        next_cursor: nextCursor,
+        items_received: body.items.length,
+        items_applied: itemsApplied,
+        items_rejected: itemsRejected,
+      },
+    });
+
+    return new Response(JSON.stringify(responsePayload), { status: 200, headers });
+    } catch (syncErr: any) {
+      console.error("[SyncRoutes] Catalog delta sync processing error:", syncErr);
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          error: "catalog_sync_error",
+          message: syncErr?.message || "Internal error during catalog synchronization.",
+        }),
+        { status: 500, headers }
+      );
+    }
+  }
+
+  // ── 4b. GET /api/v1/sync/orders/notifications — Lightweight Adaptive Notification Poll ──
+  if (
+    (pathname === "/api/v1/sync/orders/notifications" ||
+      (pathname === "/api/v1/sync/orders/inbox" && url.searchParams.get("summary_only") === "1")) &&
+    req.method === "GET"
+  ) {
+    const countsRow = await env.DB.prepare(
+      `SELECT
+         SUM(CASE WHEN status NOT IN ('completed', 'cancelled', 'rejected') THEN 1 ELSE 0 END) AS active_attention_count,
+         SUM(CASE WHEN status = 'pending_confirmation' THEN 1 ELSE 0 END) AS pending_confirmation_count,
+         SUM(CASE WHEN status NOT IN ('completed', 'cancelled', 'rejected')
+                   AND COALESCE(pos_handoff_status, 'pending') = 'pending'
+                  THEN 1 ELSE 0 END) AS unread_handoff_count,
+         MAX(updated_at) AS latest_updated_at
+       FROM storefront_orders
+       WHERE storefront_id = ? AND pharmacy_id = ?`
+    )
+      .bind(actor.storefrontId, actor.pharmacyId)
+      .first<{
+        active_attention_count: number | null;
+        pending_confirmation_count: number | null;
+        unread_handoff_count: number | null;
+        latest_updated_at: string | null;
+      }>();
+
+    const activeAttentionCount = Number(countsRow?.active_attention_count || 0);
+    const pendingConfirmationCount = Number(countsRow?.pending_confirmation_count || 0);
+    const unreadHandoffCount = Number(countsRow?.unread_handoff_count || 0);
+
+    let recentNewOrders: Array<Record<string, unknown>> = [];
+    if (activeAttentionCount > 0) {
+      const recentRes = await env.DB.prepare(
+        `SELECT id AS order_id, order_number, customer_name, customer_phone, fulfillment_type,
+                total_pkr, status, COALESCE(payment_status, 'unpaid') AS payment_status,
+                COALESCE(pos_handoff_status, 'pending') AS pos_handoff_status, created_at
+         FROM storefront_orders
+         WHERE storefront_id = ? AND pharmacy_id = ?
+           AND status NOT IN ('completed', 'cancelled', 'rejected')
+         ORDER BY created_at DESC
+         LIMIT 8`
+      )
+        .bind(actor.storefrontId, actor.pharmacyId)
+        .all<Record<string, unknown>>();
+      recentNewOrders = recentRes.results || [];
+    }
+
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        storefront_id: actor.storefrontId,
+        pharmacy_id: actor.pharmacyId,
+        active_attention_count: activeAttentionCount,
+        new_unacknowledged_count: pendingConfirmationCount,
+        pending_confirmation_count: pendingConfirmationCount,
+        unread_handoff_count: unreadHandoffCount,
+        latest_updated_at: countsRow?.latest_updated_at || null,
+        recent_orders: recentNewOrders,
+        latest_orders: recentNewOrders,
+      }),
+      { status: 200, headers }
+    );
+  }
+
+  // ── 5. GET /api/v1/sync/orders/inbox — Safe External Order Inbox & History for POS ──
+  if (pathname === "/api/v1/sync/orders/inbox" && req.method === "GET") {
+    const viewFilter = (url.searchParams.get("view") || "all").trim().toLowerCase();
+    const statusFilter = (url.searchParams.get("status") || "").trim();
+    const handoffFilter = (url.searchParams.get("handoff_status") || "").trim();
+    const fulfillmentFilter = (url.searchParams.get("fulfillment_type") || "").trim();
+    const fromDate = (url.searchParams.get("from") || "").trim();
+    const toDate = (url.searchParams.get("to") || "").trim();
+    const searchQ = (url.searchParams.get("q") || url.searchParams.get("search") || "")
+      .trim()
+      .toLowerCase();
+    const includeHistory = url.searchParams.get("include_history") !== "0";
+    const limit = Math.min(250, Math.max(1, Number(url.searchParams.get("limit")) || 120));
+
+    let sql = `
+      SELECT *
+      FROM storefront_orders
+      WHERE storefront_id = ? AND pharmacy_id = ?
+    `;
+    const params: unknown[] = [actor.storefrontId, actor.pharmacyId];
+
+    if (viewFilter === "active") {
+      sql += ` AND status NOT IN ('completed', 'cancelled', 'rejected')`;
+    } else if (viewFilter === "history") {
+      sql += ` AND status IN ('completed', 'cancelled', 'rejected')`;
+    }
+
+    if (statusFilter && statusFilter !== "all") {
+      if (statusFilter === "delivered") {
+        sql += ` AND status = 'completed' AND (fulfillment_outcome = 'delivered' OR (fulfillment_outcome IS NULL AND fulfillment_type = 'delivery'))`;
+      } else if (statusFilter === "collected") {
+        sql += ` AND status = 'completed' AND (fulfillment_outcome = 'collected' OR (fulfillment_outcome IS NULL AND fulfillment_type = 'pickup'))`;
+      } else if (statusFilter === "returned") {
+        sql += ` AND status = 'completed' AND fulfillment_outcome = 'returned'`;
+      } else {
+        sql += ` AND status = ?`;
+        params.push(statusFilter);
+      }
+    }
+    if (handoffFilter && handoffFilter !== "all") {
+      sql += ` AND COALESCE(pos_handoff_status, 'pending') = ?`;
+      params.push(handoffFilter);
+    }
+    if (fulfillmentFilter === "delivery" || fulfillmentFilter === "pickup") {
+      sql += ` AND fulfillment_type = ?`;
+      params.push(fulfillmentFilter);
+    }
+    if (fromDate) {
+      sql += ` AND created_at >= ?`;
+      params.push(fromDate);
+    }
+    if (toDate) {
+      sql += ` AND created_at <= ?`;
+      params.push(toDate);
+    }
+    if (searchQ) {
+      const pattern = `%${searchQ}%`;
+      sql += ` AND (LOWER(order_number) LIKE ? OR LOWER(customer_name) LIKE ? OR LOWER(customer_phone) LIKE ? OR LOWER(COALESCE(pos_invoice_number, '')) LIKE ?)`;
+      params.push(pattern, pattern, pattern, pattern);
+    }
+
+    sql += ` ORDER BY created_at DESC LIMIT ?`;
+    params.push(limit);
+
+    const { results: orderRows } = await env.DB.prepare(sql)
+      .bind(...params)
+      .all<StorefrontOrderRecord>();
+
+    // Lookup SKU codes for storefront products in one lightweight query
+    const prodSkusRes = await env.DB.prepare(
+      `SELECT id, pos_product_id, sku_code FROM storefront_products
+       WHERE storefront_id = ? AND pharmacy_id = ?`
+    )
+      .bind(actor.storefrontId, actor.pharmacyId)
+      .all<{ id: string; pos_product_id: string; sku_code: string | null }>();
+    const skuBySfProdId = new Map<string, string | null>();
+    for (const pr of prodSkusRes.results || []) {
+      skuBySfProdId.set(pr.id, pr.sku_code);
+    }
+
+    const inboxOrders: PosOrderInboxItem[] = [];
+    for (const ord of orderRows || []) {
+      const itemsRes = await env.DB.prepare(
+        `SELECT * FROM storefront_order_items
+         WHERE storefront_id = ? AND pharmacy_id = ? AND order_id = ?
+         ORDER BY created_at ASC`
+      )
+        .bind(actor.storefrontId, actor.pharmacyId, ord.id)
+        .all<StorefrontOrderItemRecord>();
+
+      const normalizedItems: PosOrderInboxLinePayload[] = (itemsRes.results || []).map((it: any) => {
+        const unitMult = Math.max(0.0001, Number(it.unit_multiplier || 1));
+        const qtyVal = Math.max(1, Number(it.qty || 1));
+        const baseQtyReq = Number(
+          (it.base_qty_required !== null && it.base_qty_required !== undefined
+            ? Number(it.base_qty_required)
+            : qtyVal * unitMult
+          ).toFixed(4)
+        );
+        const unitLabelStr = String(it.unit_label_snapshot || "unit");
+        const sellingUnitNameStr = String(it.selling_unit_name || unitLabelStr);
+        const skuCodeVal =
+          it.sku_code_snapshot || skuBySfProdId.get(String(it.product_id)) || null;
+        const prodNameStr = String(it.product_name_snapshot || "Ordered Medicine");
+
+        return {
+          ...it,
+          order_item_id: String(it.id),
+          product_name: prodNameStr,
+          unit_label: unitLabelStr,
+          packing_label: unitLabelStr,
+          sku_code: skuCodeVal,
+          selling_unit_id: it.selling_unit_id ? String(it.selling_unit_id) : null,
+          selling_unit_name: sellingUnitNameStr,
+          unit_multiplier: unitMult,
+          qty: qtyVal,
+          base_qty_required: baseQtyReq,
+          unit_price_pkr: Number(it.unit_price_pkr || 0),
+          line_total_pkr: Number(it.line_total_pkr || 0),
+          requires_prescription: Number(it.requires_prescription) ? 1 : 0,
+        };
+      });
+
+      let historyRows: any[] | undefined;
+      if (includeHistory) {
+        const histRes = await env.DB.prepare(
+          `SELECT id, from_status, to_status, actor_type, actor_id, note, created_at
+           FROM storefront_order_status_history
+           WHERE storefront_id = ? AND pharmacy_id = ? AND order_id = ?
+           ORDER BY created_at ASC`
+        )
+          .bind(actor.storefrontId, actor.pharmacyId, ord.id)
+          .all();
+        historyRows = histRes.results || [];
+      }
+
+      const effectiveStatus = resolveEffectiveOrderStatusSync(ord as any);
+      const effectivePaymentStatus: StorefrontPaymentStatus =
+        ((ord as any).payment_status as StorefrontPaymentStatus) ||
+        (ord.payment_method === "cod" ? "pending_cod" : "unpaid");
+
+      inboxOrders.push({
+        order_id: ord.id,
+        order_number: ord.order_number,
+        storefront_id: ord.storefront_id,
+        pharmacy_id: ord.pharmacy_id,
+        branch_id: ord.branch_id || "main",
+        branch_name_snapshot: (ord as any).branch_name_snapshot || null,
+        status: effectiveStatus,
+        payment_status: effectivePaymentStatus,
+        pos_handoff_status: (ord.pos_handoff_status || "pending") as PosHandoffStatus,
+        customer_name: ord.customer_name,
+        customer_phone: ord.customer_phone,
+        customer_email: ord.customer_email || null,
+        fulfillment_type: ord.fulfillment_type,
+        delivery_address: ord.delivery_address || null,
+        delivery_city: ord.delivery_city || null,
+        delivery_instructions: (ord as any).delivery_instructions || ord.customer_notes || null,
+        payment_method: ord.payment_method,
+        subtotal_pkr: Number(ord.subtotal_pkr || 0),
+        delivery_fee_pkr: Number(ord.delivery_fee_pkr || 0),
+        discount_pkr: Number(ord.discount_pkr || 0),
+        total_pkr: Number(ord.total_pkr || 0),
+        cod_paid_amount_pkr: Number((ord as any).cod_paid_amount_pkr || 0),
+        cod_balance_due_pkr:
+          (ord as any).cod_balance_due_pkr !== null && (ord as any).cod_balance_due_pkr !== undefined
+            ? Number((ord as any).cod_balance_due_pkr)
+            : ord.payment_method === "cod" && effectivePaymentStatus !== "paid"
+            ? Math.max(0, Number(ord.total_pkr || 0) - Number((ord as any).cod_paid_amount_pkr || 0))
+            : 0,
+        cod_last_collection_at: (ord as any).cod_last_collection_at || null,
+        cod_collections_json: (ord as any).cod_collections_json || null,
+        requires_prescription: Number(ord.requires_prescription) === 1,
+        rx_inquiry_note: ord.rx_inquiry_note || null,
+        customer_notes: ord.customer_notes || null,
+        fulfillment_notes: (ord as any).fulfillment_notes || null,
+        fulfilled_adjustments_json: (ord as any).fulfilled_adjustments_json || null,
+        pos_order_ref: ord.pos_order_ref || null,
+        pos_invoice_id: ord.pos_invoice_id || null,
+        pos_invoice_number: ord.pos_invoice_number || null,
+        pos_fulfilled_at: ord.pos_fulfilled_at || null,
+        pos_fulfilled_by: ord.pos_fulfilled_by || null,
+        created_at: ord.created_at,
+        updated_at: ord.updated_at,
+        items: normalizedItems,
+        ...(historyRows
+          ? {
+              history: historyRows,
+              status_history: historyRows.map((h: any) => ({
+                id: h.id,
+                from_status: h.from_status ?? null,
+                to_status: h.to_status,
+                previous_status: h.from_status ?? null,
+                new_status: h.to_status,
+                changed_by_role: h.actor_type || "pos",
+                changed_by_label: h.actor_id || null,
+                note: h.note || null,
+                created_at: h.created_at,
+              })),
+            }
+          : {}),
+      });
+    }
+
+    await recordStorefrontUsage(env.DB, {
+      storefrontId: actor.storefrontId,
+      pharmacyId: actor.pharmacyId,
+      syncRequests: 1,
+      d1RowsReadEst: Math.max(1, inboxOrders.length * 2),
+    });
+
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        storefront_id: actor.storefrontId,
+        pharmacy_id: actor.pharmacyId,
+        orders: inboxOrders,
+      }),
+      { status: 200, headers }
+    );
+  }
+
+  // ── 6. POST /api/v1/sync/orders/ack — Idempotent POS Order Handoff & Lifecycle Sync ──
+  if (pathname === "/api/v1/sync/orders/ack" && req.method === "POST") {
+    let rawText = "";
+    let body: PosOrderFulfillmentAckRequest;
+    try {
+      rawText = await req.text();
+      body = JSON.parse(rawText);
+    } catch {
+      return new Response(JSON.stringify({ ok: false, error: "invalid_json" }), {
+        status: 400,
+        headers,
+      });
+    }
+
+    const idempotencyKey = String(body.idempotency_key || "").trim();
+    const orderId = String(body.order_id || "").trim();
+    const action = body.action;
+
+    if (!idempotencyKey || !orderId || !action) {
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          error: "missing_required_fields",
+          message: "idempotency_key, order_id, and action are required.",
+        }),
+        { status: 400, headers }
+      );
+    }
+
+    const requestHash = await sha256Hex(rawText);
+    const existingIdemp = await env.DB.prepare(
+      `SELECT request_hash, response_json
+       FROM storefront_import_idempotency
+       WHERE storefront_id = ? AND idempotency_key = ?
+       LIMIT 1`
+    )
+      .bind(actor.storefrontId, idempotencyKey)
+      .first<{ request_hash: string; response_json: string }>();
+
+    if (existingIdemp) {
+      if (existingIdemp.request_hash !== requestHash) {
+        return new Response(
+          JSON.stringify({
+            ok: false,
+            error: "idempotency_key_conflict",
+            message: "Idempotency key was already used with a different POS handoff payload.",
+          }),
+          { status: 409, headers }
+        );
+      }
+      const cached = JSON.parse(existingIdemp.response_json) as PosOrderFulfillmentAckResponse;
+      return new Response(JSON.stringify({ ...cached, duplicate: true }), {
+        status: 200,
+        headers,
+      });
+    }
+
+    const ord = await env.DB.prepare(
+      `SELECT * FROM storefront_orders
+       WHERE id = ? AND storefront_id = ? AND pharmacy_id = ?
+       LIMIT 1`
+    )
+      .bind(orderId, actor.storefrontId, actor.pharmacyId)
+      .first<StorefrontOrderRecord>();
+
+    if (!ord) {
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          error: "order_not_found",
+          message: "Online order not found for this pharmacy.",
+        }),
+        { status: 404, headers }
+      );
+    }
+
+    // Prevent duplicate invoicing if already linked to a different POS invoice
+    if (
+      (action === "mark_fulfilled" || action === "link_pos_invoice") &&
+      ord.pos_invoice_number &&
+      body.pos_invoice_number &&
+      ord.pos_invoice_number !== body.pos_invoice_number
+    ) {
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          error: "order_already_invoiced",
+          message: `Order ${ord.order_number} is already linked to POS invoice ${ord.pos_invoice_number}. Duplicate invoicing blocked.`,
+        }),
+        { status: 409, headers }
+      );
+    }
+
+    const nowIso = new Date().toISOString();
+    const prevDisplayStatus = resolveEffectiveOrderStatusSync(ord as any);
+    const prevPaymentStatus: StorefrontPaymentStatus =
+      ((ord as any).payment_status as StorefrontPaymentStatus) ||
+      (ord.payment_method === "cod" ? "pending_cod" : "unpaid");
+    const prevCodPaid = Number((ord as any).cod_paid_amount_pkr || 0);
+    const prevInvoiceNumber = ord.pos_invoice_number || null;
+
+    let dbStatus = String(ord.status);
+    let fulfillmentOutcome: string | null = (ord as any).fulfillment_outcome || null;
+    let nextPaymentStatus: StorefrontPaymentStatus = body.payment_status || prevPaymentStatus;
+    let nextHandoffStatus: PosHandoffStatus = (ord.pos_handoff_status || "pending") as PosHandoffStatus;
+    let posInvoiceId = ord.pos_invoice_id || null;
+    let posInvoiceNumber = ord.pos_invoice_number || null;
+    let posOrderRef = body.pos_order_ref || ord.pos_order_ref || null;
+    let posFulfilledAt = ord.pos_fulfilled_at || null;
+    let posFulfilledBy = ord.pos_fulfilled_by || null;
+    let fulfillmentNotes = body.fulfillment_notes || (ord as any).fulfillment_notes || null;
+    let fulfilledAdjustmentsJson =
+      body.fulfilled_adjustments && typeof body.fulfilled_adjustments === "object"
+        ? JSON.stringify(body.fulfilled_adjustments)
+        : (ord as any).fulfilled_adjustments_json || null;
+    let codPaidAmountPkr =
+      body.cod_paid_amount_pkr !== undefined && Number.isFinite(Number(body.cod_paid_amount_pkr))
+        ? Math.max(0, Number(body.cod_paid_amount_pkr))
+        : prevCodPaid;
+    let codBalanceDuePkr: number | null =
+      body.cod_balance_due_pkr !== undefined && body.cod_balance_due_pkr !== null
+        ? Math.max(0, Number(body.cod_balance_due_pkr))
+        : (ord as any).cod_balance_due_pkr !== null && (ord as any).cod_balance_due_pkr !== undefined
+        ? Number((ord as any).cod_balance_due_pkr)
+        : ord.payment_method === "cod"
+        ? Math.max(0, Number(ord.total_pkr || 0) - codPaidAmountPkr)
+        : null;
+    let codLastCollectionAt: string | null =
+      body.cod_last_collection_at !== undefined
+        ? body.cod_last_collection_at
+        : (ord as any).cod_last_collection_at || null;
+    let codCollectionsJson: string | null =
+      body.cod_collections_json !== undefined
+        ? body.cod_collections_json
+        : (ord as any).cod_collections_json || null;
+    let historyNote = body.note || "";
+
+    const requestedStatus = (body.next_status ||
+      body.target_status ||
+      (body as any).status) as StorefrontOrderStatus | undefined;
+
+    const validateRequestedTransition = (target: StorefrontOrderStatus): string | null => {
+      if (target === prevDisplayStatus) return null;
+      if (prevDisplayStatus === "cancelled" || prevDisplayStatus === "rejected") {
+        return `Order ${ord.order_number} is already ${prevDisplayStatus} and cannot transition to '${target}'.`;
+      }
+      if (
+        (prevDisplayStatus === "delivered" ||
+          prevDisplayStatus === "collected" ||
+          prevDisplayStatus === "returned") &&
+        target !== "returned" &&
+        target !== prevDisplayStatus
+      ) {
+        return `Completed order ${ord.order_number} ('${prevDisplayStatus}') cannot move back to '${target}'.`;
+      }
+      if (ord.fulfillment_type === "pickup" && target === "out_for_delivery") {
+        return `Counter Pickup order ${ord.order_number} cannot be marked 'out_for_delivery'. Use 'ready_for_pickup'.`;
+      }
+      if (ord.fulfillment_type === "delivery" && target === "ready_for_pickup") {
+        return `Home Delivery order ${ord.order_number} cannot be marked 'ready_for_pickup'. Use 'out_for_delivery'.`;
+      }
+      return null;
+    };
+
+    if (action === "acknowledge_receipt") {
+      if (nextHandoffStatus === "pending") {
+        nextHandoffStatus = "fetched_by_pos";
+      }
+      historyNote = historyNote || "Order received in POS Order Inbox for pharmacist/operator review.";
+    } else if (action === "load_to_billing") {
+      if (nextHandoffStatus !== "invoiced_in_pos" && nextHandoffStatus !== "fulfilled_in_pos") {
+        nextHandoffStatus = "loaded_in_pos";
+      }
+      if (dbStatus === "pending_confirmation") {
+        dbStatus = "confirmed";
+      }
+      historyNote =
+        historyNote ||
+        "Order loaded into active POS Billing Cart for pharmacist/cashier verification (sale not finalized yet).";
+    } else if (action === "stage_held_bill") {
+      if (nextHandoffStatus !== "invoiced_in_pos" && nextHandoffStatus !== "fulfilled_in_pos") {
+        nextHandoffStatus = "held_in_pos";
+      }
+      if (dbStatus === "pending_confirmation") {
+        dbStatus = "confirmed";
+      }
+      historyNote =
+        historyNote ||
+        `Order placed on Hold for Later (${posOrderRef || "POS-HOLD"}) in POS Billing.`;
+    } else if (action === "link_pos_invoice") {
+      posInvoiceId = body.pos_invoice_id || posInvoiceId;
+      posInvoiceNumber = body.pos_invoice_number || posInvoiceNumber || posOrderRef;
+      posFulfilledBy = body.operator_name || body.operator_id || "POS Operator";
+      if (requestedStatus) {
+        const mapped = mapStatusToDbFields(requestedStatus, ord.fulfillment_type);
+        dbStatus = mapped.dbStatus;
+        fulfillmentOutcome = mapped.fulfillmentOutcome;
+      } else if (dbStatus === "pending_confirmation" || dbStatus === "confirmed") {
+        dbStatus = ord.fulfillment_type === "pickup" ? "ready_for_pickup" : "preparing";
+      }
+      if (dbStatus === "completed") {
+        nextHandoffStatus = "fulfilled_in_pos";
+        posFulfilledAt = nowIso;
+      } else {
+        nextHandoffStatus = "invoiced_in_pos";
+      }
+      if (nextPaymentStatus === "paid") {
+        codBalanceDuePkr = 0;
+        if (ord.payment_method === "cod" && codPaidAmountPkr <= 0) {
+          codPaidAmountPkr = Number(ord.total_pkr || 0);
+        }
+      }
+      historyNote =
+        historyNote ||
+        `POS Invoice ${posInvoiceNumber || ""} finalized (payment: ${nextPaymentStatus}).`;
+    } else if (action === "update_status") {
+      if (requestedStatus) {
+        const normalizedTarget =
+          ord.fulfillment_type === "pickup" && requestedStatus === "delivered"
+            ? "collected"
+            : ord.fulfillment_type === "delivery" && requestedStatus === "collected"
+            ? "delivered"
+            : requestedStatus;
+        const transitionErr = validateRequestedTransition(normalizedTarget);
+        if (transitionErr) {
+          return new Response(
+            JSON.stringify({
+              ok: false,
+              error: "invalid_status_transition",
+              message: transitionErr,
+            }),
+            { status: 400, headers }
+          );
+        }
+        const mapped = mapStatusToDbFields(normalizedTarget, ord.fulfillment_type);
+        dbStatus = mapped.dbStatus;
+        fulfillmentOutcome = mapped.fulfillmentOutcome;
+        if (dbStatus === "completed") {
+          nextHandoffStatus = "fulfilled_in_pos";
+          posFulfilledAt = posFulfilledAt || nowIso;
+          posFulfilledBy = body.operator_name || body.operator_id || posFulfilledBy || "POS Operator";
+        } else if (dbStatus === "cancelled" || dbStatus === "rejected") {
+          nextHandoffStatus = "cancelled";
+        } else if (dbStatus !== "pending_confirmation" && nextHandoffStatus === "pending") {
+          nextHandoffStatus = "acknowledged";
+        }
+      }
+      if (body.pos_invoice_id) posInvoiceId = body.pos_invoice_id;
+      if (body.pos_invoice_number) posInvoiceNumber = body.pos_invoice_number;
+      historyNote =
+        historyNote ||
+        `Order updated in POS (${requestedStatus || dbStatus}, payment: ${nextPaymentStatus}).`;
+    } else if (action === "sync_cod_payment") {
+      if (body.pos_invoice_id) posInvoiceId = body.pos_invoice_id;
+      if (body.pos_invoice_number) posInvoiceNumber = body.pos_invoice_number;
+      historyNote =
+        historyNote ||
+        `COD collection synced from POS (paid: PKR ${codPaidAmountPkr.toLocaleString()}, remaining: PKR ${Number(
+          codBalanceDuePkr || 0
+        ).toLocaleString()}, status: ${nextPaymentStatus}).`;
+    } else if (action === "mark_fulfilled") {
+      if (prevDisplayStatus === "cancelled" || prevDisplayStatus === "rejected") {
+        return new Response(
+          JSON.stringify({
+            ok: false,
+            error: "invalid_status_transition",
+            message: `Order ${ord.order_number} is ${prevDisplayStatus} and cannot be marked fulfilled.`,
+          }),
+          { status: 400, headers }
+        );
+      }
+      nextHandoffStatus = "fulfilled_in_pos";
+      dbStatus = "completed";
+      fulfillmentOutcome = ord.fulfillment_type === "pickup" ? "collected" : "delivered";
+      posInvoiceId = body.pos_invoice_id || posInvoiceId;
+      posInvoiceNumber = body.pos_invoice_number || posInvoiceNumber || posOrderRef;
+      posFulfilledAt = nowIso;
+      posFulfilledBy = body.operator_name || body.operator_id || "POS Operator";
+      historyNote =
+        historyNote ||
+        `Marked ${fulfillmentOutcome} in POS (${posInvoiceNumber || "Completed"}).`;
+    } else if (action === "cancel_order") {
+      if (
+        prevDisplayStatus === "delivered" ||
+        prevDisplayStatus === "collected" ||
+        prevDisplayStatus === "returned"
+      ) {
+        return new Response(
+          JSON.stringify({
+            ok: false,
+            error: "invalid_status_transition",
+            message: `Order ${ord.order_number} is already ${prevDisplayStatus} and cannot be cancelled. Process a POS return instead.`,
+          }),
+          { status: 400, headers }
+        );
+      }
+      nextHandoffStatus = "cancelled";
+      dbStatus = requestedStatus === "rejected" ? "rejected" : "cancelled";
+      fulfillmentOutcome = null;
+      historyNote = historyNote || `Order ${dbStatus} from POS Order Inbox.`;
+    }
+
+    await env.DB.prepare(
+      `UPDATE storefront_orders
+       SET status = ?,
+           fulfillment_outcome = ?,
+           payment_status = ?,
+           cod_paid_amount_pkr = ?,
+           cod_balance_due_pkr = ?,
+           cod_last_collection_at = ?,
+           cod_collections_json = ?,
+           pos_handoff_status = ?,
+           pos_order_ref = ?,
+           pos_invoice_id = ?,
+           pos_invoice_number = ?,
+           pos_fulfilled_at = ?,
+           pos_fulfilled_by = ?,
+           fulfillment_notes = ?,
+           fulfilled_adjustments_json = ?,
+           updated_at = ?
+       WHERE id = ? AND storefront_id = ? AND pharmacy_id = ?`
+    )
+      .bind(
+        dbStatus,
+        fulfillmentOutcome,
+        nextPaymentStatus,
+        codPaidAmountPkr,
+        codBalanceDuePkr,
+        codLastCollectionAt,
+        codCollectionsJson,
+        nextHandoffStatus,
+        posOrderRef,
+        posInvoiceId,
+        posInvoiceNumber,
+        posFulfilledAt,
+        posFulfilledBy,
+        fulfillmentNotes,
+        fulfilledAdjustmentsJson,
+        nowIso,
+        ord.id,
+        actor.storefrontId,
+        actor.pharmacyId
+      )
+      .run();
+
+    const nextDisplayStatus = resolveEffectiveOrderStatusSync({
+      status: dbStatus,
+      fulfillment_outcome: fulfillmentOutcome,
+      fulfillment_type: ord.fulfillment_type,
+    });
+
+    const meaningfulChange =
+      prevDisplayStatus !== nextDisplayStatus ||
+      prevPaymentStatus !== nextPaymentStatus ||
+      Math.abs(prevCodPaid - codPaidAmountPkr) > 0.005 ||
+      prevInvoiceNumber !== posInvoiceNumber ||
+      action === "sync_cod_payment" ||
+      action === "load_to_billing" ||
+      action === "stage_held_bill";
+
+    if (meaningfulChange) {
+      await env.DB.prepare(
+        `INSERT INTO storefront_order_status_history (
+           id, storefront_id, pharmacy_id, order_id, from_status, to_status,
+           actor_type, actor_id, note, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, 'pos_operator', ?, ?, ?)`
+      )
+        .bind(
+          `sfosh_${crypto.randomUUID()}`,
+          actor.storefrontId,
+          actor.pharmacyId,
+          ord.id,
+          prevDisplayStatus,
+          nextDisplayStatus,
+          body.operator_name || body.operator_id || "pos_terminal",
+          historyNote,
+          nowIso
+        )
+        .run();
+    }
+
+    const respPayload: PosOrderFulfillmentAckResponse = {
+      ok: true,
+      duplicate: false,
+      order_id: ord.id,
+      order_number: ord.order_number,
+      status: nextDisplayStatus,
+      payment_status: nextPaymentStatus,
+      cod_paid_amount_pkr: codPaidAmountPkr,
+      cod_balance_due_pkr: codBalanceDuePkr,
+      pos_handoff_status: nextHandoffStatus,
+      pos_invoice_number: posInvoiceNumber,
+      updated_at: nowIso,
+    };
+
+    const expiresAt = new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString();
+    await env.DB.prepare(
+      `INSERT INTO storefront_import_idempotency (
+         storefront_id, pharmacy_id, idempotency_key, request_hash, response_json, created_at, expires_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    )
+      .bind(
+        actor.storefrontId,
+        actor.pharmacyId,
+        idempotencyKey,
+        requestHash,
+        JSON.stringify(respPayload),
+        nowIso,
+        expiresAt
+      )
+      .run();
+
+    await writeStorefrontAuditLog(env.DB, {
+      storefrontId: actor.storefrontId,
+      pharmacyId: actor.pharmacyId,
+      action: `pos_order_${action}`,
+      actorType: "pos_sync",
+      actorId: body.operator_id || actor.branchId,
+      entityType: "order",
+      entityId: ord.id,
+      summary: `POS Order action '${action}' on ${ord.order_number} -> status=${nextDisplayStatus}, payment=${nextPaymentStatus}, handoff=${nextHandoffStatus}.`,
+      metadata: {
+        order_number: ord.order_number,
+        action,
+        status: nextDisplayStatus,
+        payment_status: nextPaymentStatus,
+        pos_order_ref: posOrderRef,
+        pos_invoice_number: posInvoiceNumber,
+      },
+    });
+
+    return new Response(JSON.stringify(respPayload), { status: 200, headers });
+  }
+
+  return new Response(
+    JSON.stringify({ ok: false, error: "not_found", message: "Unknown sync endpoint" }),
+    { status: 404, headers }
+  );
+}

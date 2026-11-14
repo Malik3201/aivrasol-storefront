@@ -1,0 +1,18 @@
+{
+  "name": "aivrasol-storefront",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AivraSol Multi-Tenant Pharmacy Storefront SaaS — Cloudflare Worker, D1 & React Frontend",
+  "type": "module",
+  "scripts": {
+    "dev:worker": "node ../aivrasol-pos/node_modules/tsx/dist/cli.mjs src/worker/dev-server.ts",
+    "start:staging": "node ../aivrasol-pos/node_modules/tsx/dist/cli.mjs src/worker/dev-server.ts",
+    "dev:client": "node ../aivrasol-pos/node_modules/vite/bin/vite.js",
+    "build": "node ../aivrasol-pos/node_modules/vite/bin/vite.js build",
+    "migrate:up": "node ../aivrasol-pos/node_modules/tsx/dist/cli.mjs src/worker/cli-migrate.ts up",
+    "migrate:down": "node ../aivrasol-pos/node_modules/tsx/dist/cli.mjs src/worker/cli-migrate.ts down",
+    "cf:migrate:staging": "npx wrangler d1 migrations apply aivrasol-storefront-staging-db --env staging --remote",
+    "cf:deploy:staging": "npm run build && npx wrangler deploy --env staging",
+    "test": "node ../aivrasol-pos/node_modules/tsx/dist/cli.mjs --test src/__tests__/storefront-foundation.test.ts"
+  }
+}

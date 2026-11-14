@@ -1,0 +1,7 @@
+{
+  "workerBaseUrl": "https://aivrasol-storefront-staging.aivrasol-storefront.workers.dev",
+  "adminSecret": "YOUR_STOREFRONT_ADMIN_OR_COLLECTOR_SECRET",
+  "batchSize": 5,
+  "delayBetweenSearchesMs": 1500,
+  "maxJobsPerSession": 25
+}

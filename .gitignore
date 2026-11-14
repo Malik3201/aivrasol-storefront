@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.wrangler/
+.local-d1/
+.env
+.env.*
+!.env.example
+*.log
+*.tmp
+tools/image-collector/config.json

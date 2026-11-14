@@ -1,0 +1,126 @@
+/**
+ * Free-Tier-First Compact Daily Usage Tracker & Tenant Audit Logger (Sections 6, 8 & 14)
+ */
+
+import type { D1Database } from "./env";
+
+export interface UsageIncrementInput {
+  storefrontId: string;
+  pharmacyId: string;
+  publicRequests?: number;
+  searchRequests?: number;
+  syncRequests?: number;
+  manageRequests?: number;
+  d1RowsReadEst?: number;
+  d1RowsWrittenEst?: number;
+  r2BytesStoredDelta?: number;
+  r2ClassAOps?: number;
+  r2ClassBOps?: number;
+  ordersCreated?: number;
+}
+
+export function getTodayUtcDateString(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/**
+ * Atomically increments the compact daily usage row for a tenant storefront.
+ * Consumes only 1 D1 row write per call and keeps total storage bounded to 365 rows/year/pharmacy.
+ */
+export async function recordStorefrontUsage(
+  db: D1Database,
+  input: UsageIncrementInput
+): Promise<void> {
+  const usageDate = getTodayUtcDateString();
+  const nowIso = new Date().toISOString();
+
+  try {
+    await db
+      .prepare(
+        `INSERT INTO storefront_usage_daily (
+           storefront_id, pharmacy_id, usage_date,
+           public_requests, search_requests, sync_requests, manage_requests,
+           d1_rows_read_est, d1_rows_written_est,
+           r2_bytes_stored, r2_class_a_ops, r2_class_b_ops, orders_created, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(storefront_id, usage_date) DO UPDATE SET
+           public_requests = storefront_usage_daily.public_requests + excluded.public_requests,
+           search_requests = storefront_usage_daily.search_requests + excluded.search_requests,
+           sync_requests = storefront_usage_daily.sync_requests + excluded.sync_requests,
+           manage_requests = storefront_usage_daily.manage_requests + excluded.manage_requests,
+           d1_rows_read_est = storefront_usage_daily.d1_rows_read_est + excluded.d1_rows_read_est,
+           d1_rows_written_est = storefront_usage_daily.d1_rows_written_est + excluded.d1_rows_written_est,
+           r2_bytes_stored = MAX(0, storefront_usage_daily.r2_bytes_stored + excluded.r2_bytes_stored),
+           r2_class_a_ops = storefront_usage_daily.r2_class_a_ops + excluded.r2_class_a_ops,
+           r2_class_b_ops = storefront_usage_daily.r2_class_b_ops + excluded.r2_class_b_ops,
+           orders_created = storefront_usage_daily.orders_created + excluded.orders_created,
+           updated_at = excluded.updated_at`
+      )
+      .bind(
+        input.storefrontId,
+        input.pharmacyId,
+        usageDate,
+        input.publicRequests ?? 0,
+        input.searchRequests ?? 0,
+        input.syncRequests ?? 0,
+        input.manageRequests ?? 0,
+        input.d1RowsReadEst ?? 1,
+        input.d1RowsWrittenEst ?? 1,
+        input.r2BytesStoredDelta ?? 0,
+        input.r2ClassAOps ?? 0,
+        input.r2ClassBOps ?? 0,
+        input.ordersCreated ?? 0,
+        nowIso
+      )
+      .run();
+  } catch {
+    // Non-fatal: usage telemetry should never fail user requests
+  }
+}
+
+export interface AuditLogInput {
+  storefrontId: string;
+  pharmacyId: string;
+  action: string;
+  actorType: "super_admin" | "portal_owner" | "portal_manager" | "pos_sync" | "system";
+  actorId?: string | null;
+  actorEmail?: string | null;
+  entityType: string;
+  entityId?: string | null;
+  summary: string;
+  metadata?: Record<string, unknown>;
+  ipAddress?: string | null;
+}
+
+export async function writeStorefrontAuditLog(
+  db: D1Database,
+  input: AuditLogInput
+): Promise<string> {
+  const id = `sfa_${crypto.randomUUID()}`;
+  const nowIso = new Date().toISOString();
+  await db
+    .prepare(
+      `INSERT INTO storefront_audit_logs (
+         id, storefront_id, pharmacy_id, action, actor_type, actor_id, actor_email,
+         entity_type, entity_id, summary, metadata_json, ip_address, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .bind(
+      id,
+      input.storefrontId,
+      input.pharmacyId,
+      input.action,
+      input.actorType,
+      input.actorId ?? null,
+      input.actorEmail ?? null,
+      input.entityType,
+      input.entityId ?? null,
+      input.summary,
+      JSON.stringify(input.metadata ?? {}),
+      input.ipAddress ?? null,
+      nowIso
+    )
+    .run();
+  return id;
+}
+

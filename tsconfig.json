@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "baseUrl": ".",
+    "typeRoots": ["../aivrasol-pos/node_modules/@types"],
+    "types": ["node"],
+    "paths": {
+      "react": ["../aivrasol-pos/node_modules/@types/react/index.d.ts"],
+      "react/jsx-runtime": ["../aivrasol-pos/node_modules/@types/react/jsx-runtime.d.ts"],
+      "react/jsx-dev-runtime": ["../aivrasol-pos/node_modules/@types/react/jsx-dev-runtime.d.ts"],
+      "react-dom": ["../aivrasol-pos/node_modules/@types/react-dom/index.d.ts"],
+      "react-dom/client": ["../aivrasol-pos/node_modules/@types/react-dom/client.d.ts"]
+    }
+  },
+  "include": ["src"],
+  "exclude": ["dist", "node_modules", "src/__tests__"]
+}
+

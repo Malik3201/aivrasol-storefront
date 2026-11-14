@@ -1,0 +1,64 @@
+# ============================================================================
+# AivraSol Multi-Tenant Pharmacy Storefront — Cloudflare Worker Configuration
+# Free-Tier-First Architecture: Workers + Static Assets + D1 + R2 Standard
+# No KV, No Queues, No Durable Objects
+# ============================================================================
+
+name = "aivrasol-storefront"
+main = "src/worker/index.ts"
+compatibility_date = "2025-02-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+# Serve built React + Vite frontend via Cloudflare Workers Static Assets (Free)
+[assets]
+directory = "./dist/client"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+# Cloudflare D1 Database Binding (Production — Shared Multi-Tenant Storefront DB)
+[[d1_databases]]
+binding = "DB"
+database_name = "aivrasol-storefront-db"
+database_id = "00000000-0000-0000-0000-000000000000" # Replace with `npx wrangler d1 create aivrasol-storefront-db` ID
+migrations_dir = "migrations"
+
+# Cloudflare R2 Standard Bucket Binding for Optimized Storefront Media
+[[r2_buckets]]
+binding = "MEDIA_BUCKET"
+bucket_name = "aivrasol-storefront-media"
+
+[vars]
+PLATFORM_BASE_DOMAIN = "workers.dev"
+ALLOW_DEV_HOST_OVERRIDE = "false"
+
+# ============================================================================
+# Isolated Staging Environment (`npx wrangler deploy --env staging`)
+# Safe for pilot testing without affecting customer-facing production domains
+# ============================================================================
+[env.staging]
+name = "aivrasol-storefront-staging"
+workers_dev = true
+
+[env.staging.assets]
+directory = "./dist/client"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "aivrasol-storefront-staging-db"
+database_id = "124a3ef6-2178-4de2-8fdc-97cc906f9716" # Replace with `npx wrangler d1 create aivrasol-storefront-staging-db` ID
+migrations_dir = "migrations"
+
+[[env.staging.r2_buckets]]
+binding = "MEDIA_BUCKET"
+bucket_name = "aivrasol-storefront-staging-media"
+
+[env.staging.vars]
+PLATFORM_BASE_DOMAIN = "workers.dev"
+ALLOW_DEV_HOST_OVERRIDE = "false"
+
+# Secrets (set via `npx wrangler secret put <NAME> --env staging`; never committed in plaintext):
+# - STOREFRONT_ADMIN_SECRET
+# - STOREFRONT_SYNC_SECRET
