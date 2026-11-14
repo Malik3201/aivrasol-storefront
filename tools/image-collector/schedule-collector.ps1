@@ -1,4 +1,4 @@
-# ============================================================================
+﻿# ============================================================================
 # AivraSol Medicine Image Collector — Windows Task Scheduler Automation
 # Automatically runs the local medicine image collector at configured intervals
 # ============================================================================
@@ -11,13 +11,12 @@ param (
 $TaskName = "AivraSol-Medicine-Image-Collector"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $NodeExe = (Get-Command node.exe).Source
-$TsxPath = Resolve-Path "$ScriptDir\..\..\node_modules\tsx\dist\cli.mjs"
-$CollectorScript = "$ScriptDir\collector.ts"
-
-if (-not (Test-Path $TsxPath)) {
-    # Fallback to pos node_modules tsx
-    $TsxPath = Resolve-Path "$ScriptDir\..\..\..\aivrasol-pos\node_modules\tsx\dist\cli.mjs"
+$TsxCandidate = "$ScriptDir\..\..\node_modules\tsx\dist\cli.mjs"
+if (-not (Test-Path $TsxCandidate)) {
+    $TsxCandidate = "$ScriptDir\..\..\..\aivrasol-pos\node_modules\tsx\dist\cli.mjs"
 }
+$TsxPath = if (Test-Path $TsxCandidate) { (Resolve-Path $TsxCandidate).Path } else { $TsxCandidate }
+$CollectorScript = "$ScriptDir\collector.ts"
 
 $CommandString = "`"$NodeExe`" `"$TsxPath`" `"$CollectorScript`""
 
