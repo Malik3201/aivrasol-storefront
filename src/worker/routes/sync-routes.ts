@@ -78,7 +78,80 @@ import {
   verifyManagementAuth,
   verifySyncToken,
 } from "../security";
-import { recordStorefrontUsage, writeStorefrontAuditLog } from "../usage-tracker";
+import {
+  recordBufferedSyncPollUsage,
+  recordStorefrontUsage,
+  sumD1MetaCounts,
+  writeStorefrontAuditLog,
+} from "../usage-tracker";
+
+// ============================================================================
+// Lightweight Per-Isolate Caches (Tenant-Scoped, Instant Invalidation on Writes)
+// ============================================================================
+const ORDER_NOTIF_CACHE_TTL_MS = 20_000;
+const orderNotifCache = new Map<string, { expiresAt: number; payload: string }>();
+
+export function invalidateOrderNotifCache(storefrontId: string, pharmacyId: string): void {
+  orderNotifCache.delete(`${storefrontId}:${pharmacyId}`);
+}
+
+const CANONICAL_MEDIA_CACHE_TTL_MS = 60_000;
+let verifiedCanonicalCache: {
+  expiresAt: number;
+  rows: Array<CanonicalMedicineRecord & { preferred_image_url: string }>;
+} | null = null;
+
+async function loadVerifiedCanonicalCatalogCached(
+  db: D1Database
+): Promise<{
+  catalog: Array<CanonicalMedicineRecord & { preferred_image_url: string }>;
+  rowsRead: number;
+}> {
+  const now = Date.now();
+  if (verifiedCanonicalCache && verifiedCanonicalCache.expiresAt > now) {
+    return { catalog: verifiedCanonicalCache.rows, rowsRead: 0 };
+  }
+  const res = await db
+    .prepare(
+      `SELECT c.id, c.canonical_name, c.master_catalog_id, c.master_catalog_name, c.normalized_catalog_name,
+              c.brand_name, c.generic_name, c.strength, c.dosage_form,
+              c.manufacturer, c.pack_size, c.pack_unit, c.barcode, c.aliases_json,
+              c.verification_status, c.preferred_media_id, m.public_url AS preferred_image_url
+       FROM central_medicines c
+       INNER JOIN storefront_media m ON c.preferred_media_id = m.id
+       WHERE c.verification_status = 'verified' AND c.preferred_media_id IS NOT NULL`
+    )
+    .all<Record<string, unknown>>();
+
+  const rows: Array<CanonicalMedicineRecord & { preferred_image_url: string }> = (
+    res.results || []
+  ).map((r) => ({
+    id: String(r.id),
+    canonical_name: String(r.canonical_name),
+    master_catalog_id: r.master_catalog_id ? String(r.master_catalog_id) : null,
+    master_catalog_name: r.master_catalog_name ? String(r.master_catalog_name) : null,
+    normalized_catalog_name: r.normalized_catalog_name ? String(r.normalized_catalog_name) : null,
+    brand_name: r.brand_name ? String(r.brand_name) : null,
+    generic_name: r.generic_name ? String(r.generic_name) : null,
+    strength: r.strength ? String(r.strength) : null,
+    dosage_form: r.dosage_form ? String(r.dosage_form) : null,
+    manufacturer: r.manufacturer ? String(r.manufacturer) : null,
+    pack_size: r.pack_size ? Number(r.pack_size) : null,
+    pack_unit: r.pack_unit ? String(r.pack_unit) : null,
+    barcode: r.barcode ? String(r.barcode) : null,
+    aliases_json: r.aliases_json ? String(r.aliases_json) : null,
+    verification_status: String(r.verification_status),
+    preferred_media_id: String(r.preferred_media_id),
+    preferred_image_url: String(r.preferred_image_url),
+  }));
+
+  verifiedCanonicalCache = {
+    expiresAt: now + CANONICAL_MEDIA_CACHE_TTL_MS,
+    rows,
+  };
+  const { rowsRead } = sumD1MetaCounts([res as any], { rowsRead: rows.length + 1 });
+  return { catalog: rows, rowsRead };
+}
 
 export async function recalculateStorefrontCatalogCounts(
   db: D1Database,
@@ -588,40 +661,14 @@ export async function handleSyncRoutes(
     const syncEventId = `sfe_${crypto.randomUUID()}`;
     const nowIso = new Date().toISOString();
 
-    // Pre-load verified central medicines for automatic image matching
-    const { results: verifiedCanonicalRows } = await env.DB.prepare(
-      `SELECT c.id, c.canonical_name, c.master_catalog_id, c.master_catalog_name, c.normalized_catalog_name,
-              c.brand_name, c.generic_name, c.strength, c.dosage_form,
-              c.manufacturer, c.pack_size, c.pack_unit, c.barcode, c.aliases_json,
-              c.verification_status, c.preferred_media_id, m.public_url AS preferred_image_url
-       FROM central_medicines c
-       INNER JOIN storefront_media m ON c.preferred_media_id = m.id
-       WHERE c.verification_status = 'verified' AND c.preferred_media_id IS NOT NULL`
-    ).all<Record<string, unknown>>();
-
-    const canonicalCatalog: (CanonicalMedicineRecord & { preferred_image_url: string })[] =
-      (verifiedCanonicalRows || []).map((r) => ({
-        id: String(r.id),
-        canonical_name: String(r.canonical_name),
-        master_catalog_id: r.master_catalog_id ? String(r.master_catalog_id) : null,
-        master_catalog_name: r.master_catalog_name ? String(r.master_catalog_name) : null,
-        normalized_catalog_name: r.normalized_catalog_name ? String(r.normalized_catalog_name) : null,
-        brand_name: r.brand_name ? String(r.brand_name) : null,
-        generic_name: r.generic_name ? String(r.generic_name) : null,
-        strength: r.strength ? String(r.strength) : null,
-        dosage_form: r.dosage_form ? String(r.dosage_form) : null,
-        manufacturer: r.manufacturer ? String(r.manufacturer) : null,
-        pack_size: r.pack_size ? Number(r.pack_size) : null,
-        pack_unit: r.pack_unit ? String(r.pack_unit) : null,
-        barcode: r.barcode ? String(r.barcode) : null,
-        aliases_json: r.aliases_json ? String(r.aliases_json) : null,
-        verification_status: String(r.verification_status),
-        preferred_media_id: String(r.preferred_media_id),
-        preferred_image_url: String(r.preferred_image_url),
-      }));
+    // Pre-load verified central medicines for automatic image matching (60s isolate-cached + indexed)
+    const { catalog: canonicalCatalog, rowsRead: canonicalRowsRead } =
+      await loadVerifiedCanonicalCatalogCached(env.DB);
 
     let itemsApplied = 0;
     let itemsRejected = 0;
+    let catalogTopologyChanged = false;
+    let syncActualRowsRead = canonicalRowsRead + 3;
     const rejections: Array<{ pos_product_id: string; error_code: string; message: string }> = [];
 
     for (let i = 0; i < body.items.length; i++) {
@@ -655,9 +702,10 @@ export async function handleSyncRoutes(
         continue;
       }
 
-      // Check existing product revision & branch stock
+      // Check existing product revision, category & image source
       const existingProd = await env.DB.prepare(
-        `SELECT id, slug, sync_version, branch_stock_json, primary_image_url, publish_status
+        `SELECT id, slug, sync_version, branch_stock_json, primary_image_url, publish_status,
+                category_name, is_controlled_substance, canonical_medicine_id, selected_media_id, image_source
          FROM storefront_products
          WHERE storefront_id = ? AND pharmacy_id = ? AND pos_product_id = ?
          LIMIT 1`
@@ -670,7 +718,13 @@ export async function handleSyncRoutes(
           branch_stock_json?: string;
           primary_image_url?: string | null;
           publish_status?: string;
+          category_name?: string | null;
+          is_controlled_substance?: number;
+          canonical_medicine_id?: string | null;
+          selected_media_id?: string | null;
+          image_source?: string | null;
         }>();
+      syncActualRowsRead += 1;
 
       const rev = Number(item?.source_revision ?? 1);
       if (existingProd && Number(existingProd.sync_version) > rev) {
@@ -682,6 +736,9 @@ export async function handleSyncRoutes(
       // Handle soft product deletion / archiving from POS
       if (item.is_deleted || item.website_visibility === "archived") {
         if (existingProd) {
+          if (existingProd.publish_status !== "archived") {
+            catalogTopologyChanged = true;
+          }
           await env.DB.prepare(
             `UPDATE storefront_products
              SET publish_status = 'archived',
@@ -812,6 +869,14 @@ export async function handleSyncRoutes(
         }
       }
       const categoryName = String(item.product_identity.category_name || "General Medicines").trim();
+      if (
+        !existingProd ||
+        existingProd.publish_status !== effectivePublishStatus ||
+        Number(existingProd.is_controlled_substance || 0) !== (isControlled ? 1 : 0) ||
+        String(existingProd.category_name || "General Medicines").trim() !== categoryName
+      ) {
+        catalogTopologyChanged = true;
+      }
       const searchKeywords = [
         name,
         item.product_identity.generic_name,
@@ -987,23 +1052,37 @@ export async function handleSyncRoutes(
       itemsApplied++;
     }
 
-    // Automatically unpublish synthetic starter rows (POS-MED-* / PORTAL-ITEM-*) once real POS sync runs
-    // while preserving rows so historical order foreign keys stay 100% intact.
-    if (body.full_snapshot || pathname === "/api/v1/sync/catalog-snapshot" || itemsApplied > 0) {
+    // Automatically unpublish synthetic starter rows (POS-MED-* / PORTAL-ITEM-*) ONLY on full snapshot
+    // or initial low-count sync, using indexed prefix ranges on UNIQUE(storefront_id, pos_product_id)
+    // instead of scanning all 2,000+ published products with LIKE on every delta!
+    const shouldCheckStarterRows =
+      Boolean(body.full_snapshot) ||
+      pathname === "/api/v1/sync/catalog-snapshot" ||
+      Number(sf.published_products_count || 0) <= 10;
+
+    if (shouldCheckStarterRows && itemsApplied > 0) {
       const syncedPosIds = new Set(
         body.items.map((it) => String(it?.pos_product_id || "").trim()).filter(Boolean)
       );
-      const legacyStarterRows = await env.DB.prepare(
+      const legacyStarterRes = await env.DB.prepare(
         `SELECT id, pos_product_id FROM storefront_products
-         WHERE storefront_id = ? AND pharmacy_id = ?
-           AND publish_status = 'published'
-           AND (pos_product_id LIKE 'POS-MED-%' OR pos_product_id LIKE 'PORTAL-ITEM-%')`
+         WHERE storefront_id = ?
+           AND (
+             (pos_product_id >= 'POS-MED-' AND pos_product_id < 'POS-MED.')
+             OR (pos_product_id >= 'PORTAL-ITEM-' AND pos_product_id < 'PORTAL-ITEM.')
+           )
+           AND pharmacy_id = ?
+           AND publish_status = 'published'`
       )
         .bind(actor.storefrontId, actor.pharmacyId)
         .all<{ id: string; pos_product_id: string }>();
+      syncActualRowsRead += sumD1MetaCounts([legacyStarterRes as any], {
+        rowsRead: (legacyStarterRes.results || []).length,
+      }).rowsRead;
 
-      for (const leg of legacyStarterRows.results || []) {
+      for (const leg of legacyStarterRes.results || []) {
         if (!syncedPosIds.has(leg.pos_product_id)) {
+          catalogTopologyChanged = true;
           await env.DB.prepare(
             `UPDATE storefront_products
              SET publish_status = 'unpublished', updated_at = ?
@@ -1020,16 +1099,20 @@ export async function handleSyncRoutes(
         Number(body.total_batches || 1) === 1 &&
         syncedPosIds.size > 0
       ) {
-        const stalePublishedRows = await env.DB.prepare(
+        const stalePublishedRes = await env.DB.prepare(
           `SELECT id, pos_product_id FROM storefront_products
            WHERE storefront_id = ? AND pharmacy_id = ?
              AND publish_status = 'published'`
         )
           .bind(actor.storefrontId, actor.pharmacyId)
           .all<{ id: string; pos_product_id: string }>();
+        syncActualRowsRead += sumD1MetaCounts([stalePublishedRes as any], {
+          rowsRead: (stalePublishedRes.results || []).length,
+        }).rowsRead;
 
-        for (const row of stalePublishedRows.results || []) {
+        for (const row of stalePublishedRes.results || []) {
           if (!syncedPosIds.has(row.pos_product_id)) {
+            catalogTopologyChanged = true;
             await env.DB.prepare(
               `UPDATE storefront_products
                SET publish_status = 'archived',
@@ -1046,12 +1129,21 @@ export async function handleSyncRoutes(
       }
     }
 
-    const publishedCount = await recalculateStorefrontCatalogCounts(
-      env.DB,
-      actor.storefrontId,
-      actor.pharmacyId,
-      { skipCategories: isIntermediateBatch }
-    );
+    // Avoid full COUNT(*) + GROUP BY scans on intermediate chunks or stock/price-only deltas
+    const needsCatalogRecount =
+      !isIntermediateBatch &&
+      (catalogTopologyChanged ||
+        Boolean(body.full_snapshot) ||
+        pathname === "/api/v1/sync/catalog-snapshot");
+
+    const publishedCount = needsCatalogRecount
+      ? await recalculateStorefrontCatalogCounts(env.DB, actor.storefrontId, actor.pharmacyId, {
+          skipCategories: false,
+        })
+      : Number(sf.published_products_count || 0);
+    if (needsCatalogRecount) {
+      syncActualRowsRead += Math.max(1, publishedCount * 2);
+    }
 
     // Update storefront last_sync_at
     await env.DB.prepare(
@@ -1156,7 +1248,7 @@ export async function handleSyncRoutes(
       storefrontId: actor.storefrontId,
       pharmacyId: actor.pharmacyId,
       syncRequests: 1,
-      d1RowsReadEst: body.items.length + 3,
+      d1RowsReadEst: syncActualRowsRead,
       d1RowsWrittenEst: itemsApplied * 2 + 4,
     });
 
@@ -1198,61 +1290,68 @@ export async function handleSyncRoutes(
       (pathname === "/api/v1/sync/orders/inbox" && url.searchParams.get("summary_only") === "1")) &&
     req.method === "GET"
   ) {
-    const countsRow = await env.DB.prepare(
-      `SELECT
-         SUM(CASE WHEN status NOT IN ('completed', 'cancelled', 'rejected') THEN 1 ELSE 0 END) AS active_attention_count,
-         SUM(CASE WHEN status = 'pending_confirmation' THEN 1 ELSE 0 END) AS pending_confirmation_count,
-         SUM(CASE WHEN status NOT IN ('completed', 'cancelled', 'rejected')
-                   AND COALESCE(pos_handoff_status, 'pending') = 'pending'
-                  THEN 1 ELSE 0 END) AS unread_handoff_count,
-         MAX(updated_at) AS latest_updated_at
-       FROM storefront_orders
-       WHERE storefront_id = ? AND pharmacy_id = ?`
-    )
-      .bind(actor.storefrontId, actor.pharmacyId)
-      .first<{
-        active_attention_count: number | null;
-        pending_confirmation_count: number | null;
-        unread_handoff_count: number | null;
-        latest_updated_at: string | null;
-      }>();
-
-    const activeAttentionCount = Number(countsRow?.active_attention_count || 0);
-    const pendingConfirmationCount = Number(countsRow?.pending_confirmation_count || 0);
-    const unreadHandoffCount = Number(countsRow?.unread_handoff_count || 0);
-
-    let recentNewOrders: Array<Record<string, unknown>> = [];
-    if (activeAttentionCount > 0) {
-      const recentRes = await env.DB.prepare(
-        `SELECT id AS order_id, order_number, customer_name, customer_phone, fulfillment_type,
-                total_pkr, status, COALESCE(payment_status, 'unpaid') AS payment_status,
-                COALESCE(pos_handoff_status, 'pending') AS pos_handoff_status, created_at
-         FROM storefront_orders
-         WHERE storefront_id = ? AND pharmacy_id = ?
-           AND status NOT IN ('completed', 'cancelled', 'rejected')
-         ORDER BY created_at DESC
-         LIMIT 8`
-      )
-        .bind(actor.storefrontId, actor.pharmacyId)
-        .all<Record<string, unknown>>();
-      recentNewOrders = recentRes.results || [];
+    const cacheKey = `${actor.storefrontId}:${actor.pharmacyId}`;
+    const cached = orderNotifCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return new Response(cached.payload, { status: 200, headers });
     }
 
-    return new Response(
-      JSON.stringify({
-        ok: true,
-        storefront_id: actor.storefrontId,
-        pharmacy_id: actor.pharmacyId,
-        active_attention_count: activeAttentionCount,
-        new_unacknowledged_count: pendingConfirmationCount,
-        pending_confirmation_count: pendingConfirmationCount,
-        unread_handoff_count: unreadHandoffCount,
-        latest_updated_at: countsRow?.latest_updated_at || null,
-        recent_orders: recentNewOrders,
-        latest_orders: recentNewOrders,
-      }),
-      { status: 200, headers }
-    );
+    // Single indexed query over ACTIVE orders only (never scans completed/cancelled historical orders!)
+    const activeRes = await env.DB.prepare(
+      `SELECT id AS order_id, order_number, customer_name, customer_phone, fulfillment_type,
+              total_pkr, status, COALESCE(payment_status, 'unpaid') AS payment_status,
+              COALESCE(pos_handoff_status, 'pending') AS pos_handoff_status,
+              created_at, updated_at
+       FROM storefront_orders
+       WHERE storefront_id = ? AND pharmacy_id = ?
+         AND status NOT IN ('completed', 'cancelled', 'rejected')
+       ORDER BY created_at DESC
+       LIMIT 30`
+    )
+      .bind(actor.storefrontId, actor.pharmacyId)
+      .all<Record<string, unknown>>();
+
+    const activeRows = activeRes.results || [];
+    const activeAttentionCount = activeRows.length;
+    let pendingConfirmationCount = 0;
+    let unreadHandoffCount = 0;
+    let latestUpdatedAt: string | null = null;
+
+    for (const row of activeRows) {
+      if (row.status === "pending_confirmation") pendingConfirmationCount++;
+      if ((row.pos_handoff_status || "pending") === "pending") unreadHandoffCount++;
+      const upd = row.updated_at ? String(row.updated_at) : null;
+      if (upd && (!latestUpdatedAt || upd > latestUpdatedAt)) {
+        latestUpdatedAt = upd;
+      }
+    }
+
+    const recentNewOrders = activeRows.slice(0, 8);
+    const { rowsRead: pollRowsRead } = sumD1MetaCounts([activeRes as any], {
+      rowsRead: Math.max(1, activeRows.length),
+    });
+
+    await recordBufferedSyncPollUsage(env.DB, actor.storefrontId, actor.pharmacyId, pollRowsRead);
+
+    const serialized = JSON.stringify({
+      ok: true,
+      storefront_id: actor.storefrontId,
+      pharmacy_id: actor.pharmacyId,
+      active_attention_count: activeAttentionCount,
+      new_unacknowledged_count: pendingConfirmationCount,
+      pending_confirmation_count: pendingConfirmationCount,
+      unread_handoff_count: unreadHandoffCount,
+      latest_updated_at: latestUpdatedAt,
+      recent_orders: recentNewOrders,
+      latest_orders: recentNewOrders,
+    });
+
+    orderNotifCache.set(cacheKey, {
+      expiresAt: Date.now() + ORDER_NOTIF_CACHE_TTL_MS,
+      payload: serialized,
+    });
+
+    return new Response(serialized, { status: 200, headers });
   }
 
   // ── 5. GET /api/v1/sync/orders/inbox — Safe External Order Inbox & History for POS ──
@@ -1319,33 +1418,83 @@ export async function handleSyncRoutes(
     sql += ` ORDER BY created_at DESC LIMIT ?`;
     params.push(limit);
 
-    const { results: orderRows } = await env.DB.prepare(sql)
+    const ordersRes = await env.DB.prepare(sql)
       .bind(...params)
       .all<StorefrontOrderRecord>();
+    const orderRows = ordersRes.results || [];
+    const trackedMetaResponses: Array<{ meta?: { rows_read?: number; rows_written?: number } }> = [
+      ordersRes as any,
+    ];
 
-    // Lookup SKU codes for storefront products in one lightweight query
-    const prodSkusRes = await env.DB.prepare(
-      `SELECT id, pos_product_id, sku_code FROM storefront_products
-       WHERE storefront_id = ? AND pharmacy_id = ?`
-    )
-      .bind(actor.storefrontId, actor.pharmacyId)
-      .all<{ id: string; pos_product_id: string; sku_code: string | null }>();
+    // Batch-load order items & status history (eliminates N+1 queries AND the 2,200-row full-catalog SKU scan!)
+    const itemsByOrderId = new Map<string, StorefrontOrderItemRecord[]>();
+    const historyByOrderId = new Map<string, any[]>();
+    const missingSkuProductIds = new Set<string>();
+
+    const orderIds = orderRows.map((o) => o.id).filter(Boolean);
+    const IN_CHUNK = 40;
+    for (let i = 0; i < orderIds.length; i += IN_CHUNK) {
+      const chunk = orderIds.slice(i, i + IN_CHUNK);
+      const ph = chunk.map(() => "?").join(", ");
+      const itemsBatchRes = await env.DB.prepare(
+        `SELECT * FROM storefront_order_items
+         WHERE storefront_id = ? AND pharmacy_id = ? AND order_id IN (${ph})
+         ORDER BY created_at ASC`
+      )
+        .bind(actor.storefrontId, actor.pharmacyId, ...chunk)
+        .all<StorefrontOrderItemRecord>();
+      trackedMetaResponses.push(itemsBatchRes as any);
+
+      for (const it of itemsBatchRes.results || []) {
+        const list = itemsByOrderId.get(it.order_id) || [];
+        list.push(it);
+        itemsByOrderId.set(it.order_id, list);
+        if (!(it as any).sku_code_snapshot && it.product_id) {
+          missingSkuProductIds.add(String(it.product_id));
+        }
+      }
+
+      if (includeHistory) {
+        const histBatchRes = await env.DB.prepare(
+          `SELECT id, order_id, from_status, to_status, actor_type, actor_id, note, created_at
+           FROM storefront_order_status_history
+           WHERE storefront_id = ? AND pharmacy_id = ? AND order_id IN (${ph})
+           ORDER BY created_at ASC`
+        )
+          .bind(actor.storefrontId, actor.pharmacyId, ...chunk)
+          .all<any>();
+        trackedMetaResponses.push(histBatchRes as any);
+
+        for (const h of histBatchRes.results || []) {
+          const list = historyByOrderId.get(String(h.order_id)) || [];
+          list.push(h);
+          historyByOrderId.set(String(h.order_id), list);
+        }
+      }
+    }
+
+    // Lookup SKU codes ONLY for the handful of product IDs actually referenced by these orders
     const skuBySfProdId = new Map<string, string | null>();
-    for (const pr of prodSkusRes.results || []) {
-      skuBySfProdId.set(pr.id, pr.sku_code);
+    const skuLookupIds = Array.from(missingSkuProductIds);
+    for (let i = 0; i < skuLookupIds.length; i += IN_CHUNK) {
+      const chunk = skuLookupIds.slice(i, i + IN_CHUNK);
+      const ph = chunk.map(() => "?").join(", ");
+      const prodSkusRes = await env.DB.prepare(
+        `SELECT id, sku_code FROM storefront_products
+         WHERE storefront_id = ? AND id IN (${ph})`
+      )
+        .bind(actor.storefrontId, ...chunk)
+        .all<{ id: string; sku_code: string | null }>();
+      trackedMetaResponses.push(prodSkusRes as any);
+      for (const pr of prodSkusRes.results || []) {
+        skuBySfProdId.set(pr.id, pr.sku_code);
+      }
     }
 
     const inboxOrders: PosOrderInboxItem[] = [];
-    for (const ord of orderRows || []) {
-      const itemsRes = await env.DB.prepare(
-        `SELECT * FROM storefront_order_items
-         WHERE storefront_id = ? AND pharmacy_id = ? AND order_id = ?
-         ORDER BY created_at ASC`
-      )
-        .bind(actor.storefrontId, actor.pharmacyId, ord.id)
-        .all<StorefrontOrderItemRecord>();
-
-      const normalizedItems: PosOrderInboxLinePayload[] = (itemsRes.results || []).map((it: any) => {
+    for (const ord of orderRows) {
+      const ordItems = itemsByOrderId.get(ord.id) || [];
+      const normalizedItems: PosOrderInboxLinePayload[] = ordItems.map((it: any) => {
         const unitMult = Math.max(0.0001, Number(it.unit_multiplier || 1));
         const qtyVal = Math.max(1, Number(it.qty || 1));
         const baseQtyReq = Number(
@@ -1378,18 +1527,7 @@ export async function handleSyncRoutes(
         };
       });
 
-      let historyRows: any[] | undefined;
-      if (includeHistory) {
-        const histRes = await env.DB.prepare(
-          `SELECT id, from_status, to_status, actor_type, actor_id, note, created_at
-           FROM storefront_order_status_history
-           WHERE storefront_id = ? AND pharmacy_id = ? AND order_id = ?
-           ORDER BY created_at ASC`
-        )
-          .bind(actor.storefrontId, actor.pharmacyId, ord.id)
-          .all();
-        historyRows = histRes.results || [];
-      }
+      const historyRows = includeHistory ? historyByOrderId.get(ord.id) || [] : undefined;
 
       const effectiveStatus = resolveEffectiveOrderStatusSync(ord as any);
       const effectivePaymentStatus: StorefrontPaymentStatus =
@@ -1459,11 +1597,15 @@ export async function handleSyncRoutes(
       });
     }
 
+    const { rowsRead: inboxRowsRead } = sumD1MetaCounts(trackedMetaResponses, {
+      rowsRead: Math.max(1, inboxOrders.length * 2),
+    });
+
     await recordStorefrontUsage(env.DB, {
       storefrontId: actor.storefrontId,
       pharmacyId: actor.pharmacyId,
       syncRequests: 1,
-      d1RowsReadEst: Math.max(1, inboxOrders.length * 2),
+      d1RowsReadEst: inboxRowsRead,
     });
 
     return new Response(
@@ -1821,6 +1963,8 @@ export async function handleSyncRoutes(
         actor.pharmacyId
       )
       .run();
+
+    invalidateOrderNotifCache(actor.storefrontId, actor.pharmacyId);
 
     const nextDisplayStatus = resolveEffectiveOrderStatusSync({
       status: dbStatus,

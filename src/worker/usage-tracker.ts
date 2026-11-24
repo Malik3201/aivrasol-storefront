@@ -24,6 +24,89 @@ export function getTodayUtcDateString(): string {
 }
 
 /**
+ * Extracts real SQLite row-read / row-written metrics from Cloudflare D1 response `meta` objects,
+ * so daily usage tracking reflects actual D1 billing units rather than optimistic row-length guesses.
+ */
+export function sumD1MetaCounts(
+  results: Array<{ meta?: { rows_read?: number; rows_written?: number } } | null | undefined>,
+  fallback: { rowsRead?: number; rowsWritten?: number } = {}
+): { rowsRead: number; rowsWritten: number } {
+  let rowsRead = 0;
+  let rowsWritten = 0;
+  let hasRealMeta = false;
+  for (const res of results) {
+    const meta = res?.meta;
+    if (meta && typeof meta === "object") {
+      if (typeof meta.rows_read === "number" && Number.isFinite(meta.rows_read)) {
+        rowsRead += Math.max(0, Math.round(meta.rows_read));
+        hasRealMeta = true;
+      }
+      if (typeof meta.rows_written === "number" && Number.isFinite(meta.rows_written)) {
+        rowsWritten += Math.max(0, Math.round(meta.rows_written));
+        hasRealMeta = true;
+      }
+    }
+  }
+  if (!hasRealMeta) {
+    return {
+      rowsRead: Math.max(0, Math.round(fallback.rowsRead ?? 0)),
+      rowsWritten: Math.max(0, Math.round(fallback.rowsWritten ?? 0)),
+    };
+  }
+  return { rowsRead, rowsWritten };
+}
+
+interface BufferedUsageBucket {
+  storefrontId: string;
+  pharmacyId: string;
+  syncRequests: number;
+  d1RowsRead: number;
+  lastFlushAt: number;
+}
+
+const pollUsageBuffer = new Map<string, BufferedUsageBucket>();
+const POLL_USAGE_FLUSH_INTERVAL_MS = 60_000;
+const POLL_USAGE_FLUSH_REQ_THRESHOLD = 15;
+
+/**
+ * Buffers high-frequency poll telemetry in isolate memory and flushes to D1 at most once per minute
+ * or every 15 requests — accurately capturing real D1 rows_read while consuming ~15x fewer D1 writes.
+ */
+export async function recordBufferedSyncPollUsage(
+  db: D1Database,
+  storefrontId: string,
+  pharmacyId: string,
+  d1RowsRead: number
+): Promise<void> {
+  const key = `${storefrontId}:${pharmacyId}`;
+  const now = Date.now();
+  const existing = pollUsageBuffer.get(key) || {
+    storefrontId,
+    pharmacyId,
+    syncRequests: 0,
+    d1RowsRead: 0,
+    lastFlushAt: now,
+  };
+  existing.syncRequests += 1;
+  existing.d1RowsRead += Math.max(0, Math.round(d1RowsRead));
+  pollUsageBuffer.set(key, existing);
+
+  if (
+    existing.syncRequests >= POLL_USAGE_FLUSH_REQ_THRESHOLD ||
+    now - existing.lastFlushAt >= POLL_USAGE_FLUSH_INTERVAL_MS
+  ) {
+    pollUsageBuffer.delete(key);
+    await recordStorefrontUsage(db, {
+      storefrontId: existing.storefrontId,
+      pharmacyId: existing.pharmacyId,
+      syncRequests: existing.syncRequests,
+      d1RowsReadEst: existing.d1RowsRead,
+      d1RowsWrittenEst: 1,
+    });
+  }
+}
+
+/**
  * Atomically increments the compact daily usage row for a tenant storefront.
  * Consumes only 1 D1 row write per call and keeps total storage bounded to 365 rows/year/pharmacy.
  */

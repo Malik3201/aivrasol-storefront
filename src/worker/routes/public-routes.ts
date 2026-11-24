@@ -35,6 +35,7 @@ import {
 import type { StorefrontWorkerEnv, WorkerExecutionContext } from "../env";
 import { buildResponseHeaders } from "../security";
 import { recordStorefrontUsage, writeStorefrontAuditLog } from "../usage-tracker";
+import { invalidateOrderNotifCache } from "./sync-routes";
 
 function isSyncTimestampStale(
   lastSyncIso: string | null | undefined,
@@ -1668,6 +1669,8 @@ export async function handlePublicRoutes(
         nowIso
       )
       .run();
+
+    invalidateOrderNotifCache(sf.id, sf.pharmacy_id);
 
     await recordStorefrontUsage(env.DB, {
       storefrontId: sf.id,

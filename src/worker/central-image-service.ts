@@ -32,18 +32,9 @@ export interface CentralLibraryOverview {
 export async function getCentralLibraryOverview(
   db: D1Database
 ): Promise<CentralLibraryOverview> {
-  const [
-    canRow,
-    mediaRow,
-    subRow,
-    unassignedRow,
-    sharedRefRow,
-    ownerOverrideRow,
-  ] = await Promise.all([
+  const [canRow, mediaRow, subRow, prodImageStatsRow] = await Promise.all([
     db
-      .prepare(
-        `SELECT COUNT(*) AS total_canonical FROM central_medicines`
-      )
+      .prepare(`SELECT COUNT(*) AS total_canonical FROM central_medicines`)
       .first<{ total_canonical: number }>(),
     db
       .prepare(
@@ -67,36 +58,29 @@ export async function getCentralLibraryOverview(
          WHERE status = 'pending'`
       )
       .first<{ pending_subs: number }>(),
+    // Single pass over storefront_products instead of 3 separate full table scans
     db
       .prepare(
-        `SELECT COUNT(*) AS unassigned
-         FROM storefront_products
-         WHERE (image_source = 'none' OR primary_image_url IS NULL OR primary_image_url = '')
-           AND publish_status = 'published'`
+        `SELECT
+           SUM(CASE WHEN (image_source = 'none' OR primary_image_url IS NULL OR primary_image_url = '')
+                     AND publish_status = 'published' THEN 1 ELSE 0 END) AS unassigned,
+           SUM(CASE WHEN image_source = 'shared_library' AND primary_image_url IS NOT NULL THEN 1 ELSE 0 END) AS shared_refs,
+           SUM(CASE WHEN image_source = 'owner_override' THEN 1 ELSE 0 END) AS owner_overrides
+         FROM storefront_products`
       )
-      .first<{ unassigned: number }>(),
-    db
-      .prepare(
-        `SELECT COUNT(*) AS shared_refs
-         FROM storefront_products
-         WHERE image_source = 'shared_library' AND primary_image_url IS NOT NULL`
-      )
-      .first<{ shared_refs: number }>(),
-    db
-      .prepare(
-        `SELECT COUNT(*) AS owner_overrides
-         FROM storefront_products
-         WHERE image_source = 'owner_override'`
-      )
-      .first<{ owner_overrides: number }>(),
+      .first<{
+        unassigned: number | null;
+        shared_refs: number | null;
+        owner_overrides: number | null;
+      }>(),
   ]);
 
   const totalCanonical = Number(canRow?.total_canonical || 0);
   const verifiedShared = Number(mediaRow?.verified_shared || 0);
   const pendingSubs = Number(subRow?.pending_subs || 0);
-  const unassigned = Number(unassignedRow?.unassigned || 0);
-  const sharedRefs = Number(sharedRefRow?.shared_refs || 0);
-  const ownerOverrides = Number(ownerOverrideRow?.owner_overrides || 0);
+  const unassigned = Number(prodImageStatsRow?.unassigned || 0);
+  const sharedRefs = Number(prodImageStatsRow?.shared_refs || 0);
+  const ownerOverrides = Number(prodImageStatsRow?.owner_overrides || 0);
   const uniqueObjects = Number(mediaRow?.unique_objects || 0);
   const totalBytes = Number(mediaRow?.total_bytes || 0);
   const avgBytes = Math.round(Number(mediaRow?.avg_bytes || 45 * 1024));
@@ -177,13 +161,13 @@ export async function listCanonicalMedicines(
     .first<{ total: number }>();
   const totalCount = Number(countRow?.total || 0);
 
+  // Fetch ONLY the page's canonical medicines (no correlated subquery over storefront_products!)
   const querySql = `
     SELECT
       c.*,
       m.public_url AS preferred_image_url,
       m.byte_size AS image_byte_size,
-      m.content_type AS image_content_type,
-      (SELECT COUNT(*) FROM storefront_products sp WHERE sp.canonical_medicine_id = c.id) AS referencing_products_count
+      m.content_type AS image_content_type
     FROM central_medicines c
     LEFT JOIN storefront_media m ON c.preferred_media_id = m.id
     WHERE ${whereSql}
@@ -196,8 +180,40 @@ export async function listCanonicalMedicines(
     .bind(...bindValues, limit, offset)
     .all<Record<string, unknown>>();
 
+  const pageRows = results || [];
+  const refCountMap = new Map<string, number>();
+
+  // Fetch referencing product counts in ONE indexed IN (...) query for the page's IDs only
+  // (reduces ~51,000 rows_read per page down to <100 rows_read!)
+  const pageIds = pageRows
+    .map((r) => (r.id ? String(r.id) : ""))
+    .filter(Boolean);
+
+  if (pageIds.length > 0) {
+    const placeholders = pageIds.map(() => "?").join(", ");
+    const refRes = await db
+      .prepare(
+        `SELECT canonical_medicine_id, COUNT(*) AS cnt
+         FROM storefront_products
+         WHERE canonical_medicine_id IN (${placeholders})
+         GROUP BY canonical_medicine_id`
+      )
+      .bind(...pageIds)
+      .all<{ canonical_medicine_id: string; cnt: number }>();
+    for (const r of refRes.results || []) {
+      if (r.canonical_medicine_id) {
+        refCountMap.set(String(r.canonical_medicine_id), Number(r.cnt || 0));
+      }
+    }
+  }
+
+  const medicines = pageRows.map((row) => ({
+    ...row,
+    referencing_products_count: refCountMap.get(String(row.id || "")) || 0,
+  }));
+
   return {
-    medicines: results || [],
+    medicines,
     pagination: {
       page,
       limit,
