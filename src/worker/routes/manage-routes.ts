@@ -3143,39 +3143,32 @@ export async function handleManageRoutes(
 
   // ── 14b. Online Orders Management & Notification Summary (`/orders`, `/orders/notifications`, `/orders/:orderId`) ──
   if (subPath === "/orders/notifications" && req.method === "GET") {
-    const countsRow = await env.DB.prepare(
-      `SELECT
-         SUM(CASE WHEN status NOT IN ('completed', 'cancelled', 'rejected') THEN 1 ELSE 0 END) AS active_attention_count,
-         SUM(CASE WHEN status = 'pending_confirmation' THEN 1 ELSE 0 END) AS new_unacknowledged_count,
-         MAX(updated_at) AS latest_updated_at
+    // Query ONLY active/open orders using partial index `idx_storefront_orders_open_poll`
+    // (avoids scanning historical completed/cancelled/rejected orders).
+    const openRes = await env.DB.prepare(
+      `SELECT id, order_number, customer_name, customer_phone, fulfillment_type,
+              total_pkr, status, COALESCE(payment_status, 'unpaid') AS payment_status,
+              COALESCE(pos_handoff_status, 'pending') AS pos_handoff_status,
+              created_at, updated_at
        FROM storefront_orders
-       WHERE storefront_id = ? AND pharmacy_id = ?`
+       WHERE storefront_id = ? AND pharmacy_id = ?
+         AND status NOT IN ('completed', 'cancelled', 'rejected')
+       ORDER BY created_at DESC
+       LIMIT 50`
     )
       .bind(sf.id, sf.pharmacy_id)
-      .first<{
-        active_attention_count: number | null;
-        new_unacknowledged_count: number | null;
-        latest_updated_at: string | null;
-      }>();
+      .all<Record<string, unknown>>();
 
-    const activeCount = Number(countsRow?.active_attention_count || 0);
-    const pendingNewCount = Number(countsRow?.new_unacknowledged_count || 0);
-    let recentOrders: any[] = [];
-    if (activeCount > 0) {
-      const recRes = await env.DB.prepare(
-        `SELECT id, order_number, customer_name, customer_phone, fulfillment_type,
-                total_pkr, status, COALESCE(payment_status, 'unpaid') AS payment_status,
-                COALESCE(pos_handoff_status, 'pending') AS pos_handoff_status, created_at
-         FROM storefront_orders
-         WHERE storefront_id = ? AND pharmacy_id = ?
-           AND status NOT IN ('completed', 'cancelled', 'rejected')
-         ORDER BY created_at DESC
-         LIMIT 6`
-      )
-        .bind(sf.id, sf.pharmacy_id)
-        .all();
-      recentOrders = recRes.results || [];
+    const openRows = openRes.results || [];
+    const activeCount = openRows.length;
+    let pendingNewCount = 0;
+    let latestUpdatedAt: string | null = null;
+    for (const r of openRows) {
+      if (r.status === "pending_confirmation") pendingNewCount++;
+      const upd = r.updated_at ? String(r.updated_at) : null;
+      if (upd && (!latestUpdatedAt || upd > latestUpdatedAt)) latestUpdatedAt = upd;
     }
+    const recentOrders = openRows.slice(0, 6);
 
     return new Response(
       JSON.stringify({
@@ -3185,7 +3178,7 @@ export async function handleManageRoutes(
         active_attention_count: activeCount,
         new_unacknowledged_count: pendingNewCount,
         pending_confirmation_count: pendingNewCount,
-        latest_updated_at: countsRow?.latest_updated_at || null,
+        latest_updated_at: latestUpdatedAt,
         recent_orders: recentOrders,
       }),
       { status: 200, headers }
