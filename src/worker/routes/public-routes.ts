@@ -36,6 +36,13 @@ import type { StorefrontWorkerEnv, WorkerExecutionContext } from "../env";
 import { buildResponseHeaders } from "../security";
 import { recordStorefrontUsage, writeStorefrontAuditLog } from "../usage-tracker";
 import { invalidateOrderNotifCache } from "./sync-routes";
+import {
+  buildTenantEdgeCacheKey,
+  getCatalogSnapshotForTenant,
+  getEdgeCachedResponse,
+  putEdgeCachedResponse,
+  queryProductsFromSnapshot,
+} from "../edge-cache-and-snapshots";
 
 function isSyncTimestampStale(
   lastSyncIso: string | null | undefined,
@@ -344,9 +351,29 @@ export async function handlePublicRoutes(
     });
   }
 
-  // 1b. GET/HEAD /api/v1/public/media/:mediaId — Public Shared & Tenant-Scoped Media Serving (Cross-Tenant Safe)
+  // 1b. GET/HEAD /api/v1/public/media/:mediaId — Public Shared & Tenant-Scoped Media Serving (Edge-Cached + Cross-Tenant Safe)
   if (pathname.startsWith("/api/v1/public/media/") && (req.method === "GET" || req.method === "HEAD")) {
     const mediaId = decodeURIComponent(pathname.slice("/api/v1/public/media/".length));
+
+    // Zero-D1 / Zero-R2 Edge Cache check for shared verified artwork & tenant-scoped media
+    const sharedEdgeKey = new Request(
+      `https://media-edge.aivrasol.internal/shared-media/${encodeURIComponent(mediaId)}`,
+      { method: "GET" }
+    );
+    const tenantEdgeKey = new Request(
+      `https://media-edge.aivrasol.internal/tenant-media/${encodeURIComponent(ctx.storefront?.id || "anon")}/${encodeURIComponent(mediaId)}`,
+      { method: "GET" }
+    );
+
+    if (req.method === "GET") {
+      const sharedHit = await getEdgeCachedResponse(sharedEdgeKey);
+      if (sharedHit) return sharedHit;
+      if (ctx.storefront?.id) {
+        const tenantHit = await getEdgeCachedResponse(tenantEdgeKey);
+        if (tenantHit) return tenantHit;
+      }
+    }
+
     const mediaRow = await env.DB.prepare(
       `SELECT id, storefront_id, pharmacy_id, r2_object_key, public_url, content_type, byte_size, is_shared
        FROM storefront_media
@@ -401,12 +428,14 @@ export async function handlePublicRoutes(
           cacheMaxAgeSec: isShared ? 604800 : 86400, // 7 days for shared verified artwork
         });
         headers.set("Content-Type", String(mediaRow.content_type || "image/webp"));
+        if (isShared) {
+          headers.set("Cache-Control", "public, max-age=604800, s-maxage=2592000, immutable");
+        }
         if (req.method === "HEAD") {
           return new Response(null, { status: 200, headers });
         }
         const buf = await obj.arrayBuffer();
         const bytes = new Uint8Array(buf);
-        // Check if stored as raw binary WebP/PNG/JPEG/AVIF vs legacy base64 ASCII string
         const isBinaryImage =
           (bytes.length >= 4 &&
             bytes[0] === 0x52 &&
@@ -415,22 +444,24 @@ export async function handlePublicRoutes(
             bytes[3] === 0x46) || // RIFF (WebP)
           (bytes.length >= 4 && bytes[0] === 0x89 && bytes[1] === 0x50) || // PNG
           (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8); // JPEG
-        if (isBinaryImage) {
-          return new Response(buf, { status: 200, headers });
-        }
-        try {
-          const textVal = new TextDecoder().decode(bytes);
-          if (
-            textVal.startsWith("data:") ||
-            (textVal.length > 16 && /^[A-Za-z0-9+/=\s]+$/.test(textVal.slice(0, 120)))
-          ) {
-            const decoded = decodeBase64ToBytes(textVal.trim());
-            return new Response(decoded as unknown as BodyInit, { status: 200, headers });
+
+        let finalBody: BodyInit = buf;
+        if (!isBinaryImage) {
+          try {
+            const textVal = new TextDecoder().decode(bytes);
+            if (
+              textVal.startsWith("data:") ||
+              (textVal.length > 16 && /^[A-Za-z0-9+/=\s]+$/.test(textVal.slice(0, 120)))
+            ) {
+              finalBody = decodeBase64ToBytes(textVal.trim()) as unknown as BodyInit;
+            }
+          } catch {
+            finalBody = buf;
           }
-        } catch {
-          // Serve raw bytes
         }
-        return new Response(buf, { status: 200, headers });
+        const mediaResp = new Response(finalBody, { status: 200, headers });
+        putEdgeCachedResponse(isShared ? sharedEdgeKey : tenantEdgeKey, mediaResp, execCtx);
+        return mediaResp;
       }
     }
 
@@ -486,8 +517,18 @@ export async function handlePublicRoutes(
   const hideOutOfStock = Number(settings?.hide_out_of_stock) === 1;
   const staleThresholdHours = Number(settings?.stale_stock_threshold_hours || 24);
 
-  // 2. GET /api/v1/public/settings
+  const tenantEdgeScope = {
+    storefrontId: sf.id,
+    configVersion: Number(sf.config_version || 1),
+    hostname: ctx.normalizedHostname || sf.primary_domain || "default",
+  };
+
+  // 2. GET /api/v1/public/settings (Edge-Cached by tenant + config_version)
   if (pathname === "/api/v1/public/settings" && req.method === "GET") {
+    const edgeKey = buildTenantEdgeCacheKey(req, tenantEdgeScope);
+    const cached = await getEdgeCachedResponse(edgeKey);
+    if (cached) return cached;
+
     const branding = await env.DB.prepare(
       "SELECT * FROM storefront_branding WHERE storefront_id = ? AND pharmacy_id = ? LIMIT 1"
     )
@@ -515,7 +556,7 @@ export async function handlePublicRoutes(
       socialLinks = {};
     }
 
-    return new Response(
+    const res = new Response(
       JSON.stringify({
         ok: true,
         storefront_id: sf.id,
@@ -568,88 +609,62 @@ export async function handlePublicRoutes(
           storefrontId: sf.id,
           configVersion: sf.config_version,
           hostname: ctx.normalizedHostname,
-          isPrivate: true,
+          cacheMaxAgeSec: 120,
         }),
       }
     );
+    putEdgeCachedResponse(edgeKey, res, execCtx);
+    return res;
   }
 
-  // 3. GET /api/v1/public/categories
+  // 3. GET /api/v1/public/categories (Edge-Cached + R2 Catalog Snapshot -> 0 D1 reads!)
   if (pathname === "/api/v1/public/categories" && req.method === "GET") {
-    const { results } = await env.DB.prepare(
-      `SELECT id, storefront_id, pharmacy_id, slug, name, description, icon_name,
-              image_url, sort_order, is_visible, published_product_count
-       FROM storefront_categories
-       WHERE storefront_id = ? AND pharmacy_id = ? AND is_visible = 1
-       ORDER BY sort_order ASC, name ASC`
-    )
-      .bind(sf.id, sf.pharmacy_id)
-      .all<StorefrontCategoryRecord>();
+    const edgeKey = buildTenantEdgeCacheKey(req, tenantEdgeScope);
+    const cached = await getEdgeCachedResponse(edgeKey);
+    if (cached) return cached;
 
-    await recordStorefrontUsage(env.DB, {
+    const { snapshot, source } = await getCatalogSnapshotForTenant(env, sf, execCtx);
+    const headers = buildResponseHeaders({
+      req,
       storefrontId: sf.id,
-      pharmacyId: sf.pharmacy_id,
-      publicRequests: 1,
-      d1RowsReadEst: Math.max(1, results.length),
+      configVersion: sf.config_version,
+      hostname: ctx.normalizedHostname,
+      cacheMaxAgeSec: 180,
     });
+    headers.set("X-Catalog-Source", source);
 
-    return new Response(
+    const res = new Response(
       JSON.stringify({
         ok: true,
         storefront_id: sf.id,
-        categories: results,
+        categories: snapshot.categories,
       }),
-      {
-        status: 200,
-        headers: buildResponseHeaders({
-          req,
-          storefrontId: sf.id,
-          configVersion: sf.config_version,
-          hostname: ctx.normalizedHostname,
-          isPrivate: true,
-        }),
-      }
+      { status: 200, headers }
     );
+    putEdgeCachedResponse(edgeKey, res, execCtx);
+    return res;
   }
 
-  // 4. GET /api/v1/public/products/search
+  // 4. GET /api/v1/public/products/search (Edge-Cached + R2 Catalog Snapshot -> 0 D1 reads!)
   if (pathname === "/api/v1/public/products/search" && req.method === "GET") {
+    const edgeKey = buildTenantEdgeCacheKey(req, tenantEdgeScope);
+    const cached = await getEdgeCachedResponse(edgeKey);
+    if (cached) return cached;
+
     const q = (url.searchParams.get("q") || "").trim().toLowerCase();
     const category = (url.searchParams.get("category") || "").trim();
     const cursor = decodeCursor(url.searchParams.get("cursor"));
     const limit = Math.min(48, Math.max(1, Number(url.searchParams.get("limit")) || 20));
 
-    let sql = `
-      SELECT ${SAFE_PRODUCT_COLUMNS}
-      FROM storefront_products
-      WHERE storefront_id = ? AND pharmacy_id = ? AND publish_status = 'published'
-        AND is_controlled_substance = 0
-    `;
-    const params: unknown[] = [sf.id, sf.pharmacy_id];
+    const { snapshot, source } = await getCatalogSnapshotForTenant(env, sf, execCtx);
+    const { pageRows, hasMore } = queryProductsFromSnapshot(snapshot, {
+      q,
+      category,
+      hideOutOfStock,
+      cursor,
+      limit,
+    });
 
-    if (hideOutOfStock) {
-      sql += ` AND availability_status != 'out_of_stock' AND availability_status != 'unavailable'`;
-    }
-    if (category) {
-      sql += ` AND LOWER(category_name) = LOWER(?)`;
-      params.push(category);
-    }
-    if (q) {
-      const pattern = `%${q}%`;
-      sql += ` AND (LOWER(name) LIKE ? OR LOWER(COALESCE(generic_name, '')) LIKE ? OR LOWER(COALESCE(brand_name, '')) LIKE ? OR search_keywords LIKE ?)`;
-      params.push(pattern, pattern, pattern, pattern);
-    }
-    if (cursor) {
-      sql += ` AND (name > ? OR (name = ? AND id > ?))`;
-      params.push(cursor.sortValue, cursor.sortValue, cursor.id);
-    }
-
-    sql += ` ORDER BY name ASC, id ASC LIMIT ?`;
-    params.push(limit + 1);
-
-    const { results } = await env.DB.prepare(sql).bind(...params).all<Record<string, unknown>>();
-    const hasMore = results.length > limit;
-    const pageRows = hasMore ? results.slice(0, limit) : results;
     const items = pageRows.map((r) =>
       mapPublicProductRow(
         r,
@@ -662,15 +677,16 @@ export async function handlePublicRoutes(
     const last = items[items.length - 1];
     const nextCursor = hasMore && last ? encodeCursor(last.name, last.id) : null;
 
-    await recordStorefrontUsage(env.DB, {
+    const headers = buildResponseHeaders({
+      req,
       storefrontId: sf.id,
-      pharmacyId: sf.pharmacy_id,
-      publicRequests: 1,
-      searchRequests: 1,
-      d1RowsReadEst: Math.max(1, results.length),
+      configVersion: sf.config_version,
+      hostname: ctx.normalizedHostname,
+      cacheMaxAgeSec: 120,
     });
+    headers.set("X-Catalog-Source", source);
 
-    return new Response(
+    const res = new Response(
       JSON.stringify({
         ok: true,
         storefront_id: sf.id,
@@ -679,21 +695,18 @@ export async function handlePublicRoutes(
         next_cursor: nextCursor,
         has_more: hasMore,
       }),
-      {
-        status: 200,
-        headers: buildResponseHeaders({
-          req,
-          storefrontId: sf.id,
-          configVersion: sf.config_version,
-          hostname: ctx.normalizedHostname,
-          isPrivate: true,
-        }),
-      }
+      { status: 200, headers }
     );
+    putEdgeCachedResponse(edgeKey, res, execCtx);
+    return res;
   }
 
-  // 5. GET /api/v1/public/products
+  // 5. GET /api/v1/public/products (Edge-Cached + R2 Catalog Snapshot -> 0 D1 reads!)
   if (pathname === "/api/v1/public/products" && req.method === "GET") {
+    const edgeKey = buildTenantEdgeCacheKey(req, tenantEdgeScope);
+    const cached = await getEdgeCachedResponse(edgeKey);
+    if (cached) return cached;
+
     const category = (url.searchParams.get("category") || "").trim();
     const featuredOnly = url.searchParams.get("featured") === "true";
     const popularOnly = url.searchParams.get("popular") === "true";
@@ -702,46 +715,18 @@ export async function handlePublicRoutes(
     const cursor = decodeCursor(url.searchParams.get("cursor"));
     const limit = Math.min(48, Math.max(1, Number(url.searchParams.get("limit")) || 24));
 
-    let sql = `
-      SELECT ${SAFE_PRODUCT_COLUMNS}
-      FROM storefront_products
-      WHERE storefront_id = ? AND pharmacy_id = ? AND publish_status = 'published'
-        AND is_controlled_substance = 0
-    `;
-    const params: unknown[] = [sf.id, sf.pharmacy_id];
+    const { snapshot, source } = await getCatalogSnapshotForTenant(env, sf, execCtx);
+    const { pageRows, hasMore } = queryProductsFromSnapshot(snapshot, {
+      category,
+      featuredOnly,
+      popularOnly,
+      inStockOnly,
+      hideOutOfStock,
+      sortBy,
+      cursor: sortBy === "name_asc" ? cursor : null,
+      limit,
+    });
 
-    if (hideOutOfStock || inStockOnly) {
-      sql += ` AND availability_status IN ('in_stock', 'low_stock')`;
-    }
-    if (category) {
-      sql += ` AND LOWER(category_name) = LOWER(?)`;
-      params.push(category);
-    }
-    if (featuredOnly) {
-      sql += ` AND is_featured = 1`;
-    }
-    if (popularOnly) {
-      sql += ` AND (is_popular = 1 OR is_featured = 1)`;
-    }
-    if (cursor && sortBy === "name_asc") {
-      sql += ` AND (name > ? OR (name = ? AND id > ?))`;
-      params.push(cursor.sortValue, cursor.sortValue, cursor.id);
-    }
-
-    if (sortBy === "price_asc") {
-      sql += ` ORDER BY COALESCE(override_price_pkr, public_selling_price_pkr) ASC, name ASC, id ASC LIMIT ?`;
-    } else if (sortBy === "price_desc") {
-      sql += ` ORDER BY COALESCE(override_price_pkr, public_selling_price_pkr) DESC, name ASC, id ASC LIMIT ?`;
-    } else if (sortBy === "featured") {
-      sql += ` ORDER BY is_featured DESC, is_popular DESC, name ASC, id ASC LIMIT ?`;
-    } else {
-      sql += ` ORDER BY name ASC, id ASC LIMIT ?`;
-    }
-    params.push(limit + 1);
-
-    const { results } = await env.DB.prepare(sql).bind(...params).all<Record<string, unknown>>();
-    const hasMore = results.length > limit;
-    const pageRows = hasMore ? results.slice(0, limit) : results;
     const items = pageRows.map((r) =>
       mapPublicProductRow(
         r,
@@ -755,14 +740,16 @@ export async function handlePublicRoutes(
     const nextCursor =
       hasMore && last && sortBy === "name_asc" ? encodeCursor(last.name, last.id) : null;
 
-    await recordStorefrontUsage(env.DB, {
+    const headers = buildResponseHeaders({
+      req,
       storefrontId: sf.id,
-      pharmacyId: sf.pharmacy_id,
-      publicRequests: 1,
-      d1RowsReadEst: Math.max(1, results.length),
+      configVersion: sf.config_version,
+      hostname: ctx.normalizedHostname,
+      cacheMaxAgeSec: 180,
     });
+    headers.set("X-Catalog-Source", source);
 
-    return new Response(
+    const res = new Response(
       JSON.stringify({
         ok: true,
         storefront_id: sf.id,
@@ -772,17 +759,10 @@ export async function handlePublicRoutes(
         next_cursor: nextCursor,
         has_more: hasMore,
       }),
-      {
-        status: 200,
-        headers: buildResponseHeaders({
-          req,
-          storefrontId: sf.id,
-          configVersion: sf.config_version,
-          hostname: ctx.normalizedHostname,
-          isPrivate: true,
-        }),
-      }
+      { status: 200, headers }
     );
+    putEdgeCachedResponse(edgeKey, res, execCtx);
+    return res;
   }
 
   // 6. GET /api/v1/public/products/:idOrSlug

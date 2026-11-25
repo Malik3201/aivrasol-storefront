@@ -9,12 +9,14 @@
  * - Safe reference tracking preventing accidental deletion
  */
 
-import type { D1Database } from "./env";
+import type { D1Database, StorefrontWorkerEnv } from "./env";
 import {
+  computeNormalizedCoreKey,
   matchMedicineIdentity,
   CanonicalMedicineRecord,
   ProductInput,
 } from "../shared/medicine-identity-matcher";
+import { bumpStorefrontConfigVersion, resolveSharedMediaPublicUrl } from "./edge-cache-and-snapshots";
 
 export interface CentralLibraryOverview {
   total_canonical_medicines: number;
@@ -254,21 +256,23 @@ export async function upsertCanonicalMedicine(
   const status = data.verification_status || "verified";
   const exactMasterName = (data.master_catalog_name || data.canonical_name).trim();
   const normName = data.normalized_catalog_name || exactMasterName.toLowerCase().replace(/\s+/g, " ");
+  const coreKey = computeNormalizedCoreKey(exactMasterName) || computeNormalizedCoreKey(data.brand_name) || null;
   const logicalFileName = data.logical_file_name || `${exactMasterName}.webp`;
 
   await db
     .prepare(
       `INSERT INTO central_medicines (
-         id, canonical_name, master_catalog_id, master_catalog_name, normalized_catalog_name,
+         id, canonical_name, master_catalog_id, master_catalog_name, normalized_catalog_name, normalized_core_key,
          brand_name, generic_name, strength, dosage_form, manufacturer, pack_size, pack_unit, barcode,
          aliases_json, verification_status, preferred_media_id, image_source, image_rights_status,
          logical_file_name, review_notes, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          canonical_name = excluded.canonical_name,
          master_catalog_id = COALESCE(excluded.master_catalog_id, central_medicines.master_catalog_id),
          master_catalog_name = COALESCE(excluded.master_catalog_name, central_medicines.master_catalog_name),
          normalized_catalog_name = COALESCE(excluded.normalized_catalog_name, central_medicines.normalized_catalog_name),
+         normalized_core_key = COALESCE(excluded.normalized_core_key, central_medicines.normalized_core_key),
          brand_name = excluded.brand_name,
          generic_name = excluded.generic_name,
          strength = excluded.strength,
@@ -292,6 +296,7 @@ export async function upsertCanonicalMedicine(
       data.master_catalog_id?.trim() || null,
       exactMasterName,
       normName,
+      coreKey,
       data.brand_name?.trim() || null,
       data.generic_name?.trim() || null,
       data.strength?.trim() || null,
@@ -350,6 +355,8 @@ export async function matchAndPropagateCanonicalMedicine(
     master_catalog_id: can.master_catalog_id ? String(can.master_catalog_id) : null,
     master_catalog_name: can.master_catalog_name ? String(can.master_catalog_name) : null,
     normalized_catalog_name: can.normalized_catalog_name ? String(can.normalized_catalog_name) : null,
+    normalized_core_key: can.normalized_core_key ? String(can.normalized_core_key) : null,
+    allow_strengthless_match: Number(can.allow_strengthless_match || 0) === 1,
     brand_name: can.brand_name ? String(can.brand_name) : null,
     generic_name: can.generic_name ? String(can.generic_name) : null,
     strength: can.strength ? String(can.strength) : null,
@@ -366,9 +373,10 @@ export async function matchAndPropagateCanonicalMedicine(
   const imageUrl = String(can.preferred_image_url);
   const mediaId = String(can.preferred_media_id);
   const now = new Date().toISOString();
+  const affectedStorefronts = new Set<string>();
 
   // 1. Instantly update products already assigned to this canonical ID
-  await db
+  const directUpdate = await db
     .prepare(
       `UPDATE storefront_products
        SET primary_image_url = ?, selected_media_id = ?, image_source = 'shared_library', updated_at = ?
@@ -378,33 +386,57 @@ export async function matchAndPropagateCanonicalMedicine(
     .run();
 
   // 1B. Instantly update products with exact matching master_medicine_id across all pharmacies!
+  let matchedCount = Number(directUpdate.meta?.changes || 0);
   if (can.master_catalog_id) {
-    await db
+    const masterIdStr = String(can.master_catalog_id).trim();
+    const { results: masterAffected } = await db
       .prepare(
-        `UPDATE storefront_products
-         SET canonical_medicine_id = ?, selected_media_id = ?, primary_image_url = ?, image_source = 'shared_library', updated_at = ?
+        `SELECT id, storefront_id FROM storefront_products
          WHERE master_medicine_id = ? AND image_source != 'owner_override'`
       )
-      .bind(canonicalId, mediaId, imageUrl, now, String(can.master_catalog_id).trim())
-      .run();
+      .bind(masterIdStr)
+      .all<{ id: string; storefront_id: string }>();
+
+    if ((masterAffected || []).length > 0) {
+      const mUpd = await db
+        .prepare(
+          `UPDATE storefront_products
+           SET canonical_medicine_id = ?, selected_media_id = ?, primary_image_url = ?, image_source = 'shared_library', updated_at = ?
+           WHERE master_medicine_id = ? AND image_source != 'owner_override'`
+        )
+        .bind(canonicalId, mediaId, imageUrl, now, masterIdStr)
+        .run();
+      matchedCount += Number(mUpd.meta?.changes || 0);
+      for (const row of masterAffected || []) affectedStorefronts.add(String(row.storefront_id));
+    }
   }
 
-  // 2. Find eligible storefront products not yet linked or without images
-  const { results: candidateRows } = await db
-    .prepare(
-      `SELECT id, storefront_id, pharmacy_id, pos_product_id, master_medicine_id, name, generic_name,
-              strength, dosage_form, brand_name, packing_label, unit_label,
-              sku_code, primary_image_url, image_source, canonical_medicine_id
-       FROM storefront_products
-       WHERE image_source != 'owner_override'
-         AND (canonical_medicine_id IS NULL OR canonical_medicine_id = '' OR primary_image_url IS NULL OR primary_image_url = '' OR image_source = 'none')`
-    )
-    .all<Record<string, unknown>>();
+  // 2. Targeted candidate fetch using indexed normalized_core_key or first brand token (avoids scanning 100k+ rows!)
+  const coreKey =
+    canonicalRecord.normalized_core_key ||
+    computeNormalizedCoreKey(canonicalRecord.canonical_name) ||
+    computeNormalizedCoreKey(canonicalRecord.brand_name);
+  const firstWord = (coreKey || "").split("_")[0] || "";
 
-  const candidates = candidateRows || [];
-  let matchedCount = 0;
+  let candidateRows: Record<string, unknown>[] = [];
+  if (coreKey) {
+    const { results } = await db
+      .prepare(
+        `SELECT id, storefront_id, pharmacy_id, pos_product_id, master_medicine_id, name, generic_name,
+                strength, dosage_form, brand_name, packing_label, unit_label,
+                sku_code, primary_image_url, image_source, canonical_medicine_id
+         FROM storefront_products
+         WHERE image_source != 'owner_override'
+           AND (canonical_medicine_id IS NULL OR canonical_medicine_id = '' OR primary_image_url IS NULL OR primary_image_url = '' OR image_source = 'none')
+           AND (normalized_core_key = ? OR (normalized_core_key IS NULL AND LOWER(name) LIKE ?))
+         LIMIT 500`
+      )
+      .bind(coreKey, `${firstWord}%`)
+      .all<Record<string, unknown>>();
+    candidateRows = results || [];
+  }
 
-  for (const p of candidates) {
+  for (const p of candidateRows) {
     const input: ProductInput = {
       name: String(p.name || ""),
       generic_name: p.generic_name ? String(p.generic_name) : null,
@@ -427,16 +459,332 @@ export async function matchAndPropagateCanonicalMedicine(
                selected_media_id = ?,
                primary_image_url = ?,
                image_source = 'shared_library',
+               normalized_core_key = COALESCE(normalized_core_key, ?),
                updated_at = ?
            WHERE id = ?`
         )
-        .bind(canonicalId, mediaId, imageUrl, now, p.id)
+        .bind(canonicalId, mediaId, imageUrl, coreKey || null, now, p.id)
         .run();
       matchedCount++;
+      if (p.storefront_id) affectedStorefronts.add(String(p.storefront_id));
     }
   }
 
+  // Rotate config_version on affected storefronts so Edge Cache & R2 snapshots show new images immediately
+  for (const sfId of affectedStorefronts) {
+    await bumpStorefrontConfigVersion(db, sfId).catch(() => {});
+  }
+
   return { matchedCount };
+}
+
+/**
+ * 38,000-Scale Indexed Canonical Matcher:
+ * Queries ONLY candidate verified rows from `central_medicines` matching this batch's
+ * `master_medicine_id`, `barcode`, or `normalized_core_key` — reading ~5-60 rows instead of 38,000!
+ */
+export async function findMatchingCanonicalMedicinesIndexed(
+  db: D1Database,
+  inputs: ProductInput[]
+): Promise<{
+  catalog: Array<CanonicalMedicineRecord & { preferred_image_url: string }>;
+  rowsRead: number;
+}> {
+  if (!inputs.length) return { catalog: [], rowsRead: 0 };
+
+  const masterIds = new Set<string>();
+  const barcodes = new Set<string>();
+  const coreKeys = new Set<string>();
+
+  for (const inp of inputs) {
+    if (inp.master_medicine_id?.trim()) masterIds.add(inp.master_medicine_id.trim());
+    const bc = (inp.barcode || inp.sku_code || "").trim();
+    if (bc.length >= 6) barcodes.add(bc);
+    const ck = computeNormalizedCoreKey(inp.name);
+    if (ck) {
+      coreKeys.add(ck);
+      // Also include single-token root so "panadol_advance" can check "panadol" safely (matcher still rejects variant conflict!)
+      const firstTok = ck.split("_")[0];
+      if (firstTok && firstTok.length >= 3) coreKeys.add(firstTok);
+    }
+  }
+
+  const byId = new Map<string, CanonicalMedicineRecord & { preferred_image_url: string }>();
+  let totalRowsRead = 0;
+
+  const mapRows = (rows: Record<string, unknown>[]) => {
+    for (const r of rows) {
+      const id = String(r.id);
+      if (byId.has(id)) continue;
+      byId.set(id, {
+        id,
+        canonical_name: String(r.canonical_name),
+        master_catalog_id: r.master_catalog_id ? String(r.master_catalog_id) : null,
+        master_catalog_name: r.master_catalog_name ? String(r.master_catalog_name) : null,
+        normalized_catalog_name: r.normalized_catalog_name ? String(r.normalized_catalog_name) : null,
+        normalized_core_key: r.normalized_core_key ? String(r.normalized_core_key) : null,
+        allow_strengthless_match: Number(r.allow_strengthless_match || 0) === 1,
+        brand_name: r.brand_name ? String(r.brand_name) : null,
+        generic_name: r.generic_name ? String(r.generic_name) : null,
+        strength: r.strength ? String(r.strength) : null,
+        dosage_form: r.dosage_form ? String(r.dosage_form) : null,
+        manufacturer: r.manufacturer ? String(r.manufacturer) : null,
+        pack_size: r.pack_size ? Number(r.pack_size) : null,
+        pack_unit: r.pack_unit ? String(r.pack_unit) : null,
+        barcode: r.barcode ? String(r.barcode) : null,
+        aliases_json: r.aliases_json ? String(r.aliases_json) : null,
+        verification_status: String(r.verification_status),
+        preferred_media_id: String(r.preferred_media_id),
+        preferred_image_url: String(r.preferred_image_url),
+      });
+    }
+  };
+
+  const baseSelect = `
+    SELECT c.id, c.canonical_name, c.master_catalog_id, c.master_catalog_name, c.normalized_catalog_name,
+           c.normalized_core_key, c.allow_strengthless_match,
+           c.brand_name, c.generic_name, c.strength, c.dosage_form,
+           c.manufacturer, c.pack_size, c.pack_unit, c.barcode, c.aliases_json,
+           c.verification_status, c.preferred_media_id, m.public_url AS preferred_image_url
+    FROM central_medicines c
+    INNER JOIN storefront_media m ON c.preferred_media_id = m.id
+    WHERE c.verification_status = 'verified' AND c.preferred_media_id IS NOT NULL
+  `;
+
+  const queryChunked = async (col: string, values: string[]) => {
+    const CHUNK = 60;
+    for (let i = 0; i < values.length; i += CHUNK) {
+      const slice = values.slice(i, i + CHUNK);
+      const placeholders = slice.map(() => "?").join(", ");
+      const res = await db
+        .prepare(`${baseSelect} AND c.${col} IN (${placeholders})`)
+        .bind(...slice)
+        .all<Record<string, unknown>>();
+      totalRowsRead += Number((res as any)?.meta?.rows_read || (res.results?.length ?? 0) + 1);
+      mapRows(res.results || []);
+    }
+  };
+
+  if (masterIds.size > 0) await queryChunked("master_catalog_id", Array.from(masterIds));
+  if (barcodes.size > 0) await queryChunked("barcode", Array.from(barcodes));
+  if (coreKeys.size > 0) await queryChunked("normalized_core_key", Array.from(coreKeys));
+
+  return { catalog: Array.from(byId.values()), rowsRead: totalRowsRead };
+}
+
+export interface BulkVerifiedImageItem {
+  master_catalog_id?: string | null;
+  master_catalog_name: string;
+  brand_name?: string | null;
+  generic_name?: string | null;
+  strength?: string | null;
+  dosage_form?: string | null;
+  manufacturer?: string | null;
+  barcode?: string | null;
+  data_base64: string;
+  sha256_hex: string;
+  content_type?: string;
+  byte_size?: number;
+  width?: number;
+  height?: number;
+  source_type?: string;
+  logical_file_name?: string;
+  allow_strengthless_match?: boolean;
+}
+
+/**
+ * Bulk Verified Central Image Importer (used by Admin Bulk ZIP Importer):
+ * - Deduplicates images by SHA-256 across R2 (`shared/medicines/{hash}.webp`)
+ * - Uploads binary WebP directly to R2 with 1-year immutable Cache-Control
+ * - Upserts `central_medicines` as `verified` with indexed `normalized_core_key`
+ * - Propagates immediately to all matching pharmacy storefronts
+ */
+export async function bulkUploadVerifiedCentralImages(
+  env: StorefrontWorkerEnv,
+  actorId: string,
+  items: BulkVerifiedImageItem[]
+): Promise<{
+  uploaded: number;
+  deduplicated: number;
+  propagated_products: number;
+  failed: Array<{ name: string; error: string }>;
+}> {
+  let uploaded = 0;
+  let deduplicated = 0;
+  let propagatedProducts = 0;
+  const failed: Array<{ name: string; error: string }> = [];
+  const nowIso = new Date().toISOString();
+
+  for (const item of items) {
+    const exactName = String(item.master_catalog_name || "").trim();
+    if (!exactName) {
+      failed.push({ name: "(empty)", error: "missing_master_catalog_name" });
+      continue;
+    }
+
+    try {
+      const cleanedBase64 = String(item.data_base64 || "").replace(/^data:[^;]+;base64,/, "");
+      const contentType = String(item.content_type || "image/webp").toLowerCase();
+      const contentHash = String(item.sha256_hex || "").trim().toLowerCase();
+      if (!cleanedBase64 || !contentHash) {
+        failed.push({ name: exactName, error: "missing_image_payload_or_hash" });
+        continue;
+      }
+
+      const estimatedBytes = Math.ceil((cleanedBase64.length * 3) / 4);
+      const byteSize = Number(item.byte_size ?? estimatedBytes);
+      if (byteSize > 650 * 1024) {
+        failed.push({ name: exactName, error: "exceeds_650kb_limit" });
+        continue;
+      }
+
+      // 1. Check SHA-256 deduplication in shared media
+      const existingMedia = await env.DB.prepare(
+        `SELECT id, public_url, r2_object_key FROM storefront_media WHERE sha256_hex = ? AND is_shared = 1 LIMIT 1`
+      )
+        .bind(contentHash)
+        .first<{ id: string; public_url: string; r2_object_key: string }>();
+
+      let mediaId: string;
+      let publicUrl: string;
+      const logicalFileName = item.logical_file_name || `${exactName}.webp`;
+
+      if (existingMedia) {
+        mediaId = String(existingMedia.id);
+        publicUrl = String(existingMedia.public_url);
+        deduplicated++;
+      } else {
+        mediaId = `sfm_shared_${crypto.randomUUID().slice(0, 12)}`;
+        const ext = contentType.includes("png") ? "png" : contentType.includes("jpeg") ? "jpg" : "webp";
+        const r2Key = `shared/medicines/${contentHash}.${ext}`;
+
+        if (env.MEDIA_BUCKET) {
+          const bin = atob(cleanedBase64);
+          const bytes = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+
+          await env.MEDIA_BUCKET.put(r2Key, bytes, {
+            httpMetadata: {
+              contentType,
+              cacheControl: "public, max-age=31536000, immutable",
+            },
+            customMetadata: {
+              is_shared: "true",
+              sha256_hex: contentHash,
+              logical_name: logicalFileName.slice(0, 120),
+              uploaded_by: actorId,
+            },
+          });
+        }
+
+        publicUrl = resolveSharedMediaPublicUrl(env, mediaId, r2Key);
+        await env.DB.prepare(
+          `INSERT INTO storefront_media (
+             id, storefront_id, pharmacy_id, r2_object_key, public_url,
+             content_type, byte_size, width, height, sha256_hex, purpose,
+             is_shared, verification_status, source_type, logical_file_name,
+             rights_status, uploaded_by, created_at
+           ) VALUES (?, 'sf_central_library', 'pharmacy_central_platform', ?, ?, ?, ?, ?, ?, ?, 'product_image', 1, 'verified', ?, ?, 'verified_bulk_import', ?, ?)`
+        )
+          .bind(
+            mediaId,
+            r2Key,
+            publicUrl,
+            contentType,
+            byteSize,
+            item.width ? Number(item.width) : null,
+            item.height ? Number(item.height) : null,
+            contentHash,
+            item.source_type || "bulk_zip_import",
+            logicalFileName,
+            actorId,
+            nowIso
+          )
+          .run();
+        uploaded++;
+      }
+
+      // 2. Upsert verified canonical medicine
+      const masterId = item.master_catalog_id ? String(item.master_catalog_id).trim() : null;
+      const canonicalId = masterId
+        ? `cmed_m_${masterId.replace(/[^a-zA-Z0-9_-]/g, "_")}`
+        : `cmed_${crypto.randomUUID()}`;
+      const normName = exactName.toLowerCase().replace(/\s+/g, " ");
+      const coreKey = computeNormalizedCoreKey(exactName) || computeNormalizedCoreKey(item.brand_name) || null;
+
+      await env.DB.prepare(
+        `INSERT INTO central_medicines (
+           id, canonical_name, master_catalog_id, master_catalog_name, normalized_catalog_name, normalized_core_key,
+           allow_strengthless_match, brand_name, generic_name, strength, dosage_form, manufacturer, barcode,
+           verification_status, preferred_media_id, image_source, image_rights_status, logical_file_name,
+           created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'verified', ?, 'bulk_zip_import', 'verified_bulk_import', ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           canonical_name = excluded.canonical_name,
+           master_catalog_id = COALESCE(excluded.master_catalog_id, central_medicines.master_catalog_id),
+           master_catalog_name = COALESCE(excluded.master_catalog_name, central_medicines.master_catalog_name),
+           normalized_catalog_name = excluded.normalized_catalog_name,
+           normalized_core_key = COALESCE(excluded.normalized_core_key, central_medicines.normalized_core_key),
+           brand_name = COALESCE(excluded.brand_name, central_medicines.brand_name),
+           generic_name = COALESCE(excluded.generic_name, central_medicines.generic_name),
+           strength = COALESCE(excluded.strength, central_medicines.strength),
+           dosage_form = COALESCE(excluded.dosage_form, central_medicines.dosage_form),
+           manufacturer = COALESCE(excluded.manufacturer, central_medicines.manufacturer),
+           barcode = COALESCE(excluded.barcode, central_medicines.barcode),
+           verification_status = 'verified',
+           preferred_media_id = excluded.preferred_media_id,
+           image_source = 'bulk_zip_import',
+           logical_file_name = excluded.logical_file_name,
+           updated_at = excluded.updated_at`
+      )
+        .bind(
+          canonicalId,
+          exactName,
+          masterId,
+          exactName,
+          normName,
+          coreKey,
+          item.allow_strengthless_match ? 1 : 0,
+          item.brand_name?.trim() || null,
+          item.generic_name?.trim() || null,
+          item.strength?.trim() || null,
+          item.dosage_form?.trim() || null,
+          item.manufacturer?.trim() || null,
+          item.barcode?.trim() || null,
+          mediaId,
+          logicalFileName,
+          nowIso,
+          nowIso
+        )
+        .run();
+
+      // Also mark discovery queue verified if it was imported there
+      if (masterId) {
+        await env.DB.prepare(
+          `UPDATE medicine_image_discovery_queue
+           SET status = 'verified', approved_media_id = ?, updated_at = ?
+           WHERE master_catalog_id = ?`
+        )
+          .bind(mediaId, nowIso, masterId)
+          .run()
+          .catch(() => {});
+      }
+
+      // 3. Fast indexed propagation across all pharmacy websites
+      const prop = await matchAndPropagateCanonicalMedicine(env.DB, canonicalId);
+      propagatedProducts += prop.matchedCount;
+      void publicUrl;
+    } catch (err: any) {
+      failed.push({ name: exactName, error: String(err?.message || "bulk_upload_error") });
+    }
+  }
+
+  return {
+    uploaded,
+    deduplicated,
+    propagated_products: propagatedProducts,
+    failed,
+  };
 }
 
 /**

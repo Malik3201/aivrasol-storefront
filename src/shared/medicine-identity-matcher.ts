@@ -49,6 +49,8 @@ export interface CanonicalMedicineRecord {
   image_source?: string | null;
   image_rights_status?: string | null;
   logical_file_name?: string | null;
+  normalized_core_key?: string | null;
+  allow_strengthless_match?: boolean | number | null;
 }
 
 export interface MedicineMatchResult {
@@ -107,7 +109,7 @@ export function getCoreMedicineName(rawName: string): string {
   );
   // Remove pharmaceutical release / coating / formulation modifiers
   cleaned = cleaned.replace(
-    /\b(film[-\s]?coated|fc|fct|sugar[-\s]?free|effervescent|chewable|sublingual|extended[-\s]?release|sustained[-\s]?release|controlled[-\s]?release|modified[-\s]?release|er|sr|cr|xr|mr|dr|retard|plain|advance|forte|fort)\b/gi,
+    /\b(film[-\s]?coated|fc|fct|sugar[-\s]?free|effervescent|chewable|sublingual|extended[-\s]?release|sustained[-\s]?release|controlled[-\s]?release|modified[-\s]?release|er|sr|cr|xr|mr|dr|retard|plain|advance|forte|fort|extra|cf|plus|ds|junior|kids|pediatric|paed|adult)\b/gi,
     " "
   );
   // Remove pack count tokens like 12s, 14s, 100s, 12's, 100's, 200s
@@ -117,6 +119,22 @@ export function getCoreMedicineName(rawName: string): string {
   // Remove common pack packaging words
   cleaned = cleaned.replace(/\b(pack|box|bottle|strip|blister)\b/gi, " ");
   return cleanText(cleaned);
+}
+
+/**
+ * Deterministic SQL-indexable brand lookup key (e.g., "augmentin", "panadol", "arinac", "disprin").
+ * Used to query ONLY matching rows from 38,000+ central_medicines in O(1) D1 reads!
+ */
+export function computeNormalizedCoreKey(rawName?: string | null): string {
+  const core = getCoreMedicineName(rawName || "");
+  if (!core) return "";
+  // Keep up to first 2 meaningful tokens to prevent over-fragmentation while staying highly selective
+  const tokens = core
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((t) => t.length >= 2);
+  if (tokens.length === 0) return core.replace(/[^a-z0-9]/g, "");
+  return tokens.slice(0, 2).join("_");
 }
 
 /**
@@ -242,19 +260,71 @@ export function resolveProductStrength(product: ProductInput): string | null {
 }
 
 /**
- * Extracts distinct clinical variant modifiers (e.g. forte vs plain, extended release vs immediate)
+ * Extracts distinct clinical variant modifiers (e.g. forte vs plain, advance vs plain, cf vs plain, xr vs immediate)
  */
 export function extractVariantModifier(rawText?: string | null): string | null {
   if (!rawText) return null;
   const lower = rawText.toLowerCase();
   if (/\b(forte|fort)\b/i.test(lower)) return "forte";
   if (/\bplain\b/i.test(lower)) return "plain";
+  if (/\badvance\b/i.test(lower)) return "advance";
+  if (/\bcf\b/i.test(lower)) return "cf";
+  if (/\bextra\b/i.test(lower)) return "extra";
+  if (/\bplus\b/i.test(lower)) return "plus";
   if (/\b(xr|extended[-\s]?release)\b/i.test(lower)) return "xr";
   if (/\b(sr|sustained[-\s]?release)\b/i.test(lower)) return "sr";
   if (/\b(cr|controlled[-\s]?release)\b/i.test(lower)) return "cr";
   if (/\b(ds|double[-\s]?strength)\b/i.test(lower)) return "ds";
-  if (/\bextra\b/i.test(lower)) return "extra";
+  if (/\b(junior|kids|pediatric|paed)\b/i.test(lower)) return "kids";
   return null;
+}
+
+/**
+ * Checks whether two clinical variant modifiers conflict.
+ * Zero tolerance: Advance != Plain/unspecified, CF != Plain/unspecified, Extra != Plain,
+ * Forte != Plain, XR/SR/CR/DS/Plus/Kids != standard!
+ */
+function hasVariantConflict(prodVariant: string | null, canVariant: string | null): boolean {
+  if (prodVariant === canVariant) return false;
+  // "plain" and null are equivalent ONLY when the other side is also plain/null
+  const normProd = prodVariant === "plain" ? null : prodVariant;
+  const normCan = canVariant === "plain" ? null : canVariant;
+  return normProd !== normCan;
+}
+
+/**
+ * Allows safe strengthless matching ONLY for iconic single-strength brands where
+ * Pakistani pharmacies rarely type the strength (e.g. "Disprin", "Arinac Forte", "Ponstan Forte")
+ * AND the canonical name itself does not disambiguate multiple strengths (or admin explicitly set allow_strengthless_match).
+ */
+function isStrengthCompatible(
+  prodStrength: string | null,
+  canStrength: string | null,
+  can: CanonicalMedicineRecord
+): boolean {
+  if (canStrength && prodStrength) {
+    return prodStrength === canStrength;
+  }
+  if (!canStrength && !prodStrength) {
+    return true;
+  }
+  // Product has explicit strength (e.g. 200mg) while canonical has none -> never guess
+  if (prodStrength && !canStrength) {
+    return false;
+  }
+  // Canonical has metadata strength (e.g. Disprin 300mg, Arinac Forte 400/60mg) while POS item omitted strength:
+  // Allow ONLY if explicitly flagged OR canonical_name itself carries no numeric strength token (single-strength iconic brand)
+  if (canStrength && !prodStrength) {
+    if (can.allow_strengthless_match === true || can.allow_strengthless_match === 1) {
+      return true;
+    }
+    const strengthInsideCanonicalName = extractAndNormalizeStrength(can.canonical_name);
+    if (!strengthInsideCanonicalName) {
+      return true;
+    }
+    return false;
+  }
+  return false;
 }
 
 /**
@@ -382,14 +452,13 @@ export function matchMedicineIdentity(
         extractDosageForm(masterMatch.dosage_form || "") ||
         extractDosageForm(masterMatch.canonical_name);
 
-      const strengthConflict = Boolean(
-        (canStrength && (!prodStrength || prodStrength !== canStrength)) ||
-        (prodStrength && (!canStrength || prodStrength !== canStrength))
-      );
+      const strengthConflict = !isStrengthCompatible(prodStrength, canStrength, masterMatch);
       const formConflict = Boolean(prodForm && canForm && prodForm !== canForm);
+      const canVariant = extractVariantModifier(masterMatch.canonical_name);
+      const variantConflict = hasVariantConflict(prodVariant, canVariant);
       const genericConflict = !areGenericsCompatible(product.generic_name, masterMatch.generic_name);
 
-      if (!strengthConflict && !formConflict && !genericConflict) {
+      if (!strengthConflict && !formConflict && !variantConflict && !genericConflict) {
         return {
           matched: true,
           matchType: "master_catalog_id",
@@ -421,12 +490,9 @@ export function matchMedicineIdentity(
       extractDosageForm(singleMatch.canonical_name);
     const canVariant = extractVariantModifier(singleMatch.canonical_name);
 
-    const strengthConflict = Boolean(
-      (canStrength && (!prodStrength || prodStrength !== canStrength)) ||
-      (prodStrength && (!canStrength || prodStrength !== canStrength))
-    );
+    const strengthConflict = !isStrengthCompatible(prodStrength, canStrength, singleMatch);
     const formConflict = Boolean(prodForm && canForm && prodForm !== canForm);
-    const variantConflict = Boolean(prodVariant && canVariant && prodVariant !== canVariant);
+    const variantConflict = hasVariantConflict(prodVariant, canVariant);
     const genericConflict = !areGenericsCompatible(product.generic_name, singleMatch.generic_name);
 
     if (!strengthConflict && !formConflict && !variantConflict && !genericConflict) {
@@ -491,13 +557,8 @@ export function matchMedicineIdentity(
       extractDosageForm(can.canonical_name);
     const canVariant = extractVariantModifier(can.canonical_name);
 
-    // ZERO TOLERANCE: Strength must match when canonical specifies strength
-    if (canStrength) {
-      if (!prodStrength || prodStrength !== canStrength) {
-        continue;
-      }
-    } else if (prodStrength) {
-      // If canonical has no strength distinction, do not match a specific strength item
+    // ZERO TOLERANCE: Strength must match (with safe single-strength iconic brand handling)
+    if (!isStrengthCompatible(prodStrength, canStrength, can)) {
       continue;
     }
 
@@ -506,20 +567,8 @@ export function matchMedicineIdentity(
       continue;
     }
 
-    // ZERO TOLERANCE: Clinical variants must not cross-match (e.g. Forte vs Plain, XR vs Immediate)
-    if (prodVariant && canVariant && prodVariant !== canVariant) {
-      continue;
-    }
-    if (prodVariant === "plain" && canVariant === "forte") {
-      continue;
-    }
-    if (prodVariant === "forte" && canVariant === "plain") {
-      continue;
-    }
-    if (prodVariant === "xr" && canVariant !== "xr") {
-      continue;
-    }
-    if (prodVariant !== "xr" && canVariant === "xr") {
+    // ZERO TOLERANCE: Clinical variants must not cross-match (e.g. Forte vs Plain, Advance vs Plain, CF vs Plain, XR vs Immediate)
+    if (hasVariantConflict(prodVariant, canVariant)) {
       continue;
     }
 
@@ -569,11 +618,7 @@ export function matchMedicineIdentity(
       const canVariant = extractVariantModifier(can.canonical_name);
 
       // ZERO TOLERANCE: Alias cannot bypass strength safety
-      if (canStrength) {
-        if (!prodStrength || prodStrength !== canStrength) {
-          continue;
-        }
-      } else if (prodStrength) {
+      if (!isStrengthCompatible(prodStrength, canStrength, can)) {
         continue;
       }
 
@@ -582,12 +627,8 @@ export function matchMedicineIdentity(
         continue;
       }
 
-      // ZERO TOLERANCE: Alias cannot cross forte vs plain, xr vs immediate
-      if (prodVariant && canVariant && prodVariant !== canVariant) continue;
-      if (prodVariant === "plain" && canVariant === "forte") continue;
-      if (prodVariant === "forte" && canVariant === "plain") continue;
-      if (prodVariant === "xr" && canVariant !== "xr") continue;
-      if (prodVariant !== "xr" && canVariant === "xr") continue;
+      // ZERO TOLERANCE: Alias cannot cross forte vs plain, advance vs plain, xr vs immediate
+      if (hasVariantConflict(prodVariant, canVariant)) continue;
 
       // ZERO TOLERANCE: Generic ingredients must not conflict
       if (!areGenericsCompatible(product.generic_name, can.generic_name)) {

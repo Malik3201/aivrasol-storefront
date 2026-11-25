@@ -73,5 +73,7 @@ export interface StorefrontWorkerEnv {
   PLATFORM_BASE_DOMAIN?: string;
   ALLOW_DEV_HOST_OVERRIDE?: string;
   PORTAL_INTERNAL_URL?: string;
+  /** Optional R2 Custom Domain base URL for zero-Worker direct shared media serving (e.g. https://media.mediqoo.pk) */
+  PUBLIC_MEDIA_BASE_URL?: string;
 }
 

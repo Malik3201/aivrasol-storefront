@@ -231,7 +231,7 @@ export async function handleWorkerRequest(
     }
 
     if (pathname.startsWith("/api/v1/sync/")) {
-      return await handleSyncRoutes(req, env, pathname);
+      return await handleSyncRoutes(req, env, pathname, execCtx);
     }
 
     // Serve static frontend assets if bound in Cloudflare Workers Static Assets

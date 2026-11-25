@@ -61,7 +61,9 @@ import {
   rejectDiscoveryCandidate,
   updateCollectorSettings,
   retryFailedDiscoveryJobs,
+  bulkUploadVerifiedCentralImages,
 } from "../central-image-service";
+import { resolveSharedMediaPublicUrl } from "../edge-cache-and-snapshots";
 
 function computeSetupProgress(
   sf: StorefrontRecord,
@@ -1168,7 +1170,7 @@ export async function handleManageRoutes(
         });
       }
 
-      publicUrl = `/api/v1/public/media/${mediaId}`;
+      publicUrl = resolveSharedMediaPublicUrl(env, mediaId, r2Key);
       const nowIso = new Date().toISOString();
       await env.DB.prepare(
         `INSERT INTO storefront_media (
@@ -1216,6 +1218,33 @@ export async function handleManageRoutes(
       }),
       { status: 200, headers }
     );
+  }
+
+  // POST /api/v1/manage/central-library/bulk-upload (Super Admin Bulk ZIP Auto-Verified Upload)
+  if (pathname === "/api/v1/manage/central-library/bulk-upload" && req.method === "POST") {
+    if (actor.actorType !== "super_admin") {
+      return new Response(
+        JSON.stringify({ ok: false, error: "forbidden", message: "Super Admin privileges required." }),
+        { status: 403, headers }
+      );
+    }
+    const body: any = await req.json().catch(() => ({}));
+    const items = Array.isArray(body.items) ? body.items : [];
+    if (items.length === 0) {
+      return new Response(
+        JSON.stringify({ ok: false, error: "empty_batch", message: "Provide a non-empty items array." }),
+        { status: 400, headers }
+      );
+    }
+    if (items.length > 30) {
+      return new Response(
+        JSON.stringify({ ok: false, error: "batch_too_large", message: "Maximum 30 images per chunk." }),
+        { status: 400, headers }
+      );
+    }
+
+    const bulkRes = await bulkUploadVerifiedCentralImages(env, actor.actorId, items);
+    return new Response(JSON.stringify({ ok: true, ...bulkRes }), { status: 200, headers });
   }
 
   // GET /api/v1/manage/central-library/submissions (Owner submissions review queue)
@@ -1475,7 +1504,7 @@ export async function handleManageRoutes(
         });
       }
 
-      publicUrl = `/api/v1/public/media/${mediaId}`;
+      publicUrl = resolveSharedMediaPublicUrl(env, mediaId, r2Key);
       const nowIso = new Date().toISOString();
       const byteSize = Number(body.byte_size || Math.ceil((cleanedBase64.length * 3) / 4));
 

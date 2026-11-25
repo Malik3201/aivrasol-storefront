@@ -31,10 +31,13 @@ import type {
   StorefrontSettingsRecord,
 } from "../../shared/types";
 import {
+  computeNormalizedCoreKey,
   matchMedicineIdentity,
   type ProductInput,
   type CanonicalMedicineRecord,
 } from "../../shared/medicine-identity-matcher";
+import { findMatchingCanonicalMedicinesIndexed } from "../central-image-service";
+import { buildAndSaveCatalogSnapshot, bumpStorefrontConfigVersion } from "../edge-cache-and-snapshots";
 
 function resolveEffectiveOrderStatusSync(ord: Record<string, any>): StorefrontOrderStatus {
   const outcome = ord.fulfillment_outcome ? String(ord.fulfillment_outcome).trim() : "";
@@ -69,7 +72,7 @@ function mapStatusToDbFields(
   return { dbStatus: requestedStatus, fulfillmentOutcome: null };
 }
 import { detectForbiddenPrivateKeys, toUrlSlug } from "../../shared/validation";
-import type { D1Database, StorefrontWorkerEnv } from "../env";
+import type { D1Database, StorefrontWorkerEnv, WorkerExecutionContext } from "../env";
 import {
   buildResponseHeaders,
   sha256Hex,
@@ -259,7 +262,8 @@ export async function recalculateStorefrontCatalogCounts(
 export async function handleSyncRoutes(
   req: Request,
   env: StorefrontWorkerEnv,
-  pathname: string
+  pathname: string,
+  execCtx?: WorkerExecutionContext
 ): Promise<Response> {
   const url = new URL(req.url);
   const headers = buildResponseHeaders({ req, isPrivate: true });
@@ -661,11 +665,25 @@ export async function handleSyncRoutes(
     const syncEventId = `sfe_${crypto.randomUUID()}`;
     const nowIso = new Date().toISOString();
 
-    // Pre-load verified central medicines for automatic image matching (60s isolate-cached + indexed)
+    // 38,000-scale indexed lookup: queries ONLY verified central_medicines matching this batch's keys (~10-60 rows vs 38,000!)
+    const batchInputs: ProductInput[] = body.items
+      .filter((it) => Boolean(it?.product_identity?.name))
+      .map((it) => ({
+        name: String(it.product_identity.name || ""),
+        generic_name: it.product_identity.generic_name || null,
+        strength: it.product_identity.strength || null,
+        dosage_form: it.product_identity.dosage_form || null,
+        brand_name: it.product_identity.brand_name || null,
+        sku_code: it.product_identity.sku_code || null,
+        barcode: it.product_identity.sku_code || null,
+        master_medicine_id: it.product_identity.master_medicine_id || null,
+      }));
     const { catalog: canonicalCatalog, rowsRead: canonicalRowsRead } =
-      await loadVerifiedCanonicalCatalogCached(env.DB);
+      await findMatchingCanonicalMedicinesIndexed(env.DB, batchInputs);
 
     let itemsApplied = 0;
+    let itemsSkippedUnchanged = 0;
+    let itemsWritten = 0;
     let itemsRejected = 0;
     let catalogTopologyChanged = false;
     let syncActualRowsRead = canonicalRowsRead + 3;
@@ -702,10 +720,12 @@ export async function handleSyncRoutes(
         continue;
       }
 
-      // Check existing product revision, category & image source
+      // Check existing product revision, category, delta fields & image source
       const existingProd = await env.DB.prepare(
-        `SELECT id, slug, sync_version, branch_stock_json, primary_image_url, publish_status,
-                category_name, is_controlled_substance, canonical_medicine_id, selected_media_id, image_source
+        `SELECT id, slug, name, public_selling_price_pkr, availability_status, available_qty,
+                available_base_qty, selling_units_json, sync_version, branch_stock_json,
+                primary_image_url, publish_status, category_name, is_controlled_substance,
+                canonical_medicine_id, selected_media_id, image_source, normalized_core_key
          FROM storefront_products
          WHERE storefront_id = ? AND pharmacy_id = ? AND pos_product_id = ?
          LIMIT 1`
@@ -714,6 +734,12 @@ export async function handleSyncRoutes(
         .first<{
           id: string;
           slug: string;
+          name?: string;
+          public_selling_price_pkr?: number;
+          availability_status?: string;
+          available_qty?: number;
+          available_base_qty?: number;
+          selling_units_json?: string;
           sync_version: number;
           branch_stock_json?: string;
           primary_image_url?: string | null;
@@ -723,6 +749,7 @@ export async function handleSyncRoutes(
           canonical_medicine_id?: string | null;
           selected_media_id?: string | null;
           image_source?: string | null;
+          normalized_core_key?: string | null;
         }>();
       syncActualRowsRead += 1;
 
@@ -900,6 +927,30 @@ export async function handleSyncRoutes(
       const sellingUnitsJson = Array.isArray(item.selling_units)
         ? JSON.stringify(item.selling_units)
         : "[]";
+      const normalizedCoreKey = computeNormalizedCoreKey(name) || null;
+      const incomingAvailStatus = item.availability || "in_stock";
+      const incomingAvailQty = Math.max(0, Number(item.available_qty ?? 0));
+
+      // Delta-Only Write Guard: skip redundant D1 writes when nothing actually changed (protects 100k rows_written/day free cap!)
+      const isUnchangedDelta =
+        Boolean(existingProd) &&
+        String(existingProd!.name || "") === name &&
+        Math.abs(Number(existingProd!.public_selling_price_pkr ?? -1) - price) < 0.005 &&
+        String(existingProd!.availability_status || "") === incomingAvailStatus &&
+        Math.abs(Number(existingProd!.available_qty ?? -1) - incomingAvailQty) < 0.0001 &&
+        Math.abs(Number(existingProd!.available_base_qty ?? -1) - availableBaseQty) < 0.0001 &&
+        String(existingProd!.publish_status || "") === effectivePublishStatus &&
+        String(existingProd!.category_name || "General Medicines").trim() === categoryName &&
+        String(existingProd!.primary_image_url || "") === String(resolvedImageUrl || "") &&
+        String(existingProd!.image_source || "none") === imageSource &&
+        (sellingUnitsJson === "[]" || String(existingProd!.selling_units_json || "[]") === sellingUnitsJson) &&
+        Boolean(existingProd!.normalized_core_key);
+
+      if (isUnchangedDelta) {
+        itemsApplied++;
+        itemsSkippedUnchanged++;
+        continue;
+      }
 
       await env.DB.prepare(
         `INSERT INTO storefront_products (
@@ -911,8 +962,8 @@ export async function handleSyncRoutes(
            search_keywords, publish_status, requires_prescription,
            is_controlled_substance, is_featured, is_popular, max_order_qty,
            sync_version, last_synced_at, created_at, updated_at,
-           image_source, selected_media_id, canonical_medicine_id
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           image_source, selected_media_id, canonical_medicine_id, normalized_core_key
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(storefront_id, pos_product_id) DO UPDATE SET
            master_medicine_id = COALESCE(excluded.master_medicine_id, storefront_products.master_medicine_id),
            sku_code = COALESCE(excluded.sku_code, storefront_products.sku_code),
@@ -956,6 +1007,7 @@ export async function handleSyncRoutes(
              WHEN excluded.selected_media_id IS NOT NULL THEN excluded.selected_media_id
              ELSE storefront_products.selected_media_id
            END,
+           normalized_core_key = COALESCE(excluded.normalized_core_key, storefront_products.normalized_core_key),
            search_keywords = excluded.search_keywords,
            publish_status = excluded.publish_status,
            requires_prescription = excluded.requires_prescription,
@@ -988,8 +1040,8 @@ export async function handleSyncRoutes(
           item.product_identity.public_description || null,
           price,
           item.compare_at_price_pkr ?? null,
-          item.availability || "in_stock",
-          Math.max(0, Number(item.available_qty ?? 0)),
+          incomingAvailStatus,
+          incomingAvailQty,
           availableBaseQty,
           JSON.stringify(branchStockMap),
           categoryName,
@@ -1007,9 +1059,12 @@ export async function handleSyncRoutes(
           nowIso,
           imageSource,
           selectedMediaId,
-          canonicalMedicineId
+          canonicalMedicineId,
+          normalizedCoreKey
         )
         .run();
+
+      itemsWritten++;
 
       const validReasons = new Set([
         "owner_approved",
@@ -1145,7 +1200,22 @@ export async function handleSyncRoutes(
       syncActualRowsRead += Math.max(1, publishedCount * 2);
     }
 
-    // Update storefront last_sync_at
+    // Update storefront last_sync_at (and rotate config_version + R2 catalog snapshot if catalog changed)
+    let nextConfigVersion = Number(sf.config_version || 1);
+    if ((itemsWritten > 0 || catalogTopologyChanged) && !isIntermediateBatch) {
+      nextConfigVersion = await bumpStorefrontConfigVersion(env.DB, actor.storefrontId);
+      const refreshTask = buildAndSaveCatalogSnapshot(env, {
+        id: actor.storefrontId,
+        pharmacy_id: actor.pharmacyId,
+        config_version: nextConfigVersion,
+        last_sync_at: nowIso,
+      }).catch(() => {});
+      if (execCtx && typeof execCtx.waitUntil === "function") {
+        execCtx.waitUntil(refreshTask);
+      }
+    }
+    void itemsSkippedUnchanged;
+
     await env.DB.prepare(
       `UPDATE storefronts SET last_sync_at = ?, updated_at = ? WHERE id = ? AND pharmacy_id = ?`
     )
@@ -2053,6 +2123,167 @@ export async function handleSyncRoutes(
     });
 
     return new Response(JSON.stringify(respPayload), { status: 200, headers });
+  }
+
+  // 7. POST /api/v1/sync/product-image — Fast Mobile / POS 1-Tap Product Photo Upload + Optional Central Library Submission
+  if (pathname === "/api/v1/sync/product-image" && req.method === "POST") {
+    const auth = await verifySyncToken(req, env);
+    if ("error" in auth) {
+      return new Response(JSON.stringify({ ok: false, error: auth.error }), {
+        status: auth.status,
+        headers,
+      });
+    }
+    const { actor } = auth;
+    let body: any;
+    try {
+      body = await req.json();
+    } catch {
+      return new Response(JSON.stringify({ ok: false, error: "invalid_json" }), {
+        status: 400,
+        headers,
+      });
+    }
+
+    const posProdId = String(body.pos_product_id || "").trim();
+    const productName = String(body.name || "").trim();
+    const cleanedBase64 = String(body.data_base64 || "").replace(/^data:[^;]+;base64,/, "");
+    const contentType = String(body.content_type || "image/webp").toLowerCase();
+    if (!posProdId || !cleanedBase64) {
+      return new Response(
+        JSON.stringify({ ok: false, error: "missing_product_or_image" }),
+        { status: 400, headers }
+      );
+    }
+
+    const byteSize = Number(body.byte_size || Math.ceil((cleanedBase64.length * 3) / 4));
+    if (byteSize > 450 * 1024) {
+      return new Response(
+        JSON.stringify({ ok: false, error: "image_too_large", message: "Compressed image must be <= 450 KB." }),
+        { status: 413, headers }
+      );
+    }
+
+    const contentHash = String(body.sha256_hex || "").trim().toLowerCase() || (await sha256Hex(cleanedBase64));
+    const mediaId = `sfm_${crypto.randomUUID().slice(0, 14)}`;
+    const ext = contentType.includes("png") ? "png" : contentType.includes("jpeg") ? "jpg" : "webp";
+    const r2Key = `storefronts/${actor.storefrontId}/products/${contentHash}.${ext}`;
+    const publicUrl = `/api/v1/public/media/${mediaId}`;
+    const nowIso = new Date().toISOString();
+
+    if (env.MEDIA_BUCKET) {
+      const bin = atob(cleanedBase64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      await env.MEDIA_BUCKET.put(r2Key, bytes, {
+        httpMetadata: {
+          contentType,
+          cacheControl: "public, max-age=86400",
+        },
+        customMetadata: {
+          storefront_id: actor.storefrontId,
+          pharmacy_id: actor.pharmacyId,
+          pos_product_id: posProdId,
+          sha256_hex: contentHash,
+        },
+      });
+    }
+
+    await env.DB.prepare(
+      `INSERT INTO storefront_media (
+         id, storefront_id, pharmacy_id, r2_object_key, public_url,
+         content_type, byte_size, width, height, sha256_hex, purpose,
+         is_shared, verification_status, source_type, contributed_by_pharmacy_id, uploaded_by, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'product_image', 0, 'pending_review', 'mobile_pos_capture', ?, ?, ?)`
+    )
+      .bind(
+        mediaId,
+        actor.storefrontId,
+        actor.pharmacyId,
+        r2Key,
+        publicUrl,
+        contentType,
+        byteSize,
+        body.width ? Number(body.width) : null,
+        body.height ? Number(body.height) : null,
+        contentHash,
+        actor.pharmacyId,
+        body.operator_name || "mobile_pos",
+        nowIso
+      )
+      .run();
+
+    // Update storefront product immediately if synced on website
+    const prodUpdate = await env.DB.prepare(
+      `UPDATE storefront_products
+       SET primary_image_url = ?, selected_media_id = ?, image_source = 'owner_override', updated_at = ?
+       WHERE storefront_id = ? AND pharmacy_id = ? AND (pos_product_id = ? OR (master_medicine_id IS NOT NULL AND master_medicine_id = ?))`
+    )
+      .bind(
+        publicUrl,
+        mediaId,
+        nowIso,
+        actor.storefrontId,
+        actor.pharmacyId,
+        posProdId,
+        body.master_medicine_id ? String(body.master_medicine_id).trim() : "__none__"
+      )
+      .run();
+
+    // Optionally submit to Super Admin Central Image Library queue (default true!) so once verified, all pharmacies benefit
+    let submissionId: string | null = null;
+    if (body.submit_to_central_library !== false && productName) {
+      submissionId = `csub_${crypto.randomUUID()}`;
+      await env.DB.prepare(
+        `INSERT INTO central_image_submissions (
+           id, media_id, pharmacy_id, storefront_id, pos_product_id,
+           product_name_snapshot, generic_snapshot, strength_snapshot,
+           dosage_form_snapshot, brand_snapshot, status, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`
+      )
+        .bind(
+          submissionId,
+          mediaId,
+          actor.pharmacyId,
+          actor.storefrontId,
+          posProdId,
+          productName,
+          body.generic_name ? String(body.generic_name).trim() : null,
+          body.strength ? String(body.strength).trim() : null,
+          body.dosage_form ? String(body.dosage_form).trim() : null,
+          body.brand_name ? String(body.brand_name).trim() : null,
+          nowIso
+        )
+        .run()
+        .catch(() => {
+          submissionId = null;
+        });
+    }
+
+    // Rotate config_version + refresh R2 snapshot so website shows new photo immediately
+    if (Number(prodUpdate.meta?.changes || 0) > 0) {
+      const nextVer = await bumpStorefrontConfigVersion(env.DB, actor.storefrontId);
+      const refreshTask = buildAndSaveCatalogSnapshot(env, {
+        id: actor.storefrontId,
+        pharmacy_id: actor.pharmacyId,
+        config_version: nextVer,
+        last_sync_at: nowIso,
+      }).catch(() => {});
+      if (execCtx && typeof execCtx.waitUntil === "function") {
+        execCtx.waitUntil(refreshTask);
+      }
+    }
+
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        media_id: mediaId,
+        public_url: publicUrl,
+        updated_storefront_product: Number(prodUpdate.meta?.changes || 0) > 0,
+        submission_id: submissionId,
+      }),
+      { status: 200, headers }
+    );
   }
 
   return new Response(
