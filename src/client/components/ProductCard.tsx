@@ -115,21 +115,62 @@ export const ProductCard = React.memo(function ProductCard({
     activeUnit.unit_name;
   const readablePackLine = formatReadablePackSubtitle(rawPackLine);
 
-  const isGenericPosGroupBrand =
-    !!cleanBrand && /^(surgical items|general|general medicines|medicines)$/i.test(cleanBrand);
-  const distinctBrand =
-    cleanBrand &&
-    !isGenericPosGroupBrand &&
-    cleanBrand.toLowerCase() !== cleanCategory.toLowerCase()
-      ? cleanBrand
-      : null;
-
   return (
     <article
       data-testid="public-product-card"
       className="h-full flex flex-col sf-product-card-v2 rounded-2xl overflow-hidden group"
     >
-      {/* 1. Pure-White Full-Preview Media Stage (Zero Nested Box, Crisp Full Recognition) */}
+      {/* 1. Solid Top Status Bar — Sits ABOVE Image (ZERO Overlays Covering Medicine Packaging!) */}
+      <div className="px-3.5 py-2 bg-[#F8FAFC] border-b border-[#EDF2F7] flex items-center justify-between gap-2 text-[11px]">
+        <span
+          className={`inline-flex items-center gap-1.5 font-bold ${
+            isUnitOut
+              ? "text-slate-500"
+              : product.availability_status === "low_stock"
+                ? "text-amber-700"
+                : "text-emerald-700"
+          }`}
+        >
+          <span
+            className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+              isUnitOut
+                ? "bg-slate-400"
+                : product.availability_status === "low_stock"
+                  ? "bg-amber-500"
+                  : "bg-emerald-600"
+            }`}
+          />
+          <span>
+            {isUnitOut
+              ? "Out of Stock"
+              : product.availability_status === "low_stock"
+                ? "Low Stock"
+                : product.availability_unconfirmed
+                  ? "Counter Check"
+                  : "In Stock"}
+          </span>
+        </span>
+
+        <div className="flex items-center gap-1.5 shrink-0">
+          {product.requires_prescription && (
+            <span className="px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200 text-[10px] font-extrabold">
+              Rx
+            </span>
+          )}
+          {hasDiscount && (
+            <span className="px-1.5 py-0.5 rounded bg-[#0F172A] text-white text-[10px] font-extrabold tabular-nums">
+              -{discountPct}%
+            </span>
+          )}
+          {!product.requires_prescription && !hasDiscount && cleanStrength && (
+            <span className="px-1.5 py-0.5 rounded bg-white border border-[#E2E8F0] text-[#334155] font-mono text-[10px] font-bold">
+              {cleanStrength}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* 2. Pure-White Full-Size Unobstructed Image Frame (Zero Badges/Overlays on Top of Photo) */}
       <div
         onClick={() => onOpenProductDetail(product)}
         onKeyDown={(e) => {
@@ -141,7 +182,7 @@ export const ProductCard = React.memo(function ProductCard({
         role="button"
         tabIndex={0}
         aria-label={`View details for ${product.name}`}
-        className="relative aspect-[4/3] w-full bg-white border-b border-[#EDF3F0] cursor-pointer overflow-hidden flex items-center justify-center p-2 sm:p-2.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--sf-primary)]"
+        className="w-full aspect-[4/3] bg-white border-b border-[#EDF2F7] cursor-pointer overflow-hidden flex items-center justify-center p-1.5 sm:p-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--sf-primary)]"
       >
         {product.primary_image_url && !imgFailed ? (
           <img
@@ -150,7 +191,7 @@ export const ProductCard = React.memo(function ProductCard({
             loading="lazy"
             decoding="async"
             onError={() => setImgFailed(true)}
-            className="w-full h-full object-contain transition-transform duration-300 ease-out group-hover:scale-[1.06]"
+            className="w-full h-full object-contain transition-transform duration-200 ease-out group-hover:scale-[1.04]"
           />
         ) : (
           <MedicinePlaceholderIllustration
@@ -165,78 +206,24 @@ export const ProductCard = React.memo(function ProductCard({
             className="w-full h-full"
           />
         )}
-
-        {/* Top-Left Compact Availability Indicator */}
-        <div className="absolute top-2.5 left-2.5 right-2.5 flex items-start justify-between gap-1.5 pointer-events-none">
-          <span
-            className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10.5px] font-bold border shadow-2xs ${
-              isUnitOut
-                ? "bg-slate-50 text-slate-600 border-slate-200"
-                : product.availability_status === "low_stock"
-                  ? "bg-[#FFF8EB] text-[#92580E] border-[#F3D9A4]"
-                  : "bg-[#EDFAF4] text-[#0C684C] border-[#BCEAD5]"
-            }`}
-          >
-            <span
-              className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                isUnitOut
-                  ? "bg-slate-400"
-                  : product.availability_status === "low_stock"
-                    ? "bg-[#D98E2B]"
-                    : "bg-[#128761]"
-              }`}
-            />
-            <span>
-              {isUnitOut
-                ? "Out of Stock"
-                : product.availability_status === "low_stock"
-                  ? "Low Stock"
-                  : product.availability_unconfirmed
-                    ? "Counter Check"
-                    : "In Stock"}
-            </span>
-          </span>
-
-          {/* Top-Right Priority Clinical / Savings Badge Only */}
-          {product.requires_prescription ? (
-            <span className="px-2 py-0.5 rounded-full text-[10.5px] font-bold bg-rose-50 text-rose-700 border border-rose-200 shadow-2xs">
-              Rx
-            </span>
-          ) : hasDiscount ? (
-            <span className="px-2 py-0.5 rounded-full text-[10.5px] font-bold bg-[#0E5146] text-white shadow-2xs tabular-nums">
-              -{discountPct}%
-            </span>
-          ) : null}
-        </div>
-
-        {/* Subtle Hover View Cue */}
-        <span
-          aria-hidden="true"
-          className="pointer-events-none hidden sm:inline-flex items-center px-3 py-1 rounded-full bg-[#0F232C]/85 text-white text-[11px] font-semibold absolute bottom-2.5 left-1/2 -translate-x-1/2 opacity-0 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-200"
-        >
-          View Details
-        </span>
       </div>
 
-      {/* 2. Clean Structured Card Body */}
-      <div className="p-3.5 sm:p-4 flex-1 flex flex-col justify-between gap-3">
+      {/* 3. Solid E-Commerce Product Body */}
+      <div className="p-3.5 sm:p-4 flex-1 flex flex-col justify-between gap-3 bg-white">
         <div className="space-y-2">
-          {/* Category Eyebrow & Strength Chip */}
           <div className="flex items-center justify-between gap-2">
-            <span className="font-bold uppercase tracking-wider text-[10.5px] text-[#0E5146] truncate">
+            <span className="font-bold uppercase tracking-wider text-[10.5px] sf-text-brand truncate">
               {cleanCategory}
-              {distinctBrand ? ` · ${distinctBrand}` : ""}
             </span>
-            {cleanStrength && (
-              <span className="px-2 py-0.5 rounded-md bg-[#F2F6F4] border border-[#DCE7E2] text-[#28414C] font-mono text-[10px] font-bold shrink-0">
+            {(product.requires_prescription || hasDiscount) && cleanStrength && (
+              <span className="px-1.5 py-0.5 rounded bg-[#F1F5F9] text-[#334155] font-mono text-[10px] font-bold shrink-0">
                 {cleanStrength}
               </span>
             )}
           </div>
 
-          {/* Product Title & Composition / Pack Subtitle */}
           <div className="space-y-1">
-            <h3 className="sf-heading text-[15.5px] sm:text-[16px] font-bold text-[#0F232C] leading-[1.32] line-clamp-2 min-h-[2.65rem]">
+            <h3 className="sf-heading text-[15px] sm:text-[15.5px] font-bold text-[#0F172A] leading-snug line-clamp-2 min-h-[2.6rem]">
               <button
                 type="button"
                 onClick={() => onOpenProductDetail(product)}
@@ -245,12 +232,12 @@ export const ProductCard = React.memo(function ProductCard({
                 {product.name}
               </button>
             </h3>
-            <p className="text-[12px] text-[#5B717D] truncate" title={readablePackLine}>
+            <p className="text-[12px] text-[#64748B] truncate" title={readablePackLine}>
               {readablePackLine}
             </p>
           </div>
 
-          {/* 3. Compact Selling-Unit & Stock Row */}
+          {/* Selling Units Selector / Pack Stock Row */}
           {units.length > 1 ? (
             <div className="pt-1 space-y-1.5" data-testid="product-unit-selector">
               <div className="flex flex-wrap items-center gap-1.5">
@@ -268,7 +255,7 @@ export const ProductCard = React.memo(function ProductCard({
                           ? "sf-glass-unit-active"
                           : uOut
                             ? "bg-slate-50 text-slate-400 border border-slate-200 line-through"
-                            : "sf-glass-unit text-[#17303B]"
+                            : "sf-glass-unit text-[#1E293B]"
                       }`}
                     >
                       {u.unit_name}
@@ -279,11 +266,11 @@ export const ProductCard = React.memo(function ProductCard({
               {convertedStockText && (
                 <p
                   className={`text-[11px] font-semibold inline-flex items-center gap-1 ${
-                    isUnitOut ? "text-rose-600" : "text-[#496370]"
+                    isUnitOut ? "text-rose-600" : "text-[#475569]"
                   }`}
                 >
                   {!isUnitOut && (
-                    <CheckCircleIcon className="w-3.5 h-3.5 text-[#128761] shrink-0" />
+                    <CheckCircleIcon className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                   )}
                   <span>{convertedStockText}</span>
                 </p>
@@ -291,17 +278,17 @@ export const ProductCard = React.memo(function ProductCard({
             </div>
           ) : (
             <div className="pt-1 flex items-center justify-between gap-2 text-[11px]">
-              <span className="inline-flex items-center h-6 px-2.5 rounded-md bg-[#EEF6F3] border border-[#D3E7DF] text-[#0E5146] font-bold truncate">
+              <span className="inline-flex items-center h-6 px-2 rounded-md bg-[#F1F5F9] border border-[#E2E8F0] text-[#334155] font-bold truncate">
                 {activeUnit.unit_name}
               </span>
               {convertedStockText && (
                 <span
                   className={`font-semibold inline-flex items-center gap-1 truncate ${
-                    isUnitOut ? "text-rose-600" : "text-[#4A6370]"
+                    isUnitOut ? "text-rose-600" : "text-[#475569]"
                   }`}
                 >
                   {!isUnitOut && (
-                    <CheckCircleIcon className="w-3.5 h-3.5 text-[#128761] shrink-0" />
+                    <CheckCircleIcon className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                   )}
                   <span className="truncate">{convertedStockText}</span>
                 </span>
@@ -310,20 +297,20 @@ export const ProductCard = React.memo(function ProductCard({
           )}
         </div>
 
-        {/* 4. Price + Fast Add-to-Cart Footer */}
-        <div className="pt-3 border-t border-[#EDF3F0] space-y-2.5">
+        {/* 4. Solid Price & Cart Action Row */}
+        <div className="pt-3 border-t border-[#EDF2F7] space-y-2.5">
           <div className="flex items-baseline justify-between gap-2">
             <div className="flex items-baseline gap-1.5 min-w-0">
-              <span className="sf-heading sf-price text-[18px] sm:text-[19px] font-extrabold text-[#0F232C] tracking-tight">
+              <span className="sf-heading sf-price text-[18px] sm:text-[19px] font-extrabold text-[#0F172A] tracking-tight">
                 PKR {effectivePrice.toLocaleString()}
               </span>
               {hasDiscount && (
-                <span className="text-[11.5px] text-[#8396A1] line-through tabular-nums">
+                <span className="text-[11.5px] text-[#94A3B8] line-through tabular-nums">
                   PKR {comparePrice.toLocaleString()}
                 </span>
               )}
             </div>
-            <span className="text-[11.5px] font-medium text-[#5A707C] shrink-0">
+            <span className="text-[11.5px] font-medium text-[#64748B] shrink-0">
               / {activeUnit.unit_name}
             </span>
           </div>
@@ -341,7 +328,7 @@ export const ProductCard = React.memo(function ProductCard({
                 }
               />
               <div className="flex items-center gap-1.5">
-                <span className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-[#EAF5F1] text-[#0E5146] border border-[#C6E1D7] whitespace-nowrap">
+                <span className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold sf-badge-brand whitespace-nowrap">
                   In Cart
                 </span>
                 <button
@@ -359,11 +346,11 @@ export const ProductCard = React.memo(function ProductCard({
           ) : isUnitOut ? (
             <button
               type="button"
-              disabled
+              onClick={() => onOpenProductDetail(product)}
               data-testid="add-to-cart-btn"
-              className="w-full h-9 rounded-xl text-xs font-bold bg-[#F3F6F5] text-[#8698A3] border border-[#E2EAE6] cursor-not-allowed"
+              className="w-full h-9 rounded-xl text-xs font-bold bg-[#F8FAFC] hover:bg-[#F1F5F9] text-[#475569] border border-[#CBD5E1] transition"
             >
-              Out of Stock
+              Out of Stock • View Alternatives
             </button>
           ) : (
             <div className="flex items-center gap-2">
@@ -384,7 +371,7 @@ export const ProductCard = React.memo(function ProductCard({
                   onChangeDraftQty(product.id, 1);
                 }}
                 data-testid="add-to-cart-btn"
-                className="flex-1 min-w-0 h-[36px] px-3 rounded-xl sf-glass-cta text-xs font-bold inline-flex items-center justify-center gap-1.5 truncate"
+                className="flex-1 min-w-0 h-[36px] px-3 rounded-xl sf-btn-primary text-xs font-bold inline-flex items-center justify-center gap-1.5 truncate"
               >
                 <ShoppingBagIcon className="w-3.5 h-3.5 shrink-0" />
                 <span className="truncate">

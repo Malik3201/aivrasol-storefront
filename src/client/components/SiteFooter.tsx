@@ -52,8 +52,8 @@ export function SiteFooter({
     : openingHours?.mon_sat || "Mon – Sat: 09:00 AM – 11:00 PM";
 
   return (
-    <footer className="sf-surface-footer mt-16 border-t border-white/10">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-14">
+    <footer className="bg-[#0F172A] text-slate-200 border-t border-slate-800">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 sm:py-14">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-10 lg:gap-12">
           {/* Column 1: Pharmacy Identity */}
           <div className="lg:col-span-4 space-y-4">

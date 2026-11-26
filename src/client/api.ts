@@ -140,10 +140,14 @@ export async function fetchStorefrontResolution(): Promise<{
   });
   const data = (await res.json()) as DomainResolutionResponse;
   if (data?.branding) {
+    const resolvedHero = resolvePublicAssetUrl(
+      (data.branding as any).hero_banner_url || data.branding.hero_image_url
+    );
     data.branding = {
       ...data.branding,
       logo_url: resolvePublicAssetUrl(data.branding.logo_url),
-      hero_image_url: resolvePublicAssetUrl(data.branding.hero_image_url),
+      hero_banner_url: resolvedHero,
+      hero_image_url: resolvedHero,
       favicon_url: resolvePublicAssetUrl(data.branding.favicon_url),
     };
   }
@@ -227,6 +231,65 @@ export async function fetchPublicOpeningHours(): Promise<any> {
   return parsed;
 }
 
+export interface SearchSuggestionsResponse {
+  query: string;
+  suggestions: PublicStorefrontProduct[];
+  alternatives: PublicStorefrontProduct[];
+  matched_generic: string | null;
+  matched_unavailable_name: string | null;
+  alternative_reason: "out_of_stock_match" | "unavailable_brand" | "same_generic" | null;
+  total_matches: number;
+}
+
+export async function fetchPublicSearchSuggestions(
+  q: string,
+  options?: { limit?: number; signal?: AbortSignal }
+): Promise<SearchSuggestionsResponse> {
+  const cleaned = q.trim();
+  if (cleaned.length < 2) {
+    return {
+      query: cleaned,
+      suggestions: [],
+      alternatives: [],
+      matched_generic: null,
+      matched_unavailable_name: null,
+      alternative_reason: null,
+      total_matches: 0,
+    };
+  }
+  const url = buildPublicUrl("/api/v1/public/products/suggest", {
+    q: cleaned,
+    limit: String(options?.limit || 6),
+  });
+  const cached = readCache<SearchSuggestionsResponse>(url);
+  if (cached) return cached;
+
+  const res = await fetch(url, { headers: buildHeaders(), signal: options?.signal });
+  if (!res.ok) {
+    return {
+      query: cleaned,
+      suggestions: [],
+      alternatives: [],
+      matched_generic: null,
+      matched_unavailable_name: null,
+      alternative_reason: null,
+      total_matches: 0,
+    };
+  }
+  const data = await res.json();
+  const payload: SearchSuggestionsResponse = {
+    query: data.query || cleaned,
+    suggestions: (data.suggestions || []).map(normalizeProductMedia),
+    alternatives: (data.alternatives || []).map(normalizeProductMedia),
+    matched_generic: data.matched_generic || null,
+    matched_unavailable_name: data.matched_unavailable_name || null,
+    alternative_reason: data.alternative_reason || null,
+    total_matches: Number(data.total_matches || 0),
+  };
+  writeCache(url, payload, 90_000);
+  return payload;
+}
+
 export async function fetchPublicProducts(options?: {
   category?: string;
   search?: string;
@@ -239,6 +302,8 @@ export async function fetchPublicProducts(options?: {
   signal?: AbortSignal;
 }): Promise<{
   items: PublicStorefrontProduct[];
+  generic_alternatives?: PublicStorefrontProduct[];
+  matched_generic?: string | null;
   next_cursor: string | null;
   has_more: boolean;
   stock_sync_stale?: boolean;
@@ -259,6 +324,8 @@ export async function fetchPublicProducts(options?: {
 
   const cached = readCache<{
     items: PublicStorefrontProduct[];
+    generic_alternatives?: PublicStorefrontProduct[];
+    matched_generic?: string | null;
     next_cursor: string | null;
     has_more: boolean;
     stock_sync_stale?: boolean;
@@ -271,11 +338,13 @@ export async function fetchPublicProducts(options?: {
     signal: options?.signal,
   });
   if (!res.ok) {
-    return { items: [], next_cursor: null, has_more: false };
+    return { items: [], generic_alternatives: [], matched_generic: null, next_cursor: null, has_more: false };
   }
   const data = await res.json();
   const payload = {
     items: (data.items || []).map(normalizeProductMedia),
+    generic_alternatives: (data.generic_alternatives || []).map(normalizeProductMedia),
+    matched_generic: data.matched_generic || null,
     next_cursor: data.next_cursor || null,
     has_more: Boolean(data.has_more),
     stock_sync_stale: Boolean(data.stock_sync_stale),
@@ -290,11 +359,13 @@ export async function fetchPublicProductDetails(
 ): Promise<{
   product: PublicStorefrontProduct & { images?: Array<{ id: string; image_url: string; alt_text?: string }> };
   related_products: PublicStorefrontProduct[];
+  generic_alternatives: PublicStorefrontProduct[];
 } | null> {
   const url = buildPublicUrl(`/api/v1/public/products/${encodeURIComponent(idOrSlug)}`);
   const cached = readCache<{
     product: PublicStorefrontProduct & { images?: Array<{ id: string; image_url: string; alt_text?: string }> };
     related_products: PublicStorefrontProduct[];
+    generic_alternatives: PublicStorefrontProduct[];
   }>(url);
   if (cached) return cached;
 
@@ -316,6 +387,7 @@ export async function fetchPublicProductDetails(
   const result = {
     product: normalizedProd,
     related_products: (data.related_products || []).map(normalizeProductMedia),
+    generic_alternatives: (data.generic_alternatives || []).map(normalizeProductMedia),
   };
   writeCache(url, result, 180_000);
   return result;

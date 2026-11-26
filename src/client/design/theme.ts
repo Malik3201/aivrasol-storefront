@@ -6,17 +6,13 @@ import type {
   StorefrontRecord,
 } from "../../shared/types";
 
-export const DEFAULT_CLINICAL_PRIMARY = "#0E5146";
-export const DEFAULT_CLINICAL_TEAL = "#087E78";
-export const DEFAULT_WARM_ACCENT = "#E6A65B";
-export const DEFAULT_SOFT_MINT = "#E9F5F1";
-export const DEFAULT_WARM_IVORY = "#FFF8ED";
-export const DEFAULT_DARK_INK = "#172B36";
-export const DEFAULT_MUTED_SLATE = "#607481";
-
-// Previous system-seeded defaults that were auto-generated (not custom owner brand picks)
-const LEGACY_SEEDED_PRIMARIES = new Set(["#176B58", "#059669", "#10B981"]);
-const LEGACY_SEEDED_ACCENTS = new Set(["#0D9488", "#14B8A6"]);
+export const DEFAULT_CLINICAL_PRIMARY = "#0A7C66";
+export const DEFAULT_CLINICAL_TEAL = "#0E7490";
+export const DEFAULT_WARM_ACCENT = "#F59E0B";
+export const DEFAULT_SOFT_MINT = "#ECFDF5";
+export const DEFAULT_WARM_IVORY = "#FFFBEB";
+export const DEFAULT_DARK_INK = "#0F172A";
+export const DEFAULT_MUTED_SLATE = "#475569";
 
 const HEX_SHORT_RE = /^#([0-9a-fA-F]{3})$/;
 const HEX_FULL_RE = /^#([0-9a-fA-F]{6})$/;
@@ -64,61 +60,40 @@ function relativeLuminance(hex: string): number {
 }
 
 export function getAccessibleForeground(bgHex: string): string {
-  return relativeLuminance(bgHex) > 0.42 ? "#172B36" : "#FFFFFF";
+  return relativeLuminance(bgHex) > 0.45 ? "#0F172A" : "#FFFFFF";
 }
 
 export function getReadableBrandInk(primaryHex: string): string {
   const lum = relativeLuminance(primaryHex);
-  if (lum > 0.32) {
-    return mixHex(primaryHex, "#0B222D", 0.48);
+  if (lum > 0.28) {
+    return mixHex(primaryHex, "#0F172A", 0.36);
   }
   return primaryHex;
 }
 
-/**
- * Ensures hero/footer deep brand surfaces always achieve strong WCAG AA/AAA contrast
- * against white/ivory text even if a pharmacy owner picks a bright custom primary color.
- */
-export function getDeepEditorialSurface(primaryHex: string): string {
-  if (primaryHex === DEFAULT_CLINICAL_PRIMARY) return DEFAULT_CLINICAL_PRIMARY;
+export function getDeepEditorialSurface(primaryHex: string, secondaryHex?: string | null): string {
+  const sec = secondaryHex ? normalizeHexColor(secondaryHex, "#0F172A") : null;
+  if (sec && relativeLuminance(sec) < 0.14) {
+    return sec;
+  }
   const lum = relativeLuminance(primaryHex);
-  if (lum > 0.18) {
-    return mixHex(primaryHex, "#08222B", 0.52);
+  if (lum > 0.16) {
+    return mixHex(primaryHex, "#0B1726", 0.62);
   }
-  if (lum > 0.1) {
-    return mixHex(primaryHex, "#08222B", 0.28);
-  }
-  return primaryHex;
+  return mixHex(primaryHex, "#0B1726", 0.28);
 }
 
 export function buildTenantThemeVars(
   branding?: StorefrontBrandingRecord | null
 ): React.CSSProperties {
-  const rawPrimary = normalizeHexColor(branding?.primary_color, DEFAULT_CLINICAL_PRIMARY);
-  const isDefaultPalette = LEGACY_SEEDED_PRIMARIES.has(rawPrimary) || rawPrimary === DEFAULT_CLINICAL_PRIMARY;
-  const primary = isDefaultPalette ? DEFAULT_CLINICAL_PRIMARY : rawPrimary;
+  const primary = normalizeHexColor(branding?.primary_color, DEFAULT_CLINICAL_PRIMARY);
+  const teal = normalizeHexColor(branding?.accent_color, DEFAULT_CLINICAL_TEAL);
+  const deepSurface = getDeepEditorialSurface(primary, branding?.secondary_color);
+  const footerSurface = "#0F172A";
 
-  const rawAccent = normalizeHexColor(branding?.accent_color, DEFAULT_CLINICAL_TEAL);
-  const teal =
-    LEGACY_SEEDED_ACCENTS.has(rawAccent) || rawAccent === DEFAULT_CLINICAL_TEAL
-      ? DEFAULT_CLINICAL_TEAL
-      : rawAccent;
-
-  const deepSurface = getDeepEditorialSurface(primary);
-  const footerSurface =
-    primary === DEFAULT_CLINICAL_PRIMARY
-      ? "#08352E"
-      : mixHex(deepSurface, "#071821", 0.42);
-
-  const hover = mixHex(primary, "#061E1A", 0.2);
-  const soft =
-    primary === DEFAULT_CLINICAL_PRIMARY
-      ? DEFAULT_SOFT_MINT
-      : mixHex(primary, "#FFFFFF", 0.9);
-  const border =
-    primary === DEFAULT_CLINICAL_PRIMARY
-      ? "#C5DFD7"
-      : mixHex(primary, "#FFFFFF", 0.74);
+  const hover = mixHex(primary, "#091A16", 0.18);
+  const soft = mixHex(primary, "#FFFFFF", 0.92);
+  const border = mixHex(primary, "#FFFFFF", 0.74);
   const fg = getAccessibleForeground(primary);
   const ink = getReadableBrandInk(primary);
 
@@ -141,12 +116,6 @@ export function buildTenantThemeVars(
   } as React.CSSProperties;
 }
 
-/**
- * Resolves the authoritative customer-facing pharmacy name.
- * Priority:
- * 1. Owner-approved website branding display_name (if configured and non-empty)
- * 2. Verified pharmacy business name on the storefront tenant record
- */
 export function resolvePharmacyDisplayName(
   sf: StorefrontPublicContext | Partial<StorefrontRecord> | null | undefined,
   branding?: StorefrontBrandingRecord | null
@@ -186,10 +155,6 @@ const PLACEHOLDER_TOKENS = new Set([
   "nil",
 ]);
 
-/**
- * Cleans POS metadata fields so raw placeholder entries such as "00" or "N/A"
- * are never displayed to customers as medicine strength, generic salt, or brand.
- */
 export function cleanProductText(value: string | null | undefined): string | null {
   if (!value || typeof value !== "string") return null;
   const trimmed = value.trim();
@@ -199,9 +164,6 @@ export function cleanProductText(value: string | null | undefined): string | nul
   return trimmed;
 }
 
-/**
- * Filters out raw numeric/placeholder POS category codes (such as "00").
- */
 export function isMeaningfulCategory(cat: StorefrontCategoryRecord): boolean {
   const name = cleanProductText(cat.name);
   if (!name) return false;
@@ -212,10 +174,6 @@ export function isMeaningfulCategory(cat: StorefrontCategoryRecord): boolean {
 const UNVERIFIED_REGULATORY_RE =
   /\b(drap|pharmacy council|100%\s*authentic|licensed community pharmacy|registered pharmacist on duty)\b/i;
 
-/**
- * Prevents unverified regulatory/compliance claims from appearing on public pages
- * unless backed by verified pharmacy license/pharmacist records.
- */
 export function sanitizePublicCopy(
   text: string | null | undefined,
   sf: StorefrontPublicContext | Partial<StorefrontRecord> | null | undefined,

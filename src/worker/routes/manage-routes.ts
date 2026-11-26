@@ -1787,6 +1787,14 @@ export async function handleManageRoutes(
     const displayName = String(body.display_name || currentBranding?.display_name || sf.pharmacy_name).trim();
     const tagline = body.tagline !== undefined ? String(body.tagline) : currentBranding?.tagline;
     const logoUrl = body.logo_url !== undefined ? body.logo_url : currentBranding?.logo_url;
+    const rawHeroUrl =
+      body.hero_banner_url !== undefined
+        ? body.hero_banner_url
+        : body.hero_image_url !== undefined
+        ? body.hero_image_url
+        : (currentBranding as any)?.hero_banner_url ?? null;
+    const heroBannerUrl =
+      rawHeroUrl && String(rawHeroUrl).trim() ? String(rawHeroUrl).trim() : null;
     const heroTitle = body.hero_title !== undefined ? String(body.hero_title) : currentBranding?.hero_title;
     const heroSubtitle =
       body.hero_subtitle !== undefined ? String(body.hero_subtitle) : currentBranding?.hero_subtitle;
@@ -1814,7 +1822,7 @@ export async function handleManageRoutes(
 
     await env.DB.prepare(
       `UPDATE storefront_branding
-       SET display_name = ?, tagline = ?, logo_url = ?, hero_title = ?, hero_subtitle = ?,
+       SET display_name = ?, tagline = ?, logo_url = ?, hero_banner_url = ?, hero_title = ?, hero_subtitle = ?,
            theme_preset = ?, primary_color = ?, secondary_color = ?, accent_color = ?,
            show_verified_license_badge = ?, about_title = ?, about_content = ?,
            footer_tagline = ?, services_json = ?, updated_by = ?, updated_at = ?
@@ -1824,6 +1832,7 @@ export async function handleManageRoutes(
         displayName,
         tagline,
         logoUrl,
+        heroBannerUrl,
         heroTitle,
         heroSubtitle,
         themePreset,
@@ -1840,6 +1849,13 @@ export async function handleManageRoutes(
         sf.id,
         sf.pharmacy_id
       )
+      .run();
+
+    // Bump config_version so Edge Cache picks up updated branding / hero photo immediately
+    await env.DB.prepare(
+      `UPDATE storefronts SET config_version = COALESCE(config_version, 1) + 1, updated_at = ? WHERE id = ? AND pharmacy_id = ?`
+    )
+      .bind(nowIso, sf.id, sf.pharmacy_id)
       .run();
 
     // Also allow updating pharmacy contact info if provided
@@ -3058,7 +3074,20 @@ export async function handleManageRoutes(
         )
         .run();
 
-      if (entityType === "branding" || purpose === "logo") {
+      if (rawEntityType === "branding_hero") {
+        await env.DB.prepare(
+          `UPDATE storefront_branding
+           SET hero_banner_url = ?, updated_at = ?
+           WHERE storefront_id = ? AND pharmacy_id = ?`
+        )
+          .bind(mediaRecord.public_url, nowIso, sf.id, sf.pharmacy_id)
+          .run();
+        await env.DB.prepare(
+          `UPDATE storefronts SET config_version = COALESCE(config_version, 1) + 1, updated_at = ? WHERE id = ? AND pharmacy_id = ?`
+        )
+          .bind(nowIso, sf.id, sf.pharmacy_id)
+          .run();
+      } else if (entityType === "branding" || purpose === "logo") {
         await env.DB.prepare(
           `UPDATE storefront_branding
            SET logo_url = ?, logo_media_id = ?, updated_at = ?

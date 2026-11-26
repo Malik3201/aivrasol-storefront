@@ -235,6 +235,8 @@ export function App() {
 
   // Catalog State
   const [products, setProducts] = useState<PublicStorefrontProduct[]>([]);
+  const [searchGenericAlts, setSearchGenericAlts] = useState<PublicStorefrontProduct[]>([]);
+  const [searchMatchedGeneric, setSearchMatchedGeneric] = useState<string | null>(null);
   const [initialHomeCatalog, setInitialHomeCatalog] = useState<PublicStorefrontProduct[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
@@ -262,6 +264,9 @@ export function App() {
     initialRoute.view === "product" && Boolean(initialRoute.productSlug)
   );
   const [relatedProducts, setRelatedProducts] = useState<PublicStorefrontProduct[]>([]);
+  const [detailGenericAlternatives, setDetailGenericAlternatives] = useState<
+    PublicStorefrontProduct[]
+  >([]);
   const [detailQty, setDetailQty] = useState<number>(1);
   const [modalQty, setModalQty] = useState<number>(1);
   const [cardQtyByProductId, setCardQtyByProductId] = useState<Record<string, number>>({});
@@ -472,6 +477,10 @@ export function App() {
           sort: opts.sort,
         });
         setProducts((prev) => (opts.append ? [...prev, ...res.items] : res.items));
+        if (!opts.append) {
+          setSearchGenericAlts(res.generic_alternatives || []);
+          setSearchMatchedGeneric(res.matched_generic || null);
+        }
         setNextCursor(res.next_cursor);
         setHasMore(res.has_more);
         if (res.stock_sync_stale !== undefined) {
@@ -564,6 +573,7 @@ export function App() {
           if (full) {
             setSelectedProduct(full.product);
             setRelatedProducts(full.related_products || []);
+            setDetailGenericAlternatives(full.generic_alternatives || []);
           }
           setLoadingProductDetail(false);
         });
@@ -680,6 +690,8 @@ export function App() {
           setPromotions(promos);
           setDeliveryConfig(deliv);
           setProducts(initialProds.items);
+          setSearchGenericAlts(initialProds.generic_alternatives || []);
+          setSearchMatchedGeneric(initialProds.matched_generic || null);
           setInitialHomeCatalog(
             homeCatalogRes ? homeCatalogRes.items : initialProds.items
           );
@@ -697,6 +709,7 @@ export function App() {
             if (initialProdDetail) {
               setSelectedProduct(initialProdDetail.product);
               setRelatedProducts(initialProdDetail.related_products || []);
+              setDetailGenericAlternatives(initialProdDetail.generic_alternatives || []);
             } else {
               // Product slug no longer exists — fall back smoothly to catalog
               setActiveView("shop");
@@ -1023,6 +1036,7 @@ export function App() {
       setLoadingProductDetail(false);
       setDetailQty(1);
       setRelatedProducts([]);
+      setDetailGenericAlternatives([]);
       activeViewRef.current = "product";
       setActiveView("product");
       window.scrollTo({ top: 0, behavior: "auto" });
@@ -1031,6 +1045,7 @@ export function App() {
       if (full) {
         setSelectedProduct(full.product);
         setRelatedProducts(full.related_products || []);
+        setDetailGenericAlternatives(full.generic_alternatives || []);
       }
     },
     [snapshotCurrentHistoryScroll]
@@ -1637,7 +1652,7 @@ export function App() {
   return (
     <div
       style={themeVars}
-      className="min-h-screen flex flex-col bg-[#F6F8F7] text-[#11242D] antialiased"
+      className="min-h-screen flex flex-col bg-[#F5F7F9] text-[#0F172A] antialiased"
       data-testid="storefront-active"
     >
       {/* Global Header */}
@@ -1645,12 +1660,20 @@ export function App() {
         sf={sf}
         branding={branding}
         settings={settings}
+        categories={categories}
         displayName={displayName}
         activeView={activeView}
+        selectedCategory={selectedCategory}
         onSelectView={handleSelectView}
+        onSelectCategory={setSelectedCategory}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
-        onSubmitSearch={() => handleSelectView("shop")}
+        onSubmitSearch={(q) => {
+          if (typeof q === "string") setSearchQuery(q);
+          handleSelectView("shop");
+        }}
+        onOpenProductDetail={(p) => void openProductDetailPage(p)}
+        onQuickAddToCart={(p) => addToCart(p, 1, false)}
         cartTotalItems={cartCalculations.totalItems}
         cartSubtotalPkr={cartCalculations.subtotalPkr}
         onOpenCartDrawer={() => setCartDrawerOpen(true)}
@@ -1695,7 +1718,10 @@ export function App() {
             loadingProducts={loadingProducts}
             searchQuery={searchQuery}
             onSearchChange={setSearchQuery}
-            onSubmitSearch={() => handleSelectView("shop")}
+            onSubmitSearch={(q) => {
+              if (typeof q === "string") setSearchQuery(q);
+              handleSelectView("shop");
+            }}
             onSelectCategory={setSelectedCategory}
             onSelectView={handleSelectView}
             onApplyPromoCode={(code) => {
@@ -1728,6 +1754,8 @@ export function App() {
           categories={categories}
           availableDosageForms={availableDosageForms}
           displayedProducts={displayedProducts}
+          genericAlternatives={searchGenericAlts}
+          matchedGeneric={searchMatchedGeneric}
           loadingProducts={loadingProducts}
           hasMore={hasMore}
           nextCursor={nextCursor}
@@ -1741,6 +1769,9 @@ export function App() {
           onSelectDosageForm={setSelectedDosageForm}
           onToggleInStockOnly={setInStockOnly}
           onSortChange={setSortBy}
+          onSelectHome={() => handleSelectView("home")}
+          onOpenProductDetail={(p) => void openProductDetailPage(p)}
+          onQuickAddToCart={(p) => addToCart(p, 1, false)}
           onLoadMore={() => {
             if (nextCursor) {
               void loadProductsPage({
@@ -1787,6 +1818,7 @@ export function App() {
           inCartCap={detailInCartCap}
           convertedStockText={detailStockText}
           relatedProducts={relatedProducts}
+          genericAlternatives={detailGenericAlternatives}
           onChangeDetailQty={setDetailQty}
           onSelectUnit={selectProductUnit}
           onAddToCart={addToCart}

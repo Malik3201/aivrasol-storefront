@@ -36,6 +36,7 @@ interface ProductDetailViewProps {
   inCartCap: number;
   convertedStockText: string | null;
   relatedProducts: PublicStorefrontProduct[];
+  genericAlternatives?: PublicStorefrontProduct[];
   onChangeDetailQty: (qty: number) => void;
   onSelectUnit: (productId: string, unitId: string) => void;
   onAddToCart: (
@@ -71,6 +72,7 @@ export function ProductDetailView({
   inCartCap,
   convertedStockText,
   relatedProducts,
+  genericAlternatives = [],
   onChangeDetailQty,
   onSelectUnit,
   onAddToCart,
@@ -159,10 +161,10 @@ export function ProductDetailView({
   const cleanDescription = cleanProductText(product.public_description);
 
   return (
-    <main className="flex-1 sf-fade-up">
-      {/* Subtle Mint Breadcrumb Bar */}
-      <div className="sf-surface-mint border-b border-[#CDE2DA]">
-        <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-3 flex flex-wrap items-center justify-between gap-3 text-xs text-[#4D616E]">
+    <main className="flex-1 bg-[#F5F7F9] sf-fade-up">
+      {/* Crisp Solid White Breadcrumb Bar */}
+      <div className="bg-white border-b border-[#E2E8F0]">
+        <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-3 flex flex-wrap items-center justify-between gap-3 text-xs text-[#475569]">
           <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 flex-wrap">
             <button
               type="button"
@@ -215,62 +217,27 @@ export function ProductDetailView({
       {/* Main Product Showcase */}
       <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-7 sm:py-9 space-y-10">
         <div className="sf-card rounded-3xl p-5 sm:p-7 lg:p-9 grid grid-cols-1 lg:grid-cols-12 gap-7 lg:gap-10">
-          {/* Left Column: Pure-White Full-Preview Media Stage + Zoom Lightbox */}
+          {/* Left Column: Unobstructed Pure-White Full-Preview Media Stage + Click-to-Zoom Lightbox */}
           <div className="lg:col-span-5 space-y-4">
-            <div
-              onClick={() => {
-                if (selectedImageUrl) setLightboxOpen(true);
-              }}
-              onKeyDown={(e) => {
-                if (selectedImageUrl && (e.key === "Enter" || e.key === " ")) {
-                  e.preventDefault();
-                  setLightboxOpen(true);
-                }
-              }}
-              role={selectedImageUrl ? "button" : undefined}
-              tabIndex={selectedImageUrl ? 0 : undefined}
-              aria-label={selectedImageUrl ? `Zoom image of ${product.name}` : undefined}
-              className={`relative w-full aspect-[4/3] sm:aspect-square max-h-[420px] rounded-2xl bg-white border border-[#DCE7E2] overflow-hidden flex items-center justify-center group ${
-                selectedImageUrl ? "cursor-zoom-in hover:border-[#9EC6B8] transition-colors" : ""
-              }`}
-            >
-              {selectedImageUrl ? (
-                <div className="w-full h-full p-3 sm:p-4 flex items-center justify-center bg-white">
-                  <img
-                    src={selectedImageUrl}
-                    alt={product.name}
-                    onError={() => setSelectedImageUrl(null)}
-                    className="w-full h-full object-contain transition-transform duration-300 group-hover:scale-[1.03]"
-                  />
-                </div>
-              ) : (
-                <MedicinePlaceholderIllustration
-                  name={product.name}
-                  dosageForm={product.dosage_form}
-                  categoryName={product.category_name}
-                  brandName={product.brand_name}
-                  packingLabel={product.packing_label}
-                  className="w-full h-full"
-                />
-              )}
-
-              <div className="absolute top-3 left-3 right-3 flex items-center justify-between gap-2 pointer-events-none">
+            <div className="rounded-2xl bg-white border border-[#E2E8F0] overflow-hidden">
+              {/* Clean Status Strip Above Photo — Zero Overlays Covering Medicine Packaging */}
+              <div className="px-4 py-2.5 bg-[#F8FAFC] border-b border-[#EDF2F7] flex items-center justify-between gap-2 text-xs">
                 <span
-                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border shadow-2xs ${
+                  className={`inline-flex items-center gap-1.5 font-bold ${
                     isUnitOut
-                      ? "bg-slate-50 text-slate-600 border-slate-200"
+                      ? "text-slate-600"
                       : product.availability_status === "low_stock"
-                        ? "bg-[#FFF8EB] text-[#92580E] border-[#F3D9A4]"
-                        : "bg-[#EDFAF4] text-[#0C684C] border-[#BCEAD5]"
+                        ? "text-amber-700"
+                        : "text-emerald-700"
                   }`}
                 >
                   <span
-                    className={`w-1.5 h-1.5 rounded-full ${
+                    className={`w-2 h-2 rounded-full ${
                       isUnitOut
                         ? "bg-slate-400"
                         : product.availability_status === "low_stock"
-                          ? "bg-[#D98E2B]"
-                          : "bg-[#128761]"
+                          ? "bg-amber-500"
+                          : "bg-emerald-600"
                     }`}
                   />
                   <span>
@@ -284,19 +251,60 @@ export function ProductDetailView({
                   </span>
                 </span>
 
-                {product.requires_prescription && (
-                  <span className="px-3 py-1 rounded-full bg-rose-50 text-rose-700 border border-rose-200 text-xs font-bold inline-flex items-center gap-1 shadow-2xs">
-                    <PrescriptionIcon className="w-3.5 h-3.5" />
-                    <span>Rx Required</span>
-                  </span>
-                )}
+                <div className="flex items-center gap-2">
+                  {product.requires_prescription && (
+                    <span className="px-2 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200 text-[11px] font-bold inline-flex items-center gap-1">
+                      <PrescriptionIcon className="w-3 h-3" />
+                      <span>Rx Required</span>
+                    </span>
+                  )}
+                  {selectedImageUrl && (
+                    <button
+                      type="button"
+                      onClick={() => setLightboxOpen(true)}
+                      className="text-[11px] font-bold sf-text-brand hover:underline"
+                    >
+                      Zoom Image
+                    </button>
+                  )}
+                </div>
               </div>
 
-              {selectedImageUrl && (
-                <span className="pointer-events-none absolute bottom-3 right-3 px-2.5 py-1 rounded-full bg-[#0F232C]/80 text-white text-[11px] font-semibold opacity-85 group-hover:opacity-100 transition-opacity">
-                  Click to zoom
-                </span>
-              )}
+              <div
+                onClick={() => {
+                  if (selectedImageUrl) setLightboxOpen(true);
+                }}
+                onKeyDown={(e) => {
+                  if (selectedImageUrl && (e.key === "Enter" || e.key === " ")) {
+                    e.preventDefault();
+                    setLightboxOpen(true);
+                  }
+                }}
+                role={selectedImageUrl ? "button" : undefined}
+                tabIndex={selectedImageUrl ? 0 : undefined}
+                aria-label={selectedImageUrl ? `Zoom image of ${product.name}` : undefined}
+                className={`w-full aspect-[4/3] sm:aspect-square max-h-[420px] bg-white flex items-center justify-center p-3 sm:p-4 ${
+                  selectedImageUrl ? "cursor-zoom-in" : ""
+                }`}
+              >
+                {selectedImageUrl ? (
+                  <img
+                    src={selectedImageUrl}
+                    alt={product.name}
+                    onError={() => setSelectedImageUrl(null)}
+                    className="w-full h-full object-contain transition-transform duration-200 hover:scale-[1.03]"
+                  />
+                ) : (
+                  <MedicinePlaceholderIllustration
+                    name={product.name}
+                    dosageForm={product.dosage_form}
+                    categoryName={product.category_name}
+                    brandName={product.brand_name}
+                    packingLabel={product.packing_label}
+                    className="w-full h-full"
+                  />
+                )}
+              </div>
             </div>
 
             {galleryImages.length > 1 && (
@@ -603,6 +611,38 @@ export function ProductDetailView({
             )}
           </div>
         </div>
+
+        {/* Same-Formula / Generic Salt Alternatives (Automatically Highlighted When Out of Stock!) */}
+        {genericAlternatives.length > 0 && (
+          <section
+            className={`rounded-2xl p-5 sm:p-6 space-y-5 border ${
+              isUnitOut
+                ? "bg-[#ECFDF5] border-emerald-300"
+                : "bg-white border-[#E2E8F0]"
+            }`}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <span className="text-[11px] font-extrabold uppercase tracking-wider sf-text-brand block">
+                  {isUnitOut
+                    ? "Currently Out of Stock — In-Stock Substitute Available"
+                    : "Same Generic Composition"}
+                </span>
+                <h2 className="sf-heading text-lg sm:text-xl font-extrabold text-[#0F172A]">
+                  {cleanGeneric
+                    ? `Same-Formula Alternatives (${cleanGeneric})`
+                    : "Available Generic Alternatives"}
+                </h2>
+              </div>
+              <span className="px-3 py-1 rounded-lg bg-white border border-[#CBD5E1] text-xs font-bold text-[#0F172A]">
+                {genericAlternatives.length} available now
+              </span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-5">
+              {genericAlternatives.slice(0, 4).map((alt) => renderProductCard(alt))}
+            </div>
+          </section>
+        )}
 
         {/* Related Products */}
         {relatedProducts.length > 0 && (

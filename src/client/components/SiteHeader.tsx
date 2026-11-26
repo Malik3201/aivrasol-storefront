@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import type {
+  PublicStorefrontProduct,
   StorefrontBrandingRecord,
+  StorefrontCategoryRecord,
   StorefrontPublicContext,
   StorefrontSettingsRecord,
 } from "../../shared/types";
-import { getPharmacyMonogram, sanitizePublicCopy } from "../design/theme";
+import { getPharmacyMonogram, isMeaningfulCategory, sanitizePublicCopy } from "../design/theme";
 import type { StorefrontView } from "../types-ui";
 import {
   CloseIcon,
@@ -18,25 +20,29 @@ import {
   ShoppingBagIcon,
   WhatsAppIcon,
 } from "./Icons";
+import { SmartSearchBar } from "./SmartSearchBar";
 
 interface SiteHeaderProps {
   sf: StorefrontPublicContext;
   branding?: StorefrontBrandingRecord | null;
   settings?: Partial<StorefrontSettingsRecord> | Record<string, any> | null;
+  categories?: StorefrontCategoryRecord[];
   displayName: string;
   activeView: StorefrontView;
+  selectedCategory?: string;
   onSelectView: (view: StorefrontView) => void;
+  onSelectCategory?: (category: string) => void;
   searchQuery: string;
   onSearchChange: (q: string) => void;
-  onSubmitSearch: () => void;
+  onSubmitSearch: (q?: string) => void;
+  onOpenProductDetail: (prod: PublicStorefrontProduct) => void;
+  onQuickAddToCart: (prod: PublicStorefrontProduct) => void;
   cartTotalItems: number;
   cartSubtotalPkr: number;
   onOpenCartDrawer: () => void;
 }
 
-const NAV_ITEMS: Array<{ id: StorefrontView; label: string }> = [
-  { id: "home", label: "Home" },
-  { id: "shop", label: "Medicines" },
+const SECONDARY_LINKS: Array<{ id: StorefrontView; label: string }> = [
   { id: "delivery", label: "Delivery" },
   { id: "branches", label: "Locations" },
   { id: "about", label: "About" },
@@ -47,12 +53,17 @@ export function SiteHeader({
   sf,
   branding,
   settings,
+  categories = [],
   displayName,
   activeView,
+  selectedCategory = "all",
   onSelectView,
+  onSelectCategory,
   searchQuery,
   onSearchChange,
   onSubmitSearch,
+  onOpenProductDetail,
+  onQuickAddToCart,
   cartTotalItems,
   cartSubtotalPkr,
   onOpenCartDrawer,
@@ -80,37 +91,35 @@ export function SiteHeader({
 
   const rawTagline = branding?.tagline?.trim();
   const safeSubtitle = rawTagline
-    ? sanitizePublicCopy(rawTagline, sf, `${sf.city} Community Pharmacy`)
-    : `${sf.city} Community Pharmacy`;
+    ? sanitizePublicCopy(rawTagline, sf, `Online Pharmacy • ${sf.city}`)
+    : `Online Pharmacy • ${sf.city}`;
 
   const announcementEnabled = Number(settings?.announcement_bar_enabled ?? 1) === 1;
   const announcementText = sanitizePublicCopy(
     settings?.announcement_bar_text,
     sf,
-    `${displayName} (${sf.city}) — Local home delivery & counter pickup`
+    `${displayName} (${sf.city}) — Genuine medicines delivered to your door & free counter pickup`
   );
 
   const whatsappDigits = (sf.whatsapp_phone || sf.contact_phone || "").replace(/[^0-9]/g, "");
+  const topCategories = categories.filter(isMeaningfulCategory).slice(0, 5);
 
   return (
     <>
-      {/* Refined Top Utility Bar */}
+      {/* 1. Crisp Top Commercial Utility Strip */}
       {announcementEnabled && (
-        <div
-          className="text-white/90 text-xs border-b border-white/10"
-          style={{ backgroundColor: "var(--sf-forest-deep)" }}
-        >
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 min-h-[36px] py-1.5 flex items-center justify-between gap-4">
+        <div className="bg-[#0F172A] text-slate-200 text-xs border-b border-slate-800">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 min-h-[34px] py-1.5 flex items-center justify-between gap-4">
             <div className="flex items-center gap-2 min-w-0">
               <span
                 className="w-1.5 h-1.5 rounded-full shrink-0"
-                style={{ backgroundColor: "var(--sf-warm-accent)" }}
+                style={{ backgroundColor: "var(--sf-primary)" }}
               />
-              <p className="truncate font-medium text-white/90">{announcementText}</p>
+              <p className="truncate font-medium text-slate-200">{announcementText}</p>
             </div>
-            <div className="hidden sm:flex items-center gap-5 shrink-0 text-xs">
+            <div className="hidden sm:flex items-center gap-4 shrink-0 text-[11.5px]">
               {hasVerifiedLicense && (
-                <span className="inline-flex items-center gap-1.5 font-mono text-emerald-200">
+                <span className="inline-flex items-center gap-1 font-mono text-emerald-300">
                   <ShieldCheckIcon className="w-3.5 h-3.5" />
                   <span>Lic: {sf.drug_sale_license_no}</span>
                 </span>
@@ -118,16 +127,27 @@ export function SiteHeader({
               {sf.contact_phone && (
                 <a
                   href={`tel:${sf.contact_phone}`}
-                  className="hidden md:inline-flex items-center gap-1.5 text-white/80 hover:text-white transition"
+                  className="hidden md:inline-flex items-center gap-1.5 text-slate-300 hover:text-white transition"
                 >
-                  <PhoneIcon className="w-3.5 h-3.5 text-[#E6A65B]" />
-                  <span className="tabular-nums">{sf.contact_phone}</span>
+                  <PhoneIcon className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="tabular-nums font-medium">{sf.contact_phone}</span>
+                </a>
+              )}
+              {whatsappDigits && (
+                <a
+                  href={`https://wa.me/${whatsappDigits}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="hidden lg:inline-flex items-center gap-1 text-emerald-300 hover:text-emerald-200 font-semibold transition"
+                >
+                  <WhatsAppIcon className="w-3.5 h-3.5" />
+                  <span>Pharmacist Help</span>
                 </a>
               )}
               <button
                 type="button"
                 onClick={() => onSelectView("track")}
-                className="inline-flex items-center gap-1.5 text-[#FFF8ED] hover:text-[#E6A65B] font-semibold transition whitespace-nowrap"
+                className="inline-flex items-center gap-1 text-white hover:text-emerald-300 font-semibold transition whitespace-nowrap"
               >
                 <PackageTrackIcon className="w-3.5 h-3.5" />
                 <span>Track Order</span>
@@ -137,231 +157,245 @@ export function SiteHeader({
         </div>
       )}
 
-      {/* Main Sticky Global Header (Lightweight Solid Surface — Zero GPU Scroll Lag) */}
-      <header className="sticky top-0 z-30 bg-white border-b border-[#E1EAE5] shadow-[0_1px_4px_rgba(15,35,44,0.04)]">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 sm:h-[76px] flex items-center justify-between gap-3 lg:gap-6">
-          {/* Left: Pharmacy Brand Lockup */}
+      {/* 2. Solid E-Commerce Sticky Header (Brand + Center Smart Search + Cart) */}
+      <header className="sticky top-0 z-30 bg-white border-b border-[#E2E8F0] shadow-[0_1px_4px_rgba(15,23,42,0.05)]">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 sm:h-[72px] flex items-center justify-between gap-3 lg:gap-6">
+          {/* Left: Strong Pharmacy Brand Lockup */}
           <button
             type="button"
             onClick={() => onSelectView("home")}
-            className="flex items-center gap-3 min-w-0 text-left group focus:outline-none"
+            className="flex items-center gap-2.5 sm:gap-3 min-w-0 text-left group shrink-0"
           >
             {branding?.logo_url && !logoFailed ? (
-              <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl border border-[#DBE5E0] bg-white p-1 flex items-center justify-center shrink-0 shadow-2xs group-hover:border-[var(--sf-primary)] transition-colors">
+              <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl border border-[#E2E8F0] bg-white p-1 flex items-center justify-center shrink-0">
                 <img
                   src={branding.logo_url}
                   alt={displayName}
                   onError={() => setLogoFailed(true)}
-                  className="max-h-full max-w-full object-contain"
+                  className="w-full h-full object-contain"
                   data-testid="pharmacy-header-logo"
                 />
               </div>
             ) : (
               <div
-                className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl flex items-center justify-center shrink-0 relative shadow-2xs"
-                style={{
-                  backgroundColor: "var(--sf-forest)",
-                  color: "#FFFFFF",
-                }}
+                className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl flex items-center justify-center shrink-0 relative text-white"
+                style={{ backgroundColor: "var(--sf-primary)" }}
               >
-                <span className="text-sm font-bold tracking-tight sf-heading">
+                <span className="text-sm font-extrabold tracking-tight sf-heading">
                   {getPharmacyMonogram(displayName)}
                 </span>
-                <span
-                  className="absolute -bottom-1 -right-1 w-4 h-4 rounded-md flex items-center justify-center text-[#172B36]"
-                  style={{ backgroundColor: "var(--sf-warm-accent)" }}
-                >
+                <span className="absolute -bottom-1 -right-1 w-4 h-4 rounded-md bg-[#0F172A] text-white flex items-center justify-center border border-white">
                   <PharmacyCrossIcon className="w-2.5 h-2.5" />
                 </span>
               </div>
             )}
 
             <div className="min-w-0">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
                 <span
-                  className="sf-heading text-[16px] sm:text-[19px] font-bold text-[#172B36] tracking-tight leading-tight truncate max-w-[165px] sm:max-w-[240px] xl:max-w-none"
+                  className="sf-heading text-[16px] sm:text-[18px] font-extrabold text-[#0F172A] tracking-tight leading-tight truncate max-w-[155px] sm:max-w-[210px]"
                   data-testid="pharmacy-display-name"
                 >
                   {displayName}
                 </span>
                 {showLicenseBadge && (
-                  <span className="hidden md:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold sf-badge-brand whitespace-nowrap">
+                  <span className="hidden xl:inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold sf-badge-brand whitespace-nowrap">
                     <ShieldCheckIcon className="w-3 h-3" />
                     <span>Licensed</span>
                   </span>
                 )}
               </div>
-              <p className="hidden md:block text-xs text-[#607481] truncate max-w-[230px] xl:max-w-[280px]">
+              <p className="hidden sm:block text-[11.5px] text-[#64748B] truncate max-w-[210px]">
                 {safeSubtitle}
               </p>
             </div>
           </button>
 
-          {/* Center: Balanced Desktop Navigation */}
-          <nav
-            aria-label="Primary Navigation"
-            className="hidden lg:flex items-center gap-1 bg-[#F4F7F5] p-1 rounded-xl border border-[#E3ECE8]"
-          >
-            {NAV_ITEMS.map((item) => {
-              const isActive =
-                activeView === item.id ||
-                (item.id === "shop" && activeView === "product");
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => onSelectView(item.id)}
-                  className={`px-3.5 h-9 rounded-lg text-[13.5px] whitespace-nowrap transition ${
-                    isActive
-                      ? "bg-white text-[var(--sf-primary-ink)] font-semibold shadow-2xs"
-                      : "text-[#4D616E] hover:text-[#172B36] font-medium"
-                  }`}
-                >
-                  {item.label}
-                </button>
-              );
-            })}
-          </nav>
+          {/* Center: Prominent E-Commerce Live Smart Search Bar (Desktop) */}
+          <div className="hidden md:block flex-1 max-w-2xl">
+            <SmartSearchBar
+              value={searchQuery}
+              onChange={onSearchChange}
+              onSubmit={(q) => onSubmitSearch(q)}
+              onSelectProduct={onOpenProductDetail}
+              onQuickAdd={onQuickAddToCart}
+              size="header"
+              showShortcutHint
+              testId={activeView !== "shop" ? "catalog-search-input" : "header-search-input"}
+              placeholder={`Search medicines, salts (e.g. Paracetamol) at ${displayName}…`}
+            />
+          </div>
 
-          {/* Right: Live Instant Search, Cart & Mobile Menu */}
+          {/* Right: Track Order + Cart Button + Mobile Controls */}
           <div className="flex items-center gap-2 shrink-0">
-            {/* Inline Desktop Instant Medicine Search */}
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (activeView !== "shop") {
-                  onSubmitSearch();
-                }
-              }}
-              className="hidden md:flex items-center relative"
-            >
-              <SearchIcon className="w-4 h-4 text-[#0E5146] absolute left-3 pointer-events-none" />
-              <input
-                type="search"
-                value={searchQuery}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  onSearchChange(val);
-                  if (activeView !== "shop" && val.trim().length > 0) {
-                    onSelectView("shop");
-                  }
-                }}
-                placeholder="Search medicines…"
-                aria-label="Search medicines"
-                className="h-[40px] w-44 xl:w-56 pl-9 pr-8 rounded-xl bg-[#F4F7F6] hover:bg-[#EDF3F0] focus:bg-white border border-[#DCE6E1] focus:border-[var(--sf-primary)] focus:ring-2 focus:ring-[var(--sf-primary-soft)] focus:outline-none text-xs font-medium text-[#0F232C] placeholder:text-[#6B7F8B] transition-all"
-              />
-              {searchQuery && (
-                <button
-                  type="button"
-                  onClick={() => onSearchChange("")}
-                  aria-label="Clear header search"
-                  className="absolute right-2 w-6 h-6 rounded-md hover:bg-[#E6EFEA] flex items-center justify-center text-[#546A76]"
-                >
-                  <CloseIcon className="w-3 h-3" />
-                </button>
-              )}
-            </form>
-
-            {/* Mobile Search Toggle */}
             <button
               type="button"
               onClick={() => setMobileSearchOpen((v) => !v)}
               aria-label="Toggle medicine search"
               className="md:hidden w-10 h-10 rounded-xl sf-btn-secondary flex items-center justify-center"
             >
-              <SearchIcon className="w-4 h-4 text-[#172B36]" />
+              <SearchIcon className="w-4 h-4 text-[#0F172A]" />
             </button>
 
-            {/* Cart Button */}
+            <button
+              type="button"
+              onClick={() => onSelectView("track")}
+              title="Track Order"
+              className="hidden xl:inline-flex items-center gap-1.5 h-10 px-3 rounded-xl sf-btn-secondary text-xs font-bold text-[#334155]"
+            >
+              <PackageTrackIcon className="w-4 h-4 sf-text-brand" />
+              <span>Track Order</span>
+            </button>
+
             <button
               type="button"
               onClick={onOpenCartDrawer}
               data-testid="header-cart-button"
-              className="inline-flex items-center gap-2 h-10 sm:h-[42px] px-3 sm:px-4 rounded-xl sf-btn-primary text-xs font-semibold shadow-2xs whitespace-nowrap"
+              className="inline-flex items-center gap-2 h-10 sm:h-11 px-3 sm:px-4 rounded-xl sf-btn-primary text-xs font-bold whitespace-nowrap"
             >
               <ShoppingBagIcon className="w-4 h-4 shrink-0" />
               <span className="hidden sm:inline">Cart</span>
-              <span
-                className="min-w-[22px] h-5 px-1.5 rounded-full text-[11px] font-bold inline-flex items-center justify-center tabular-nums"
-                style={{
-                  backgroundColor:
-                    cartTotalItems > 0 ? "var(--sf-warm-accent)" : "rgba(255,255,255,0.2)",
-                  color: cartTotalItems > 0 ? "#172B36" : "#FFFFFF",
-                }}
-              >
+              <span className="min-w-[22px] h-5 px-1.5 rounded-full bg-white text-[#0F172A] text-[11px] font-extrabold inline-flex items-center justify-center tabular-nums">
                 {cartTotalItems}
               </span>
               {cartSubtotalPkr > 0 && (
-                <span className="hidden md:inline font-semibold border-l border-white/25 pl-2.5 tabular-nums">
+                <span className="hidden lg:inline font-bold border-l border-white/25 pl-2 tabular-nums">
                   PKR {cartSubtotalPkr.toLocaleString()}
                 </span>
               )}
             </button>
 
-            {/* Mobile Accessible Menu Trigger */}
             <button
               type="button"
               onClick={() => setMobileMenuOpen(true)}
               aria-label="Open navigation menu"
               className="lg:hidden w-10 h-10 rounded-xl sf-btn-secondary flex items-center justify-center"
             >
-              <MenuIcon className="w-5 h-5 text-[#172B36]" />
+              <MenuIcon className="w-5 h-5 text-[#0F172A]" />
             </button>
           </div>
         </div>
 
-        {/* Expandable Mobile Search Bar */}
-        {mobileSearchOpen && (
-          <div className="md:hidden border-t border-[#DBE5E0] bg-[#FAF8F4] px-4 py-3">
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                setMobileSearchOpen(false);
-                onSubmitSearch();
-              }}
-              className="flex items-center gap-2"
-            >
-              <div className="relative flex-1">
-                <SearchIcon className="w-4 h-4 text-[#607481] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                <input
-                  type="search"
-                  value={searchQuery}
-                  onChange={(e) => onSearchChange(e.target.value)}
-                  placeholder={`Search medicines at ${displayName}…`}
-                  autoFocus
-                  className="w-full h-11 pl-10 pr-3 rounded-xl sf-input text-sm"
-                />
-              </div>
+        {/* 3. Desktop Department & Store Navigation Bar (Classic Solid E-Commerce Structure) */}
+        <nav
+          aria-label="Primary Store Navigation"
+          className="hidden lg:block bg-[#F8FAFC] border-t border-[#E2E8F0]"
+        >
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-10 flex items-center justify-between gap-4">
+            <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
               <button
-                type="submit"
-                className="h-11 px-4 rounded-xl sf-btn-primary text-xs font-semibold shrink-0"
+                type="button"
+                onClick={() => onSelectView("home")}
+                className={`px-3 h-8 rounded-lg text-xs font-bold whitespace-nowrap transition ${
+                  activeView === "home"
+                    ? "bg-white text-[var(--sf-primary-ink)] border border-[#CBD5E1] shadow-2xs"
+                    : "text-[#334155] hover:text-[#0F172A] hover:bg-white/70"
+                }`}
               >
-                Search
+                Home
               </button>
-            </form>
+              <button
+                type="button"
+                onClick={() => {
+                  onSelectCategory?.("all");
+                  onSelectView("shop");
+                }}
+                className={`px-3 h-8 rounded-lg text-xs font-bold whitespace-nowrap transition ${
+                  (activeView === "shop" && selectedCategory === "all") || activeView === "product"
+                    ? "bg-white text-[var(--sf-primary-ink)] border border-[#CBD5E1] shadow-2xs"
+                    : "text-[#334155] hover:text-[#0F172A] hover:bg-white/70"
+                }`}
+              >
+                All Medicines ({sf.published_products_count})
+              </button>
+
+              {topCategories.length > 0 && (
+                <span className="h-4 w-px bg-[#CBD5E1] mx-1 shrink-0" aria-hidden="true" />
+              )}
+
+              {topCategories.map((cat) => {
+                const isCatActive =
+                  activeView === "shop" &&
+                  selectedCategory.toLowerCase() === cat.name.toLowerCase();
+                return (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    onClick={() => {
+                      onSelectCategory?.(cat.name);
+                      onSelectView("shop");
+                    }}
+                    className={`px-3 h-8 rounded-lg text-xs font-semibold whitespace-nowrap transition ${
+                      isCatActive
+                        ? "bg-white text-[var(--sf-primary-ink)] border border-[#CBD5E1] font-bold shadow-2xs"
+                        : "text-[#475569] hover:text-[#0F172A] hover:bg-white/70"
+                    }`}
+                  >
+                    {cat.name}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="flex items-center gap-1 shrink-0">
+              {SECONDARY_LINKS.map((item) => {
+                const active = activeView === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => onSelectView(item.id)}
+                    className={`px-2.5 h-8 rounded-lg text-xs whitespace-nowrap transition ${
+                      active
+                        ? "font-bold sf-text-brand bg-white border border-[#CBD5E1]"
+                        : "font-medium text-[#475569] hover:text-[#0F172A]"
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </nav>
+
+        {/* Mobile Expandable Smart Search Bar */}
+        {mobileSearchOpen && (
+          <div className="md:hidden border-t border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3">
+            <SmartSearchBar
+              value={searchQuery}
+              onChange={onSearchChange}
+              onSubmit={(q) => {
+                setMobileSearchOpen(false);
+                onSubmitSearch(q);
+              }}
+              onSelectProduct={(prod) => {
+                setMobileSearchOpen(false);
+                onOpenProductDetail(prod);
+              }}
+              onQuickAdd={onQuickAddToCart}
+              size="header"
+              placeholder={`Search medicines or salts at ${displayName}…`}
+            />
           </div>
         )}
       </header>
 
-      {/* Polished Mobile Slide-Over Navigation Drawer */}
+      {/* Mobile Slide-Over Navigation Drawer */}
       {mobileMenuOpen && (
         <div
-          className="fixed inset-0 z-50 bg-[#0F2028]/55 backdrop-blur-xs flex justify-end lg:hidden"
+          className="fixed inset-0 z-50 bg-[#0F172A]/55 flex justify-end lg:hidden"
           onClick={() => setMobileMenuOpen(false)}
         >
           <div
-            className="sf-drawer-enter w-full max-w-[320px] bg-white h-full shadow-2xl border-l border-[#DBE5E0] flex flex-col justify-between"
+            className="sf-drawer-enter w-full max-w-[320px] bg-white h-full shadow-2xl border-l border-[#E2E8F0] flex flex-col justify-between"
             onClick={(e) => e.stopPropagation()}
           >
-            <div>
-              {/* Branded Mobile Drawer Header */}
-              <div
-                className="p-5 text-white flex items-center justify-between gap-3"
-                style={{ backgroundColor: "var(--sf-forest)" }}
-              >
+            <div className="overflow-y-auto">
+              <div className="p-5 bg-[#0F172A] text-white flex items-center justify-between gap-3">
                 <div className="min-w-0">
                   <p className="sf-heading text-base font-bold truncate">{displayName}</p>
-                  <p className="text-xs text-white/75 truncate">{sf.city}, Pakistan</p>
+                  <p className="text-xs text-slate-300 truncate">{sf.city}, Pakistan</p>
                 </div>
                 <button
                   type="button"
@@ -374,46 +408,76 @@ export function SiteHeader({
               </div>
 
               <nav className="p-4 space-y-1" aria-label="Mobile Navigation">
-                {[...NAV_ITEMS, { id: "track" as StorefrontView, label: "Track Online Order" }].map(
-                  (item) => {
-                    const active = activeView === item.id;
-                    return (
+                {[
+                  { id: "home" as StorefrontView, label: "Home" },
+                  { id: "shop" as StorefrontView, label: "All Medicines Catalog" },
+                  { id: "track" as StorefrontView, label: "Track Online Order" },
+                  ...SECONDARY_LINKS,
+                ].map((item) => {
+                  const active = activeView === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => {
+                        onSelectView(item.id);
+                        setMobileMenuOpen(false);
+                      }}
+                      className={`w-full px-3.5 h-11 rounded-xl text-sm text-left flex items-center justify-between transition ${
+                        active
+                          ? "bg-[var(--sf-primary-soft)] sf-text-brand font-bold"
+                          : "text-[#0F172A] font-medium hover:bg-[#F1F5F9]"
+                      }`}
+                    >
+                      <span>{item.label}</span>
+                      {item.id === "track" && <PackageTrackIcon className="w-4 h-4 opacity-75" />}
+                    </button>
+                  );
+                })}
+
+                {topCategories.length > 0 && (
+                  <div className="pt-3 mt-3 border-t border-[#E2E8F0] space-y-1">
+                    <span className="px-3.5 text-[11px] font-bold uppercase tracking-wider text-[#64748B] block pb-1">
+                      Departments
+                    </span>
+                    {topCategories.map((cat) => (
                       <button
-                        key={item.id}
+                        key={cat.id}
                         type="button"
                         onClick={() => {
-                          onSelectView(item.id);
+                          onSelectCategory?.(cat.name);
+                          onSelectView("shop");
                           setMobileMenuOpen(false);
                         }}
-                        className={`w-full px-4 h-11 rounded-xl text-sm text-left flex items-center justify-between transition ${
-                          active
-                            ? "bg-[var(--sf-primary-soft)] sf-text-brand font-semibold"
-                            : "text-[#172B36] font-medium hover:bg-[#F3F6F4]"
-                        }`}
+                        className="w-full px-3.5 h-10 rounded-xl text-xs font-semibold text-[#334155] hover:bg-[#F1F5F9] text-left flex items-center justify-between"
                       >
-                        <span>{item.label}</span>
-                        {item.id === "track" && <PackageTrackIcon className="w-4 h-4 opacity-75" />}
+                        <span className="truncate">{cat.name}</span>
+                        {Number(cat.published_product_count || 0) > 0 && (
+                          <span className="text-[11px] text-[#64748B] tabular-nums">
+                            {cat.published_product_count}
+                          </span>
+                        )}
                       </button>
-                    );
-                  }
+                    ))}
+                  </div>
                 )}
               </nav>
             </div>
 
-            <div className="p-5 border-t border-[#DBE5E0] bg-[#FAF8F4] space-y-3 text-xs">
+            <div className="p-4 border-t border-[#E2E8F0] bg-[#F8FAFC] space-y-3 text-xs">
               {sf.address_line && (
-                <div className="flex items-start gap-2 text-[#607481]">
+                <div className="flex items-start gap-2 text-[#475569]">
                   <MapPinIcon className="w-4 h-4 shrink-0 mt-0.5 sf-text-brand" />
                   <span>
                     {sf.address_line}, {sf.city}
                   </span>
                 </div>
               )}
-              <div className="grid grid-cols-2 gap-2.5 pt-0.5">
+              <div className="grid grid-cols-2 gap-2">
                 {sf.contact_phone && (
                   <a
                     href={`tel:${sf.contact_phone}`}
-                    className="h-10 rounded-xl sf-btn-secondary inline-flex items-center justify-center gap-1.5 font-semibold text-xs"
+                    className="h-10 rounded-xl sf-btn-secondary inline-flex items-center justify-center gap-1.5 font-bold text-xs"
                   >
                     <PhoneIcon className="w-3.5 h-3.5 sf-text-brand" />
                     <span>Call</span>
@@ -424,7 +488,7 @@ export function SiteHeader({
                     href={`https://wa.me/${whatsappDigits}`}
                     target="_blank"
                     rel="noreferrer"
-                    className="h-10 rounded-xl sf-btn-primary inline-flex items-center justify-center gap-1.5 font-semibold text-xs"
+                    className="h-10 rounded-xl sf-btn-primary inline-flex items-center justify-center gap-1.5 font-bold text-xs"
                   >
                     <WhatsAppIcon className="w-3.5 h-3.5" />
                     <span>WhatsApp</span>

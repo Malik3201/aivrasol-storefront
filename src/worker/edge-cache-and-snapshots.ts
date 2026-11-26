@@ -346,4 +346,214 @@ export function queryProductsFromSnapshot(
   return { pageRows, hasMore };
 }
 
+const GENERIC_PLACEHOLDERS = new Set([
+  "",
+  "0",
+  "00",
+  "000",
+  "-",
+  "--",
+  "n/a",
+  "na",
+  "none",
+  "null",
+  "nil",
+  "general",
+  "other",
+]);
+
+export function cleanGenericSaltText(raw: unknown): string | null {
+  if (!raw) return null;
+  const trimmed = String(raw).trim();
+  if (!trimmed) return null;
+  const lower = trimmed.toLowerCase();
+  if (GENERIC_PLACEHOLDERS.has(lower) || /^0+$/.test(lower)) return null;
+  return trimmed;
+}
+
+export function extractGenericSaltTokens(genericText: string | null): string[] {
+  if (!genericText) return [];
+  const parts = genericText
+    .toLowerCase()
+    .replace(/\b\d+(?:\.\d+)?\s*(?:mg|mcg|g|gm|ml|iu|%|w\/v|w\/w)\b/g, " ")
+    .split(/[+/,;|()]+/)
+    .map((s) => s.replace(/[^a-z0-9\s-]/g, " ").replace(/\s+/g, " ").trim())
+    .filter((s) => s.length >= 4 && !GENERIC_PLACEHOLDERS.has(s));
+  return Array.from(new Set(parts));
+}
+
+function isRowInStock(r: Record<string, unknown>): boolean {
+  const avail = String(r.availability_status || "in_stock");
+  return avail === "in_stock" || avail === "low_stock";
+}
+
+/**
+ * Finds in-stock same-generic (same salt/composition) alternatives inside the tenant snapshot.
+ * Zero D1 reads — runs in <2ms in Worker memory!
+ */
+export function findGenericAlternativesInSnapshot(
+  snapshot: StorefrontCatalogSnapshot,
+  genericSaltText: string | null,
+  excludeIds: Set<string>,
+  limit = 6
+): Array<Record<string, unknown>> {
+  const tokens = extractGenericSaltTokens(genericSaltText);
+  if (tokens.length === 0) return [];
+
+  const scored: Array<{ row: Record<string, unknown>; score: number }> = [];
+  for (const r of snapshot.products) {
+    const rid = String(r.id || "");
+    if (excludeIds.has(rid)) continue;
+    if (!isRowInStock(r)) continue;
+    const rowGeneric = cleanGenericSaltText(r.generic_name);
+    if (!rowGeneric) continue;
+    const rowLower = rowGeneric.toLowerCase();
+
+    let hits = 0;
+    for (const tok of tokens) {
+      if (rowLower.includes(tok)) hits++;
+    }
+    if (hits === 0) continue;
+
+    // Prefer exact full-formula overlap first, then featured/popular, then lower price
+    const score = hits * 100 + (Number(r.is_featured || 0) ? 10 : 0) + (Number(r.is_popular || 0) ? 5 : 0);
+    scored.push({ row: r, score });
+  }
+
+  scored.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    const pa = Number(a.row.override_price_pkr ?? a.row.public_selling_price_pkr ?? 0);
+    const pb = Number(b.row.override_price_pkr ?? b.row.public_selling_price_pkr ?? 0);
+    return pa - pb || String(a.row.name || "").localeCompare(String(b.row.name || ""));
+  });
+
+  return scored.slice(0, limit).map((s) => s.row);
+}
+
+/**
+ * High-speed ranked autocomplete suggestions + automatic generic-salt alternatives
+ * when a searched medicine is out of stock or unavailable.
+ */
+export function suggestProductsFromSnapshot(
+  snapshot: StorefrontCatalogSnapshot,
+  options: {
+    q: string;
+    limit?: number;
+    altLimit?: number;
+    hideOutOfStock?: boolean;
+  }
+): {
+  suggestions: Array<Record<string, unknown>>;
+  alternatives: Array<Record<string, unknown>>;
+  matchedGeneric: string | null;
+  matchedUnavailableName: string | null;
+  alternativeReason: "out_of_stock_match" | "same_generic" | null;
+  totalMatches: number;
+} {
+  const qLower = (options.q || "").trim().toLowerCase();
+  const limit = Math.min(12, Math.max(1, options.limit || 6));
+  const altLimit = Math.min(8, Math.max(1, options.altLimit || 4));
+  if (qLower.length < 2) {
+    return {
+      suggestions: [],
+      alternatives: [],
+      matchedGeneric: null,
+      matchedUnavailableName: null,
+      alternativeReason: null,
+      totalMatches: 0,
+    };
+  }
+
+  const qTokens = qLower.split(/\s+/).filter((t) => t.length >= 2);
+  const scored: Array<{ row: Record<string, unknown>; score: number }> = [];
+  const outOfStockMatches: Array<Record<string, unknown>> = [];
+
+  for (const r of snapshot.products) {
+    const name = String(r.name || "").toLowerCase();
+    const generic = String(r.generic_name || "").toLowerCase();
+    const brand = String(r.brand_name || "").toLowerCase();
+    const strength = String(r.strength || "").toLowerCase();
+    const sku = String(r.sku_code || "").toLowerCase();
+    const hay = String(r.search_keywords || "").toLowerCase() || `${name} ${generic} ${brand} ${strength} ${sku}`;
+
+    let score = 0;
+    if (name === qLower) score = 120;
+    else if (name.startsWith(qLower)) score = 100;
+    else if (name.includes(` ${qLower}`)) score = 85;
+    else if (name.includes(qLower)) score = 70;
+    else if (generic.startsWith(qLower)) score = 65;
+    else if (generic.includes(qLower)) score = 55;
+    else if (brand.includes(qLower) || sku.includes(qLower)) score = 40;
+    else if (qTokens.length > 1 && qTokens.every((t) => hay.includes(t))) score = 45;
+
+    if (score === 0) continue;
+
+    const inStock = isRowInStock(r);
+    if (!inStock) {
+      outOfStockMatches.push(r);
+      if (options.hideOutOfStock) continue;
+    } else {
+      score += 8;
+    }
+    if (Number(r.is_featured || 0) === 1) score += 3;
+
+    scored.push({ row: r, score });
+  }
+
+  scored.sort(
+    (a, b) =>
+      b.score - a.score ||
+      String(a.row.name || "").localeCompare(String(b.row.name || ""))
+  );
+
+  const suggestions = scored.slice(0, limit).map((s) => s.row);
+  const inStockSuggestionCount = suggestions.filter(isRowInStock).length;
+
+  let alternatives: Array<Record<string, unknown>> = [];
+  let matchedGeneric: string | null = null;
+  let matchedUnavailableName: string | null = null;
+  let alternativeReason: "out_of_stock_match" | "same_generic" | null = null;
+
+  // Priority 1: Top matched medicine is out-of-stock -> suggest in-stock generic alternatives!
+  const firstOutMatch =
+    suggestions.find((r) => !isRowInStock(r) && cleanGenericSaltText(r.generic_name)) ||
+    outOfStockMatches.find((r) => cleanGenericSaltText(r.generic_name));
+
+  if (firstOutMatch) {
+    const salt = cleanGenericSaltText(firstOutMatch.generic_name);
+    if (salt) {
+      const excludeIds = new Set<string>(suggestions.map((s) => String(s.id || "")));
+      const found = findGenericAlternativesInSnapshot(snapshot, salt, excludeIds, altLimit);
+      if (found.length > 0) {
+        alternatives = found;
+        matchedGeneric = salt;
+        matchedUnavailableName = String(firstOutMatch.name || "");
+        alternativeReason = "out_of_stock_match";
+      }
+    }
+  } else if (inStockSuggestionCount <= 2 && suggestions.length > 0) {
+    // Priority 2: Few results — offer helpful same-generic options
+    const firstWithSalt = suggestions.find((r) => cleanGenericSaltText(r.generic_name));
+    const salt = firstWithSalt ? cleanGenericSaltText(firstWithSalt.generic_name) : null;
+    if (salt) {
+      const excludeIds = new Set<string>(suggestions.map((s) => String(s.id || "")));
+      const found = findGenericAlternativesInSnapshot(snapshot, salt, excludeIds, altLimit);
+      if (found.length > 0) {
+        alternatives = found;
+        matchedGeneric = salt;
+        alternativeReason = "same_generic";
+      }
+    }
+  }
+
+  return {
+    suggestions,
+    alternatives,
+    matchedGeneric,
+    matchedUnavailableName,
+    alternativeReason,
+    totalMatches: scored.length,
+  };
+}
+
 export type _UnusedPublicProductImport = PublicStorefrontProduct;

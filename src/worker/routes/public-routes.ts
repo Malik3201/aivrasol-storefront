@@ -38,10 +38,13 @@ import { recordStorefrontUsage, writeStorefrontAuditLog } from "../usage-tracker
 import { invalidateOrderNotifCache } from "./sync-routes";
 import {
   buildTenantEdgeCacheKey,
+  cleanGenericSaltText,
+  findGenericAlternativesInSnapshot,
   getCatalogSnapshotForTenant,
   getEdgeCachedResponse,
   putEdgeCachedResponse,
   queryProductsFromSnapshot,
+  suggestProductsFromSnapshot,
 } from "../edge-cache-and-snapshots";
 
 function isSyncTimestampStale(
@@ -645,6 +648,107 @@ export async function handlePublicRoutes(
     return res;
   }
 
+  // 4a. GET /api/v1/public/products/suggest — Instant Autocomplete + Generic-Salt Alternatives (0 D1 reads on shelf hits!)
+  if (pathname === "/api/v1/public/products/suggest" && req.method === "GET") {
+    const edgeKey = buildTenantEdgeCacheKey(req, tenantEdgeScope);
+    const cached = await getEdgeCachedResponse(edgeKey);
+    if (cached) return cached;
+
+    const q = (url.searchParams.get("q") || "").trim();
+    const limit = Math.min(10, Math.max(1, Number(url.searchParams.get("limit")) || 6));
+
+    const { snapshot, source } = await getCatalogSnapshotForTenant(env, sf, execCtx);
+    const result = suggestProductsFromSnapshot(snapshot, {
+      q,
+      limit,
+      altLimit: 4,
+      hideOutOfStock,
+    });
+
+    let alternativesRows = result.alternatives;
+    let matchedGeneric = result.matchedGeneric;
+    let matchedUnavailableName = result.matchedUnavailableName;
+    let alternativeReason: string | null = result.alternativeReason;
+
+    // If searched medicine is NOT in this pharmacy's published catalog at all,
+    // check unpublished store products or central canonical library to discover its generic salt
+    // and recommend in-stock same-formula alternatives!
+    if (result.suggestions.length === 0 && q.length >= 3) {
+      const qLike = `%${q.toLowerCase()}%`;
+      try {
+        const localUnpub = await env.DB.prepare(
+          `SELECT name, generic_name FROM storefront_products
+           WHERE storefront_id = ? AND pharmacy_id = ?
+             AND LOWER(name) LIKE ? AND generic_name IS NOT NULL AND generic_name != ''
+           LIMIT 1`
+        )
+          .bind(sf.id, sf.pharmacy_id, qLike)
+          .first<{ name: string; generic_name: string }>();
+
+        let discoveredSalt = cleanGenericSaltText(localUnpub?.generic_name);
+        let discoveredName = localUnpub?.name || null;
+
+        if (!discoveredSalt) {
+          const canonical = await env.DB.prepare(
+            `SELECT canonical_name, generic_name FROM central_medicine_canonical
+             WHERE normalized_name LIKE ? AND generic_name IS NOT NULL AND generic_name != ''
+             LIMIT 1`
+          )
+            .bind(qLike)
+            .first<{ canonical_name: string; generic_name: string }>();
+          if (canonical?.generic_name) {
+            discoveredSalt = cleanGenericSaltText(canonical.generic_name);
+            discoveredName = canonical.canonical_name;
+          }
+        }
+
+        if (discoveredSalt) {
+          const altFound = findGenericAlternativesInSnapshot(snapshot, discoveredSalt, new Set(), 5);
+          if (altFound.length > 0) {
+            alternativesRows = altFound;
+            matchedGeneric = discoveredSalt;
+            matchedUnavailableName = discoveredName || q;
+            alternativeReason = "unavailable_brand";
+          }
+        }
+      } catch {
+        // Non-fatal fallback
+      }
+    }
+
+    const suggestions = result.suggestions.map((r) =>
+      mapPublicProductRow(r, showExactStock, sf.last_sync_at, staleThresholdHours, showStockBadges)
+    );
+    const alternatives = alternativesRows.map((r) =>
+      mapPublicProductRow(r, showExactStock, sf.last_sync_at, staleThresholdHours, showStockBadges)
+    );
+
+    const headers = buildResponseHeaders({
+      req,
+      storefrontId: sf.id,
+      configVersion: sf.config_version,
+      hostname: ctx.normalizedHostname,
+      cacheMaxAgeSec: 90,
+    });
+    headers.set("X-Catalog-Source", source);
+
+    const res = new Response(
+      JSON.stringify({
+        ok: true,
+        query: q,
+        suggestions,
+        alternatives,
+        matched_generic: matchedGeneric,
+        matched_unavailable_name: matchedUnavailableName,
+        alternative_reason: alternativeReason,
+        total_matches: result.totalMatches,
+      }),
+      { status: 200, headers }
+    );
+    putEdgeCachedResponse(edgeKey, res, execCtx);
+    return res;
+  }
+
   // 4. GET /api/v1/public/products/search (Edge-Cached + R2 Catalog Snapshot -> 0 D1 reads!)
   if (pathname === "/api/v1/public/products/search" && req.method === "GET") {
     const edgeKey = buildTenantEdgeCacheKey(req, tenantEdgeScope);
@@ -653,6 +757,8 @@ export async function handlePublicRoutes(
 
     const q = (url.searchParams.get("q") || "").trim().toLowerCase();
     const category = (url.searchParams.get("category") || "").trim();
+    const inStockOnly = url.searchParams.get("in_stock") === "true";
+    const sortBy = (url.searchParams.get("sort") || "featured").trim();
     const cursor = decodeCursor(url.searchParams.get("cursor"));
     const limit = Math.min(48, Math.max(1, Number(url.searchParams.get("limit")) || 20));
 
@@ -660,7 +766,9 @@ export async function handlePublicRoutes(
     const { pageRows, hasMore } = queryProductsFromSnapshot(snapshot, {
       q,
       category,
+      inStockOnly,
       hideOutOfStock,
+      sortBy,
       cursor,
       limit,
     });
@@ -677,6 +785,51 @@ export async function handlePublicRoutes(
     const last = items[items.length - 1];
     const nextCursor = hasMore && last ? encodeCursor(last.name, last.id) : null;
 
+    // Also compute same-generic in-stock alternatives if search returned 0 in-stock hits
+    let genericAlternatives: PublicStorefrontProduct[] = [];
+    let matchedGeneric: string | null = null;
+    const inStockCount = items.filter(
+      (it) => it.availability_status === "in_stock" || it.availability_status === "low_stock"
+    ).length;
+
+    if (q.length >= 3 && inStockCount === 0) {
+      let salt = cleanGenericSaltText(items[0]?.generic_name);
+      if (!salt) {
+        try {
+          const qLike = `%${q}%`;
+          const localOrCanon =
+            (await env.DB.prepare(
+              `SELECT generic_name FROM storefront_products
+               WHERE storefront_id = ? AND pharmacy_id = ?
+                 AND LOWER(name) LIKE ? AND generic_name IS NOT NULL AND generic_name != ''
+               LIMIT 1`
+            )
+              .bind(sf.id, sf.pharmacy_id, qLike)
+              .first<{ generic_name: string }>()) ||
+            (await env.DB.prepare(
+              `SELECT generic_name FROM central_medicine_canonical
+               WHERE normalized_name LIKE ? AND generic_name IS NOT NULL AND generic_name != ''
+               LIMIT 1`
+            )
+              .bind(qLike)
+              .first<{ generic_name: string }>());
+          salt = cleanGenericSaltText(localOrCanon?.generic_name);
+        } catch {
+          // ignore
+        }
+      }
+      if (salt) {
+        const excludeIds = new Set(items.map((it) => it.id));
+        const altRows = findGenericAlternativesInSnapshot(snapshot, salt, excludeIds, 8);
+        if (altRows.length > 0) {
+          matchedGeneric = salt;
+          genericAlternatives = altRows.map((r) =>
+            mapPublicProductRow(r, showExactStock, sf.last_sync_at, staleThresholdHours, showStockBadges)
+          );
+        }
+      }
+    }
+
     const headers = buildResponseHeaders({
       req,
       storefrontId: sf.id,
@@ -692,6 +845,8 @@ export async function handlePublicRoutes(
         storefront_id: sf.id,
         query: q,
         items,
+        generic_alternatives: genericAlternatives,
+        matched_generic: matchedGeneric,
         next_cursor: nextCursor,
         has_more: hasMore,
       }),
@@ -839,6 +994,26 @@ export async function handlePublicRoutes(
       )
     );
 
+    // Same-Formula / Generic Alternatives (served from R2 snapshot in <2ms -> 0 extra D1 reads!)
+    let genericAlternatives: PublicStorefrontProduct[] = [];
+    const prodSalt = cleanGenericSaltText(row.generic_name);
+    if (prodSalt) {
+      try {
+        const { snapshot } = await getCatalogSnapshotForTenant(env, sf, execCtx);
+        const altRows = findGenericAlternativesInSnapshot(
+          snapshot,
+          prodSalt,
+          new Set([String(row.id)]),
+          4
+        );
+        genericAlternatives = altRows.map((r) =>
+          mapPublicProductRow(r, showExactStock, sf.last_sync_at, staleThresholdHours, showStockBadges)
+        );
+      } catch {
+        genericAlternatives = [];
+      }
+    }
+
     return new Response(
       JSON.stringify({
         ok: true,
@@ -848,6 +1023,7 @@ export async function handlePublicRoutes(
           images: imagesRes.results || [],
         },
         related_products: relatedProducts,
+        generic_alternatives: genericAlternatives,
       }),
       {
         status: 200,
@@ -856,7 +1032,7 @@ export async function handlePublicRoutes(
           storefrontId: sf.id,
           configVersion: sf.config_version,
           hostname: ctx.normalizedHostname,
-          isPrivate: true,
+          cacheMaxAgeSec: 120,
         }),
       }
     );
@@ -1916,26 +2092,45 @@ export async function handlePublicRoutes(
 
 
 
-  // 13. GET /api/v1/public/sitemap.xml & /api/v1/public/robots.txt (Section 13 SEO)
+  // 13. GET /api/v1/public/sitemap.xml & /api/v1/public/robots.txt (Auto-SEO from R2 Snapshot -> 0 D1 reads!)
   if (pathname === "/api/v1/public/sitemap.xml" && req.method === "GET") {
     const baseUrl = `https://${sf.primary_domain}`;
-    const prods = await env.DB.prepare(
-      `SELECT slug, updated_at FROM storefront_products
-       WHERE storefront_id = ? AND pharmacy_id = ? AND publish_status = 'published' AND is_controlled_substance = 0
-       ORDER BY updated_at DESC LIMIT 500`
-    )
-      .bind(sf.id, sf.pharmacy_id)
-      .all<{ slug: string; updated_at: string }>();
+    const { snapshot } = await getCatalogSnapshotForTenant(env, sf, execCtx);
+    const todayStr = new Date().toISOString().slice(0, 10);
 
-    const staticPages = ["", "/shop", "/about", "/branches", "/delivery", "/contact", "/track-order"];
+    const staticPages = [
+      { path: "", priority: "1.0", freq: "daily" },
+      { path: "/catalog", priority: "0.95", freq: "daily" },
+      { path: "/delivery", priority: "0.7", freq: "weekly" },
+      { path: "/branches", priority: "0.7", freq: "weekly" },
+      { path: "/about", priority: "0.7", freq: "monthly" },
+      { path: "/contact", priority: "0.7", freq: "monthly" },
+      { path: "/track", priority: "0.6", freq: "weekly" },
+    ];
+
+    const categoryUrls = (snapshot.categories || [])
+      .filter((c) => c.name && !/^\d+$/.test(String(c.name).trim()))
+      .slice(0, 40)
+      .map(
+        (c) =>
+          `<url><loc>${baseUrl}/catalog?category=${encodeURIComponent(String(c.name))}</loc><lastmod>${todayStr}</lastmod><changefreq>daily</changefreq><priority>0.85</priority></url>`
+      );
+
+    const productUrls = (snapshot.products || [])
+      .slice(0, 2000)
+      .map((pr) => {
+        const slug = encodeURIComponent(String(pr.slug || pr.id || ""));
+        const lastmod = String(pr.updated_at || todayStr).slice(0, 10);
+        return `<url><loc>${baseUrl}/product/${slug}</loc><lastmod>${lastmod}</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>`;
+      });
+
     const urlsXml = [
       ...staticPages.map(
-        (p) => `<url><loc>${baseUrl}${p}</loc><changefreq>daily</changefreq><priority>${p === "" ? "1.0" : "0.8"}</priority></url>`
+        (p) =>
+          `<url><loc>${baseUrl}${p.path}</loc><lastmod>${todayStr}</lastmod><changefreq>${p.freq}</changefreq><priority>${p.priority}</priority></url>`
       ),
-      ...(prods.results || []).map(
-        (pr) =>
-          `<url><loc>${baseUrl}/product/${encodeURIComponent(pr.slug)}</loc><lastmod>${(pr.updated_at || new Date().toISOString()).slice(0, 10)}</lastmod><changefreq>weekly</changefreq><priority>0.7</priority></url>`
-      ),
+      ...categoryUrls,
+      ...productUrls,
     ].join("\n  ");
 
     const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  ${urlsXml}\n</urlset>`;
@@ -1950,7 +2145,7 @@ export async function handlePublicRoutes(
   }
 
   if (pathname === "/api/v1/public/robots.txt" && req.method === "GET") {
-    const txt = `User-agent: *\nAllow: /\nDisallow: /api/v1/manage/\nDisallow: /api/v1/sync/\nSitemap: https://${sf.primary_domain}/api/v1/public/sitemap.xml\n`;
+    const txt = `User-agent: *\nAllow: /\nDisallow: /api/v1/manage/\nDisallow: /api/v1/sync/\nDisallow: /checkout\nSitemap: https://${sf.primary_domain}/sitemap.xml\n`;
     const headers = buildResponseHeaders({
       req,
       storefrontId: sf.id,

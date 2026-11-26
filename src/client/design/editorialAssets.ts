@@ -1,20 +1,23 @@
 /**
- * Optimized local WebP editorial photography and 3D healthcare illustrations
- * bundled in `public/media/` and served directly from Cloudflare Workers Static Assets (`ASSETS`).
+ * Optimized local WebP commercial retail pharmacy photography
+ * bundled in `public/media/storefront/` and served directly from Cloudflare Workers Static Assets (`ASSETS`).
  *
  * Owner-uploaded media (`branding.hero_banner_url`, `branding.hero_image_url`,
  * `cat.image_url`, `promo.banner_image_url`, `product.primary_image_url`) always takes priority.
  */
 
 export const EDITORIAL_MEDIA = {
-  heroDesktopWebp: "/media/editorial/pharmacy-hero-1200.webp",
-  heroMobileWebp: "/media/editorial/pharmacy-hero-768.webp",
-  heroFlagshipDesktopWebp: "/media/editorial/hero-flagship-1280.webp",
-  heroFlagshipMobileWebp: "/media/editorial/hero-flagship-768.webp",
-  counterInteriorWebp: "/media/editorial/pharmacy-counter-1000.webp",
-  careParcelWebp: "/media/editorial/pharmacy-parcel-900.webp",
-  dispensingDeskWebp: "/media/editorial/pharmacist-dispensing-1000.webp",
-  conciergeSupportWebp: "/media/editorial/pharmacy-concierge-1000.webp",
+  // Primary Commercial Pharmacy Hero Photo (default when owner has not uploaded their own pharmacy photo)
+  heroDesktopWebp: "/media/storefront/hero-pharmacy-retail.webp",
+  heroMobileWebp: "/media/storefront/hero-pharmacy-retail.webp",
+  heroFlagshipDesktopWebp: "/media/storefront/hero-pharmacy-retail.webp",
+  heroFlagshipMobileWebp: "/media/storefront/hero-pharmacy-retail.webp",
+  // Supporting Commercial Pharmacy Photography
+  counterInteriorWebp: "/media/storefront/hero-pharmacy-retail.webp",
+  careParcelWebp: "/media/storefront/pharmacy-delivery-express.webp",
+  dispensingDeskWebp: "/media/storefront/pharmacist-care-desk.webp",
+  conciergeSupportWebp: "/media/storefront/pharmacist-care-desk.webp",
+  wellnessEssentialsWebp: "/media/storefront/pharmacy-wellness-shelf.webp",
 } as const;
 
 export const CATEGORY_3D_MEDIA = {
@@ -83,7 +86,6 @@ export function resolveProductStudioVisual(params: {
     .toLowerCase();
 
   const isRx = Boolean(params.requiresPrescription);
-  const isLowStock = params.availabilityStatus === "low_stock";
 
   if (
     combined.includes("nebul") ||
@@ -98,8 +100,8 @@ export function resolveProductStudioVisual(params: {
   ) {
     return {
       imageUrl: PRODUCT_3D_MEDIA.medicalDevice,
-      stageBg: "#EAF4F3",
-      specBadge: "Medical Equipment",
+      stageBg: "#FFFFFF",
+      specBadge: "Medical Device",
       specBadgeTone: "teal",
     };
   }
@@ -117,8 +119,8 @@ export function resolveProductStudioVisual(params: {
   ) {
     return {
       imageUrl: PRODUCT_3D_MEDIA.surgicalSterile,
-      stageBg: "#ECF5F4",
-      specBadge: "Sterile Surgical",
+      stageBg: "#FFFFFF",
+      specBadge: "Surgical Supply",
       specBadgeTone: "teal",
     };
   }
@@ -134,7 +136,7 @@ export function resolveProductStudioVisual(params: {
   ) {
     return {
       imageUrl: PRODUCT_3D_MEDIA.liquidSyrup,
-      stageBg: "#EEF7F2",
+      stageBg: "#FFFFFF",
       specBadge: isRx ? "Prescription Rx" : "Oral Liquid",
       specBadgeTone: isRx ? "warm" : "mint",
     };
@@ -154,16 +156,16 @@ export function resolveProductStudioVisual(params: {
   ) {
     return {
       imageUrl: PRODUCT_3D_MEDIA.personalBabyCare,
-      stageBg: "#FCF6EE",
-      specBadge: "Daily Care",
+      stageBg: "#FFFFFF",
+      specBadge: "Personal Care",
       specBadgeTone: "warm",
     };
   }
 
   return {
     imageUrl: PRODUCT_3D_MEDIA.tabletsBox,
-    stageBg: isLowStock ? "#FBF4E6" : "#E8F5EE",
-    specBadge: isRx ? "Prescription Rx" : "Over-the-counter",
-    specBadgeTone: isRx ? "warm" : isLowStock ? "warm" : "mint",
+    stageBg: "#FFFFFF",
+    specBadge: isRx ? "Prescription Rx" : "Healthcare",
+    specBadgeTone: isRx ? "warm" : "mint",
   };
 }

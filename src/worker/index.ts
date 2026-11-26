@@ -42,34 +42,121 @@ export async function injectStorefrontSeoMetadata(
     const sf = ctx.storefront;
     const [settings, branding] = await Promise.all([
       env.DB.prepare(
-        "SELECT seo_title, seo_description FROM storefront_settings WHERE storefront_id = ? LIMIT 1"
+        "SELECT seo_title, seo_description, opening_hours_json FROM storefront_settings WHERE storefront_id = ? LIMIT 1"
       )
         .bind(sf.id)
-        .first<{ seo_title: string | null; seo_description: string | null }>(),
+        .first<{ seo_title: string | null; seo_description: string | null; opening_hours_json: string | null }>(),
       env.DB.prepare(
-        "SELECT display_name FROM storefront_branding WHERE storefront_id = ? LIMIT 1"
+        "SELECT display_name, tagline, logo_url, hero_banner_url, favicon_url FROM storefront_branding WHERE storefront_id = ? LIMIT 1"
       )
         .bind(sf.id)
-        .first<{ display_name: string | null }>(),
+        .first<{
+          display_name: string | null;
+          tagline: string | null;
+          logo_url: string | null;
+          hero_banner_url: string | null;
+          favicon_url: string | null;
+        }>(),
     ]);
 
     const brandName = (branding?.display_name && branding.display_name.trim()) || sf.pharmacy_name;
+    const originUrl = `https://${sf.primary_domain}`;
+    const subPath = url.pathname.replace(/^\/s\/[a-z0-9-]+/i, "") || "/";
+
+    const toAbsMediaUrl = (raw?: string | null): string => {
+      if (!raw) return `${originUrl}/media/storefront/hero-pharmacy-retail.webp`;
+      if (/^https?:\/\//i.test(raw)) return raw;
+      return `${originUrl}${raw.startsWith("/") ? raw : `/${raw}`}`;
+    };
+
+    const rawSeoTitle = settings?.seo_title?.trim();
+    const hasStaleOwnerTitle =
+      rawSeoTitle &&
+      brandName.toLowerCase() !== "abdul rehman" &&
+      /abdul\s*rehman/i.test(rawSeoTitle);
 
     let pageTitle =
-      settings?.seo_title || `${brandName} — Online Pharmacy (${sf.city})`;
+      rawSeoTitle && !hasStaleOwnerTitle
+        ? rawSeoTitle
+        : `${brandName} — Online Pharmacy & Medicine Delivery in ${sf.city}`;
     let pageDesc =
-      settings?.seo_description ||
-      `Order medicines and healthcare essentials online from ${brandName} in ${sf.city}.`;
-    const canonicalUrl = `https://${sf.primary_domain}${url.pathname === "/" ? "" : url.pathname}`;
-    let jsonLd = "";
+      settings?.seo_description?.trim() ||
+      `Order genuine counter-verified medicines, prescriptions, surgical items & healthcare essentials online from ${brandName} in ${sf.city}, Pakistan with fast doorstep delivery and counter pickup.`;
+    let ogImage = toAbsMediaUrl(branding?.hero_banner_url || branding?.logo_url);
+    let ogType = "website";
+    const canonicalPath = subPath === "/" ? "" : subPath;
+    const canonicalUrl = `${originUrl}${canonicalPath}`;
+
+    const schemaGraph: Array<Record<string, unknown>> = [
+      {
+        "@type": ["Pharmacy", "MedicalBusiness", "LocalBusiness"],
+        "@id": `${originUrl}/#pharmacy`,
+        name: brandName,
+        url: originUrl,
+        description: pageDesc,
+        image: toAbsMediaUrl(branding?.hero_banner_url),
+        ...(branding?.logo_url ? { logo: toAbsMediaUrl(branding.logo_url) } : {}),
+        ...(sf.contact_phone ? { telephone: sf.contact_phone } : {}),
+        ...(sf.contact_email ? { email: sf.contact_email } : {}),
+        priceRange: "PKR",
+        address: {
+          "@type": "PostalAddress",
+          ...(sf.address_line ? { streetAddress: sf.address_line } : {}),
+          addressLocality: sf.city || "Lahore",
+          addressCountry: sf.country || "PK",
+        },
+        areaServed: {
+          "@type": "City",
+          name: sf.city || "Lahore",
+        },
+      },
+      {
+        "@type": "WebSite",
+        "@id": `${originUrl}/#website`,
+        url: originUrl,
+        name: brandName,
+        publisher: { "@id": `${originUrl}/#pharmacy` },
+        potentialAction: {
+          "@type": "SearchAction",
+          target: {
+            "@type": "EntryPoint",
+            urlTemplate: `${originUrl}/catalog?q={search_term_string}`,
+          },
+          "query-input": "required name=search_term_string",
+        },
+      },
+    ];
+
+    // Catalog / Category Page Auto-SEO
+    if (subPath === "/catalog" || subPath === "/shop") {
+      const catParam = url.searchParams.get("category")?.trim();
+      const qParam = url.searchParams.get("q")?.trim();
+      if (catParam && catParam !== "all") {
+        pageTitle = `${catParam} — Buy Online at ${brandName} (${sf.city})`;
+        pageDesc = `Browse genuine ${catParam} products online from ${brandName} in ${sf.city}. Live pharmacy stock, transparent PKR pricing, and same-day local delivery.`;
+      } else if (qParam) {
+        pageTitle = `Search "${qParam}" — ${brandName} Online Pharmacy`;
+      } else {
+        pageTitle = `Medicines & Healthcare Catalog — ${brandName} (${sf.city})`;
+        pageDesc = `Shop all counter-verified medicines, syrups, tablets, vitamins, and surgical supplies online from ${brandName} in ${sf.city}.`;
+      }
+      schemaGraph.push({
+        "@type": "CollectionPage",
+        name: pageTitle,
+        description: pageDesc,
+        url: canonicalUrl,
+        isPartOf: { "@id": `${originUrl}/#website` },
+      });
+    }
 
     // Check if this is a product detail URL (`/product/:slug` or `/s/:store/product/:slug`)
     const prodMatch = url.pathname.match(/^(?:\/s\/[a-z0-9-]+)?\/product\/([^/]+)$/i);
     if (prodMatch) {
       const slug = decodeURIComponent(prodMatch[1]);
       const prod = await env.DB.prepare(
-        `SELECT name, generic_name, strength, dosage_form, brand_name, public_description,
-                public_selling_price_pkr, override_price_pkr, availability_status, primary_image_url
+        `SELECT name, generic_name, strength, dosage_form, brand_name, category_name, sku_code,
+                public_description, public_selling_price_pkr, override_price_pkr,
+                availability_status, primary_image_url
          FROM storefront_products
          WHERE storefront_id = ? AND pharmacy_id = ? AND publish_status = 'published'
            AND (slug = ? OR id = ?)
@@ -84,43 +171,76 @@ export async function injectStorefrontSeoMetadata(
             ? Number(prod.override_price_pkr)
             : Number(prod.public_selling_price_pkr || 0);
         const cleanGeneric =
-          prod.generic_name && prod.generic_name !== "00" ? ` (${prod.generic_name})` : "";
-        pageTitle = `${prod.name} — ${brandName}`;
+          prod.generic_name && prod.generic_name !== "00" && prod.generic_name !== "0"
+            ? ` (${prod.generic_name})`
+            : "";
+        pageTitle = `${prod.name} Price in Pakistan — Buy at ${brandName} (${sf.city})`;
         pageDesc =
           prod.public_description ||
-          `Order ${prod.name}${cleanGeneric} at PKR ${effPrice} from ${brandName}, ${sf.city}.`;
-        const schemaObj = {
-          "@context": "https://schema.org",
-          "@type": "Product",
-          name: prod.name,
-          description: pageDesc,
-          brand: prod.brand_name ? { "@type": "Brand", name: prod.brand_name } : undefined,
-          offers: {
-            "@type": "Offer",
-            priceCurrency: "PKR",
-            price: effPrice,
-            availability:
-              prod.availability_status === "in_stock" || prod.availability_status === "low_stock"
-                ? "https://schema.org/InStock"
-                : "https://schema.org/OutOfStock",
-            seller: {
-              "@type": "Pharmacy",
-              name: brandName,
+          `Buy ${prod.name}${cleanGeneric} online at PKR ${effPrice.toLocaleString()} from ${brandName}, ${sf.city}. Genuine counter-verified stock with doorstep delivery and pickup.`;
+        ogType = "product";
+        if (prod.primary_image_url) {
+          ogImage = toAbsMediaUrl(prod.primary_image_url);
+        }
+
+        schemaGraph.push(
+          {
+            "@type": "Product",
+            name: prod.name,
+            description: pageDesc,
+            ...(prod.primary_image_url ? { image: [toAbsMediaUrl(prod.primary_image_url)] } : {}),
+            ...(prod.sku_code ? { sku: prod.sku_code } : {}),
+            ...(prod.category_name ? { category: prod.category_name } : {}),
+            ...(prod.brand_name ? { brand: { "@type": "Brand", name: prod.brand_name } } : {}),
+            offers: {
+              "@type": "Offer",
+              url: canonicalUrl,
+              priceCurrency: "PKR",
+              price: effPrice,
+              itemCondition: "https://schema.org/NewCondition",
+              availability:
+                prod.availability_status === "in_stock" || prod.availability_status === "low_stock"
+                  ? "https://schema.org/InStock"
+                  : "https://schema.org/OutOfStock",
+              seller: { "@id": `${originUrl}/#pharmacy` },
             },
           },
-        };
-        jsonLd = `<script type="application/ld+json">${JSON.stringify(schemaObj)}</script>`;
+          {
+            "@type": "BreadcrumbList",
+            itemListElement: [
+              { "@type": "ListItem", position: 1, name: "Home", item: originUrl },
+              { "@type": "ListItem", position: 2, name: "Catalog", item: `${originUrl}/catalog` },
+              { "@type": "ListItem", position: 3, name: prod.name, item: canonicalUrl },
+            ],
+          }
+        );
       }
     }
 
+    const jsonLd = `<script type="application/ld+json">${JSON.stringify({
+      "@context": "https://schema.org",
+      "@graph": schemaGraph,
+    })}</script>`;
+
+    const faviconHref = branding?.favicon_url || branding?.logo_url;
     const seoTags = [
       `<title>${escapeHtmlAttr(pageTitle)}</title>`,
       `<meta name="description" content="${escapeHtmlAttr(pageDesc)}" />`,
+      `<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1" />`,
+      `<meta name="theme-color" content="#0A6B5C" />`,
       `<link rel="canonical" href="${escapeHtmlAttr(canonicalUrl)}" />`,
+      faviconHref ? `<link rel="icon" href="${escapeHtmlAttr(toAbsMediaUrl(faviconHref))}" />` : "",
+      `<meta property="og:site_name" content="${escapeHtmlAttr(brandName)}" />`,
+      `<meta property="og:locale" content="en_PK" />`,
+      `<meta property="og:type" content="${escapeHtmlAttr(ogType)}" />`,
       `<meta property="og:title" content="${escapeHtmlAttr(pageTitle)}" />`,
       `<meta property="og:description" content="${escapeHtmlAttr(pageDesc)}" />`,
       `<meta property="og:url" content="${escapeHtmlAttr(canonicalUrl)}" />`,
-      `<meta property="og:type" content="website" />`,
+      `<meta property="og:image" content="${escapeHtmlAttr(ogImage)}" />`,
+      `<meta name="twitter:card" content="summary_large_image" />`,
+      `<meta name="twitter:title" content="${escapeHtmlAttr(pageTitle)}" />`,
+      `<meta name="twitter:description" content="${escapeHtmlAttr(pageDesc)}" />`,
+      `<meta name="twitter:image" content="${escapeHtmlAttr(ogImage)}" />`,
       jsonLd,
     ]
       .filter(Boolean)
