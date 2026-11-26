@@ -161,43 +161,43 @@ export function ProductDetailView({
   const cleanDescription = cleanProductText(product.public_description);
 
   return (
-    <main className="flex-1 bg-[#F5F7F9] sf-fade-up">
-      {/* Crisp Solid White Breadcrumb Bar */}
-      <div className="bg-white border-b border-[#E2E8F0]">
-        <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-3 flex flex-wrap items-center justify-between gap-3 text-xs text-[#475569]">
+    <main className="flex-1 bg-[#F6F7F9] sf-fade-up">
+      {/* Crisp White Breadcrumb Bar */}
+      <div className="bg-white border-b border-[#E5E7EB]">
+        <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-3 flex flex-wrap items-center justify-between gap-3 text-xs text-[#6B7280]">
           <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 flex-wrap">
             <button
               type="button"
               onClick={() => onSelectView("home")}
-              className="hover:text-[#172B36] transition font-medium"
+              className="hover:text-[#111827] transition font-medium"
             >
               Home
             </button>
-            <ChevronRightIcon className="w-3.5 h-3.5 text-[#8899A4]" />
+            <ChevronRightIcon className="w-3.5 h-3.5 text-[#9CA3AF]" />
             <button
               type="button"
               onClick={handleBack}
-              className="hover:text-[#0F232C] transition font-medium"
+              className="hover:text-[#111827] transition font-medium"
             >
               Medicines
             </button>
             {cleanProductText(product.category_name) && (
               <>
-                <ChevronRightIcon className="w-3.5 h-3.5 text-[#8899A4]" />
+                <ChevronRightIcon className="w-3.5 h-3.5 text-[#9CA3AF]" />
                 <button
                   type="button"
                   onClick={() => {
                     onSelectCategory(cleanCategory);
                     onSelectView("shop");
                   }}
-                  className="hover:text-[#0F232C] transition font-medium"
+                  className="hover:text-[#111827] transition font-medium"
                 >
                   {cleanCategory}
                 </button>
               </>
             )}
-            <ChevronRightIcon className="w-3.5 h-3.5 text-[#8899A4]" />
-            <span className="text-[#0F232C] font-semibold truncate max-w-[190px] sm:max-w-xs">
+            <ChevronRightIcon className="w-3.5 h-3.5 text-[#9CA3AF]" />
+            <span className="text-[#111827] font-semibold truncate max-w-[190px] sm:max-w-xs">
               {product.name}
             </span>
           </nav>
@@ -215,8 +215,8 @@ export function ProductDetailView({
       </div>
 
       {/* Main Product Showcase */}
-      <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-7 sm:py-9 space-y-10">
-        <div className="sf-card rounded-3xl p-5 sm:p-7 lg:p-9 grid grid-cols-1 lg:grid-cols-12 gap-7 lg:gap-10">
+      <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-8">
+        <div className="bg-white rounded-xl border border-[#E5E7EB] p-4 sm:p-6 lg:p-8 grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-9">
           {/* Left Column: Unobstructed Pure-White Full-Preview Media Stage + Click-to-Zoom Lightbox */}
           <div className="lg:col-span-5 space-y-4">
             <div className="rounded-2xl bg-white border border-[#E2E8F0] overflow-hidden">
@@ -334,79 +334,79 @@ export function ProductDetailView({
             )}
 
             {/* Pharmacy Fulfillment Card */}
-            <div className="rounded-2xl sf-surface-ivory border border-[#EADFCE] p-4 grid grid-cols-2 gap-3 text-xs">
-              <div className="flex items-start gap-2.5">
+            <div className="rounded-xl bg-[#F9FAFB] border border-[#E5E7EB] p-3.5 grid grid-cols-2 gap-3 text-xs">
+              <div className="flex items-start gap-2">
                 <TruckIcon className="w-4 h-4 sf-text-brand shrink-0 mt-0.5" />
                 <div>
-                  <span className="font-bold text-[#172B36] block">Home Delivery</span>
-                  <span className="text-[#607481]">Local dispatch in {sf.city}</span>
+                  <span className="font-bold text-[#111827] block">Home Delivery</span>
+                  <span className="text-[#6B7280]">Local dispatch in {sf.city}</span>
                 </div>
               </div>
-              <div className="flex items-start gap-2.5">
+              <div className="flex items-start gap-2">
                 <StoreIcon className="w-4 h-4 sf-text-brand shrink-0 mt-0.5" />
                 <div>
-                  <span className="font-bold text-[#172B36] block">Counter Pickup</span>
-                  <span className="text-[#607481]">Collect at {displayName}</span>
+                  <span className="font-bold text-[#111827] block">Counter Pickup</span>
+                  <span className="text-[#6B7280]">Collect at {displayName}</span>
                 </div>
               </div>
             </div>
           </div>
 
           {/* Right Column: Identity, Selling-Unit Selector, Purchase Controls & Specs */}
-          <div className="lg:col-span-7 space-y-6">
+          <div className="lg:col-span-7 space-y-5">
             {/* Product Identity */}
-            <div className="space-y-2.5">
+            <div className="space-y-2">
               <div className="flex flex-wrap items-center gap-2 text-xs">
-                <span className="px-3 py-1 rounded-full font-semibold sf-badge-brand">
+                <span className="px-2.5 py-0.5 rounded-md font-bold sf-badge-brand">
                   {cleanCategory}
                 </span>
                 {cleanStrength && (
-                  <span className="px-2.5 py-1 rounded-full bg-[#F3F6F4] border border-[#DBE5E0] font-mono font-semibold text-[#172B36]">
+                  <span className="px-2 py-0.5 rounded-md bg-[#F3F4F6] border border-[#E5E7EB] font-mono font-bold text-[#111827]">
                     {cleanStrength}
                   </span>
                 )}
                 {cleanBrand && cleanBrand.toLowerCase() !== cleanCategory.toLowerCase() && (
-                  <span className="text-[#607481] font-medium">• {cleanBrand}</span>
+                  <span className="text-[#6B7280] font-medium">• {cleanBrand}</span>
                 )}
               </div>
 
-              <h1 className="sf-heading text-2xl sm:text-3xl lg:text-[34px] font-extrabold text-[#172B36] tracking-tight leading-tight">
+              <h1 className="sf-heading text-2xl sm:text-3xl font-extrabold text-[#111827] tracking-tight leading-tight">
                 {product.name}
               </h1>
 
               {(cleanGeneric || cleanForm || cleanPacking) && (
-                <p className="text-sm text-[#607481]">
+                <p className="text-sm text-[#4B5563]">
                   {[
-                    cleanGeneric ? `Composition: ${cleanGeneric}` : null,
+                    cleanGeneric ? `Formula: ${cleanGeneric}` : null,
                     cleanForm,
                     cleanPacking,
                   ]
                     .filter(Boolean)
-                    .join(" • ")}
+                    .join(" · ")}
                 </p>
               )}
             </div>
 
             {/* Structured Purchase Surface */}
-            <div className="p-5 sm:p-6 rounded-2xl bg-[#FAF8F4] border border-[#E2E8E4] space-y-5">
+            <div className="p-4 sm:p-5 rounded-xl bg-[#F9FAFB] border border-[#E5E7EB] space-y-4">
               <div className="flex flex-wrap items-baseline justify-between gap-3">
                 <div className="flex items-baseline gap-2.5">
-                  <span className="sf-heading sf-price text-3xl sm:text-[34px] font-extrabold text-[#172B36] tracking-tight">
-                    PKR {effectivePrice.toLocaleString()}
+                  <span className="sf-heading sf-price text-2xl sm:text-3xl font-extrabold text-[#111827] tracking-tight">
+                    Rs. {effectivePrice.toLocaleString()}
                   </span>
                   {hasDiscount && (
-                    <span className="text-sm text-[#8899A4] line-through tabular-nums">
-                      PKR {comparePrice.toLocaleString()}
+                    <span className="text-sm text-[#9CA3AF] line-through tabular-nums">
+                      Rs. {comparePrice.toLocaleString()}
                     </span>
                   )}
-                  <span className="text-xs font-semibold text-[#607481]">
+                  <span className="text-xs font-semibold text-[#6B7280]">
                     per {activeUnit.label || activeUnit.unit_name}
                   </span>
                 </div>
 
                 {convertedStockText && (
                   <span
-                    className={`text-xs font-semibold px-2.5 py-1 rounded-full ${
+                    className={`text-xs font-bold px-2.5 py-0.5 rounded-md ${
                       isUnitOut
                         ? "bg-rose-50 text-rose-700 border border-rose-200"
                         : "sf-badge-brand"
@@ -638,7 +638,7 @@ export function ProductDetailView({
                 {genericAlternatives.length} available now
               </span>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-5">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
               {genericAlternatives.slice(0, 4).map((alt) => renderProductCard(alt))}
             </div>
           </section>
@@ -646,9 +646,9 @@ export function ProductDetailView({
 
         {/* Related Products */}
         {relatedProducts.length > 0 && (
-          <section className="space-y-5">
+          <section className="space-y-4">
             <div className="flex items-center justify-between">
-              <h2 className="sf-heading text-xl font-extrabold text-[#172B36]">
+              <h2 className="sf-heading text-lg sm:text-xl font-extrabold text-[#111827]">
                 More Items from {displayName}
               </h2>
               <button
@@ -657,12 +657,12 @@ export function ProductDetailView({
                   onSelectCategory("all");
                   onSelectView("shop");
                 }}
-                className="text-xs font-semibold sf-text-brand hover:underline"
+                className="text-xs font-bold sf-text-brand hover:underline"
               >
                 View Full Catalog
               </button>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
               {relatedProducts.slice(0, 4).map((rel) => renderProductCard(rel))}
             </div>
           </section>

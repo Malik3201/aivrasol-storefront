@@ -163,20 +163,20 @@ export function CheckoutView({
     return (
       <main className="max-w-3xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-10 flex-1 sf-fade-up">
         <div
-          className="sf-card rounded-3xl overflow-hidden shadow-lg"
+          className="sf-card rounded-xl overflow-hidden shadow-lg"
           data-testid="order-confirmation-card"
         >
           {/* Deep Forest Confirmation Banner */}
           <div className="sf-surface-forest p-6 sm:p-8 flex flex-wrap items-start justify-between gap-4">
             <div className="flex items-start gap-4">
               <div
-                className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 text-[#172B36]"
+                className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 text-[#111827]"
                 style={{ backgroundColor: "var(--sf-warm-accent)" }}
               >
                 <CheckCircleIcon className="w-6 h-6" />
               </div>
               <div className="space-y-1">
-                <span className="text-xs font-bold uppercase tracking-widest text-[#E6A65B]">
+                <span className="text-xs font-bold uppercase tracking-widest text-emerald-400">
                   Order Received • {displayName}
                 </span>
                 <h1 className="sf-heading text-2xl font-extrabold text-white">
@@ -185,7 +185,7 @@ export function CheckoutView({
                 <p className="text-sm text-[#D5EAE4]">
                   Tracking Reference:{" "}
                   <strong
-                    className="font-mono font-bold text-[#FFF8ED]"
+                    className="font-mono font-bold text-white"
                     data-testid="confirmed-order-number"
                   >
                     {completedOrder.order_number}
@@ -233,38 +233,38 @@ export function CheckoutView({
               </div>
             )}
 
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sf-surface-ivory rounded-2xl p-4 text-xs border border-[#EADFCE]">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sf-surface-ivory rounded-2xl p-4 text-xs border border-[#E5E7EB]">
               <div className="space-y-0.5">
-                <span className="text-[#607481] block">Order Reference</span>
-                <span className="font-mono font-bold text-[#172B36]">
+                <span className="text-[#6B7280] block">Order Reference</span>
+                <span className="font-mono font-bold text-[#111827]">
                   {completedOrder.order_number}
                 </span>
               </div>
               <div className="space-y-0.5">
-                <span className="text-[#607481] block">Current Status</span>
+                <span className="text-[#6B7280] block">Current Status</span>
                 <span className="font-bold sf-text-brand capitalize">
                   {String(completedOrder.status).replace(/_/g, " ")}
                 </span>
               </div>
               <div className="space-y-0.5">
-                <span className="text-[#607481] block">Fulfillment</span>
-                <span className="font-bold text-[#172B36] capitalize">
+                <span className="text-[#6B7280] block">Fulfillment</span>
+                <span className="font-bold text-[#111827] capitalize">
                   {completedOrder.fulfillment_type === "pickup"
                     ? "Counter Pickup"
                     : "Home Delivery"}
                 </span>
               </div>
               <div className="space-y-0.5">
-                <span className="text-[#607481] block">Net Payable</span>
-                <span className="sf-heading font-extrabold text-[#172B36] tabular-nums">
+                <span className="text-[#6B7280] block">Net Payable</span>
+                <span className="sf-heading font-extrabold text-[#111827] tabular-nums">
                   PKR {Number(completedOrder.total_pkr).toLocaleString()}
                 </span>
               </div>
             </div>
 
             {completedOrder.items && completedOrder.items.length > 0 && (
-              <div className="border border-[#DBE5E0] rounded-2xl divide-y divide-[#E8EFEA] overflow-hidden">
-                <div className="px-4 py-2.5 bg-[#FAF8F4] text-xs font-bold text-[#4D616E] flex justify-between">
+              <div className="border border-[#E5E7EB] rounded-2xl divide-y divide-[#E8EFEA] overflow-hidden">
+                <div className="px-4 py-2.5 bg-[#F9FAFB] text-xs font-bold text-[#4B5563] flex justify-between">
                   <span>Receipt Breakdown</span>
                   <span className="font-mono">{completedOrder.order_number}</span>
                 </div>
@@ -274,22 +274,22 @@ export function CheckoutView({
                     className="px-4 py-3 flex items-center justify-between gap-3 text-sm"
                   >
                     <div className="min-w-0">
-                      <span className="font-semibold text-[#172B36]">
+                      <span className="font-semibold text-[#111827]">
                         {item.product_name || item.product_name_snapshot}
                       </span>
-                      <span className="text-xs text-[#607481] ml-2">
+                      <span className="text-xs text-[#6B7280] ml-2">
                         × {item.qty} {item.selling_unit_name || item.unit_label || ""}
                       </span>
                     </div>
-                    <span className="font-bold text-[#172B36] shrink-0 tabular-nums">
+                    <span className="font-bold text-[#111827] shrink-0 tabular-nums">
                       PKR {Number(item.line_total_pkr).toLocaleString()}
                     </span>
                   </div>
                 ))}
 
-                <div className="px-4 py-2.5 bg-[#FAF8F4] flex justify-between text-xs text-[#4D616E] tabular-nums">
+                <div className="px-4 py-2.5 bg-[#F9FAFB] flex justify-between text-xs text-[#4B5563] tabular-nums">
                   <span>Items Subtotal</span>
-                  <span className="font-semibold text-[#172B36]">
+                  <span className="font-semibold text-[#111827]">
                     PKR {confirmedSubtotal.toLocaleString()}
                   </span>
                 </div>
@@ -306,20 +306,20 @@ export function CheckoutView({
                   </div>
                 )}
 
-                <div className="px-4 py-2.5 bg-[#FAF8F4] flex justify-between text-xs text-[#4D616E] tabular-nums">
+                <div className="px-4 py-2.5 bg-[#F9FAFB] flex justify-between text-xs text-[#4B5563] tabular-nums">
                   <span>
                     {completedOrder.fulfillment_type === "pickup"
                       ? "Counter Pickup"
                       : "Delivery Charges"}
                   </span>
-                  <span className="font-semibold text-[#172B36]">
+                  <span className="font-semibold text-[#111827]">
                     {confirmedDeliveryFee === 0
                       ? "Free"
                       : `PKR ${confirmedDeliveryFee.toLocaleString()}`}
                   </span>
                 </div>
 
-                <div className="px-4 py-3 sf-surface-ivory flex justify-between text-sm font-extrabold text-[#172B36] tabular-nums">
+                <div className="px-4 py-3 sf-surface-ivory flex justify-between text-sm font-extrabold text-[#111827] tabular-nums">
                   <span>Total Payable</span>
                   <span>PKR {Number(completedOrder.total_pkr).toLocaleString()}</span>
                 </div>
@@ -374,13 +374,13 @@ export function CheckoutView({
   if (cart.length === 0) {
     return (
       <main className="max-w-xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-14 flex-1 sf-fade-up">
-        <div className="sf-card rounded-3xl p-10 text-center space-y-4">
+        <div className="sf-card rounded-xl p-10 text-center space-y-4">
           <div className="w-14 h-14 rounded-2xl sf-surface-mint border border-[var(--sf-primary-border)] flex items-center justify-center mx-auto sf-text-brand">
             <ShoppingBagIcon className="w-6 h-6" />
           </div>
           <div className="space-y-1">
-            <h1 className="sf-heading text-xl font-extrabold text-[#172B36]">Your Cart Is Empty</h1>
-            <p className="text-sm text-[#607481]">
+            <h1 className="sf-heading text-xl font-extrabold text-[#111827]">Your Cart Is Empty</h1>
+            <p className="text-sm text-[#6B7280]">
               Select medicines or healthcare supplies from {displayName} to proceed to checkout.
             </p>
           </div>
@@ -406,7 +406,7 @@ export function CheckoutView({
       <section className="sf-surface-forest border-b border-white/10">
         <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-7 sm:py-8 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <span className="text-xs font-bold uppercase tracking-widest text-[#E6A65B]">
+            <span className="text-xs font-bold uppercase tracking-widest text-emerald-400">
               {displayName} • Online Order
             </span>
             <h1 className="sf-heading text-2xl sm:text-3xl font-extrabold text-white mt-0.5">
@@ -445,14 +445,14 @@ export function CheckoutView({
                 <span className="w-6 h-6 rounded-full sf-surface-forest text-white text-xs font-bold inline-flex items-center justify-center">
                   1
                 </span>
-                <h2 className="sf-heading text-base font-bold text-[#172B36]">
+                <h2 className="sf-heading text-base font-bold text-[#111827]">
                   Contact Information
                 </h2>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-semibold text-[#4D616E] mb-1.5">
+                  <label className="block text-xs font-semibold text-[#4B5563] mb-1.5">
                     Customer / Patient Name <span className="text-rose-600">*</span>
                   </label>
                   <input
@@ -466,7 +466,7 @@ export function CheckoutView({
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-[#4D616E] mb-1.5">
+                  <label className="block text-xs font-semibold text-[#4B5563] mb-1.5">
                     Mobile / WhatsApp Number <span className="text-rose-600">*</span>
                   </label>
                   <input
@@ -480,7 +480,7 @@ export function CheckoutView({
                   />
                 </div>
                 <div className="sm:col-span-2">
-                  <label className="block text-xs font-semibold text-[#4D616E] mb-1.5">
+                  <label className="block text-xs font-semibold text-[#4B5563] mb-1.5">
                     Email Address{" "}
                     <span className="text-[#8899A4] font-normal">
                       (Optional — receives official 80mm PDF receipt by email)
@@ -504,7 +504,7 @@ export function CheckoutView({
                 <span className="w-6 h-6 rounded-full sf-surface-forest text-white text-xs font-bold inline-flex items-center justify-center">
                   2
                 </span>
-                <h2 className="sf-heading text-base font-bold text-[#172B36]">
+                <h2 className="sf-heading text-base font-bold text-[#111827]">
                   Delivery or Counter Pickup
                 </h2>
               </div>
@@ -517,17 +517,17 @@ export function CheckoutView({
                     className={`p-4 rounded-xl border text-left flex items-start gap-3 transition ${
                       fulfillmentType === "delivery"
                         ? "border-[var(--sf-primary)] bg-[var(--sf-primary-soft)] ring-1 ring-[var(--sf-primary)]"
-                        : "border-[#DBE5E0] bg-white hover:border-[var(--sf-primary)]"
+                        : "border-[#E5E7EB] bg-white hover:border-[var(--sf-primary)]"
                     }`}
                   >
-                    <div className="w-9 h-9 rounded-lg bg-white border border-[#DBE5E0] flex items-center justify-center sf-text-brand shrink-0">
+                    <div className="w-9 h-9 rounded-lg bg-white border border-[#E5E7EB] flex items-center justify-center sf-text-brand shrink-0">
                       <TruckIcon className="w-4 h-4" />
                     </div>
                     <div>
-                      <div className="sf-heading text-sm font-bold text-[#172B36]">
+                      <div className="sf-heading text-sm font-bold text-[#111827]">
                         Home Delivery
                       </div>
-                      <div className="text-xs text-[#607481] mt-0.5 tabular-nums">
+                      <div className="text-xs text-[#6B7280] mt-0.5 tabular-nums">
                         Standard fee PKR{" "}
                         {Number(deliveryConfig?.standard_delivery_fee_pkr ?? 150).toLocaleString()}
                         {Number(deliveryConfig?.estimated_delivery_minutes || 0) > 0
@@ -545,17 +545,17 @@ export function CheckoutView({
                     className={`p-4 rounded-xl border text-left flex items-start gap-3 transition ${
                       fulfillmentType === "pickup"
                         ? "border-[var(--sf-primary)] bg-[var(--sf-primary-soft)] ring-1 ring-[var(--sf-primary)]"
-                        : "border-[#DBE5E0] bg-white hover:border-[var(--sf-primary)]"
+                        : "border-[#E5E7EB] bg-white hover:border-[var(--sf-primary)]"
                     }`}
                   >
-                    <div className="w-9 h-9 rounded-lg bg-white border border-[#DBE5E0] flex items-center justify-center sf-text-brand shrink-0">
+                    <div className="w-9 h-9 rounded-lg bg-white border border-[#E5E7EB] flex items-center justify-center sf-text-brand shrink-0">
                       <StoreIcon className="w-4 h-4" />
                     </div>
                     <div>
-                      <div className="sf-heading text-sm font-bold text-[#172B36]">
+                      <div className="sf-heading text-sm font-bold text-[#111827]">
                         Counter Pickup
                       </div>
-                      <div className="text-xs text-[#607481] mt-0.5">
+                      <div className="text-xs text-[#6B7280] mt-0.5">
                         Collect at {displayName} • Free
                       </div>
                     </div>
@@ -567,7 +567,7 @@ export function CheckoutView({
                 <div className="space-y-4 pt-1">
                   {deliveryZones.length > 0 && (
                     <div>
-                      <label className="block text-xs font-semibold text-[#4D616E] mb-1.5">
+                      <label className="block text-xs font-semibold text-[#4B5563] mb-1.5">
                         Delivery Area / Zone
                       </label>
                       <select
@@ -595,7 +595,7 @@ export function CheckoutView({
 
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <div className="sm:col-span-2">
-                      <label className="block text-xs font-semibold text-[#4D616E] mb-1.5">
+                      <label className="block text-xs font-semibold text-[#4B5563] mb-1.5">
                         Complete Street / House Address <span className="text-rose-600">*</span>
                       </label>
                       <input
@@ -609,7 +609,7 @@ export function CheckoutView({
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-semibold text-[#4D616E] mb-1.5">
+                      <label className="block text-xs font-semibold text-[#4B5563] mb-1.5">
                         City
                       </label>
                       <input
@@ -623,7 +623,7 @@ export function CheckoutView({
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-[#4D616E] mb-1.5">
+                    <label className="block text-xs font-semibold text-[#4B5563] mb-1.5">
                       Delivery Landmark / Rider Note{" "}
                       <span className="text-[#8899A4] font-normal">(Optional)</span>
                     </label>
@@ -640,7 +640,7 @@ export function CheckoutView({
                 <div className="pt-1 space-y-2">
                   {branchesList.length > 0 ? (
                     <div>
-                      <label className="block text-xs font-semibold text-[#4D616E] mb-1.5">
+                      <label className="block text-xs font-semibold text-[#4B5563] mb-1.5">
                         Pickup Pharmacy Location
                       </label>
                       <select
@@ -657,8 +657,8 @@ export function CheckoutView({
                       </select>
                     </div>
                   ) : (
-                    <div className="p-3.5 rounded-xl sf-surface-ivory border border-[#EADFCE] text-xs text-[#4D616E]">
-                      Pickup Counter: <strong className="text-[#172B36]">{displayName}</strong>
+                    <div className="p-3.5 rounded-xl sf-surface-ivory border border-[#E5E7EB] text-xs text-[#4B5563]">
+                      Pickup Counter: <strong className="text-[#111827]">{displayName}</strong>
                       {sf.address_line ? ` — ${sf.address_line}, ${sf.city}` : ` (${sf.city})`}
                     </div>
                   )}
@@ -692,7 +692,7 @@ export function CheckoutView({
                   value={rxInquiryNote}
                   onChange={(e) => onChangeRxInquiryNote(e.target.value)}
                   placeholder="Optional: Prescribing doctor / clinic or reference note"
-                  className="w-full h-10 rounded-xl border border-rose-200 bg-white px-3.5 text-xs text-[#172B36] focus:outline-none focus:border-rose-400"
+                  className="w-full h-10 rounded-xl border border-rose-200 bg-white px-3.5 text-xs text-[#111827] focus:outline-none focus:border-rose-400"
                 />
               </section>
             )}
@@ -703,7 +703,7 @@ export function CheckoutView({
                 <span className="w-6 h-6 rounded-full sf-surface-forest text-white text-xs font-bold inline-flex items-center justify-center">
                   {cartCalculations.hasPrescriptionItems ? "4" : "3"}
                 </span>
-                <h2 className="sf-heading text-base font-bold text-[#172B36]">
+                <h2 className="sf-heading text-base font-bold text-[#111827]">
                   Payment & Order Notes
                 </h2>
               </div>
@@ -723,18 +723,18 @@ export function CheckoutView({
                       className={`p-3.5 rounded-xl border text-left transition ${
                         active
                           ? "border-[var(--sf-primary)] bg-[var(--sf-primary-soft)] ring-1 ring-[var(--sf-primary)]"
-                          : "border-[#DBE5E0] bg-white hover:border-[var(--sf-primary)]"
+                          : "border-[#E5E7EB] bg-white hover:border-[var(--sf-primary)]"
                       }`}
                     >
-                      <div className="sf-heading text-xs font-bold text-[#172B36]">{pm.label}</div>
-                      <div className="text-[11px] text-[#607481] mt-0.5">{pm.sub}</div>
+                      <div className="sf-heading text-xs font-bold text-[#111827]">{pm.label}</div>
+                      <div className="text-[11px] text-[#6B7280] mt-0.5">{pm.sub}</div>
                     </button>
                   );
                 })}
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-[#4D616E] mb-1.5">
+                <label className="block text-xs font-semibold text-[#4B5563] mb-1.5">
                   Order Note for Pharmacy{" "}
                   <span className="text-[#8899A4] font-normal">(Optional)</span>
                 </label>
@@ -752,8 +752,8 @@ export function CheckoutView({
           {/* Right Column: Sticky Order Summary */}
           <div className="lg:col-span-5">
             <div className="sf-card rounded-2xl overflow-hidden lg:sticky lg:top-24">
-              <div className="px-5 sm:px-6 py-4 bg-[#FAF8F4] border-b border-[#E2E8E4] flex items-center justify-between">
-                <h2 className="sf-heading text-base font-extrabold text-[#172B36]">
+              <div className="px-5 sm:px-6 py-4 bg-[#F9FAFB] border-b border-[#E5E7EB] flex items-center justify-between">
+                <h2 className="sf-heading text-base font-extrabold text-[#111827]">
                   Order Summary ({cartCalculations.totalItems})
                 </h2>
                 <button
@@ -768,7 +768,7 @@ export function CheckoutView({
               <div className="p-5 sm:p-6 space-y-5">
                 {cartCalculations.remainingForFreeDelivery > 0 &&
                   fulfillmentType === "delivery" && (
-                    <div className="rounded-xl sf-surface-mint border border-[#C5DFD7] p-3 text-xs text-[#172B36] flex items-center gap-2">
+                    <div className="rounded-xl sf-surface-mint border border-[#C5DFD7] p-3 text-xs text-[#111827] flex items-center gap-2">
                       <TruckIcon className="w-4 h-4 sf-text-brand shrink-0" />
                       <span>
                         Add{" "}
@@ -790,7 +790,7 @@ export function CheckoutView({
 
                     return (
                       <div key={cartKey} className="py-3.5 flex items-start gap-3">
-                        <div className="w-16 h-16 rounded-xl border border-[#DCE7E2] bg-white overflow-hidden flex items-center justify-center shrink-0 p-1">
+                        <div className="w-16 h-16 rounded-xl border border-[#E5E7EB] bg-white overflow-hidden flex items-center justify-center shrink-0 p-1">
                           {product.primary_image_url ? (
                             <img
                               src={product.primary_image_url}
@@ -814,11 +814,11 @@ export function CheckoutView({
                         <div className="flex-1 min-w-0 space-y-2">
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0">
-                              <p className="sf-heading text-xs font-bold text-[#172B36] truncate">
+                              <p className="sf-heading text-xs font-bold text-[#111827] truncate">
                                 {product.name}
                               </p>
                               <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                                <span className="px-1.5 py-0.5 rounded bg-[#F3F6F4] text-[#4D616E] text-[10.5px] font-semibold">
+                                <span className="px-1.5 py-0.5 rounded bg-[#F3F6F4] text-[#4B5563] text-[10.5px] font-semibold">
                                   {selectedUnit.label || selectedUnit.unit_name}
                                 </span>
                                 {product.requires_prescription && (
@@ -854,7 +854,7 @@ export function CheckoutView({
                                 )
                               }
                             />
-                            <span className="sf-heading text-xs font-bold text-[#172B36] tabular-nums">
+                            <span className="sf-heading text-xs font-bold text-[#111827] tabular-nums">
                               PKR {lineTotal.toLocaleString()}
                             </span>
                           </div>
@@ -868,7 +868,7 @@ export function CheckoutView({
                 <div className="pt-2 border-t border-[#E8EFEA] space-y-2">
                   <div className="flex gap-2">
                     <div className="relative flex-1">
-                      <TagIcon className="w-3.5 h-3.5 text-[#607481] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      <TagIcon className="w-3.5 h-3.5 text-[#6B7280] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                       <input
                         type="text"
                         value={promoCodeInput}
@@ -926,7 +926,7 @@ export function CheckoutView({
                   {appliedPromoCode && cartCalculations.promoStatus === "below_min" && (
                     <div
                       data-testid="promo-below-min-banner"
-                      className="rounded-xl sf-surface-ivory border border-[#EADFCE] px-3 py-2 flex items-center justify-between gap-2 text-xs text-[#7C4A12]"
+                      className="rounded-xl sf-surface-ivory border border-[#E5E7EB] px-3 py-2 flex items-center justify-between gap-2 text-xs text-[#7C4A12]"
                     >
                       <span>
                         Code <strong className="font-mono">{appliedPromoCode}</strong> needs min
@@ -974,10 +974,10 @@ export function CheckoutView({
                 </div>
 
                 {/* Warm Ivory Totals Box */}
-                <div className="rounded-2xl sf-surface-ivory border border-[#EADFCE] p-4 space-y-2.5 text-xs tabular-nums">
-                  <div className="flex justify-between text-[#4D616E]">
+                <div className="rounded-2xl sf-surface-ivory border border-[#E5E7EB] p-4 space-y-2.5 text-xs tabular-nums">
+                  <div className="flex justify-between text-[#4B5563]">
                     <span>Items Subtotal ({cartCalculations.totalItems})</span>
-                    <span className="font-semibold text-[#172B36]">
+                    <span className="font-semibold text-[#111827]">
                       PKR {cartCalculations.subtotalPkr.toLocaleString()}
                     </span>
                   </div>
@@ -998,18 +998,18 @@ export function CheckoutView({
                     </div>
                   )}
 
-                  <div className="flex justify-between text-[#4D616E]">
+                  <div className="flex justify-between text-[#4B5563]">
                     <span>
                       {fulfillmentType === "pickup" ? "Counter Pickup" : "Delivery Fee"}
                     </span>
-                    <span className="font-semibold text-[#172B36]">
+                    <span className="font-semibold text-[#111827]">
                       {cartCalculations.deliveryFeePkr === 0
                         ? "Free"
                         : `PKR ${cartCalculations.deliveryFeePkr.toLocaleString()}`}
                     </span>
                   </div>
 
-                  <div className="flex justify-between items-baseline text-base font-extrabold text-[#172B36] border-t border-[#E2D6C3] pt-3">
+                  <div className="flex justify-between items-baseline text-base font-extrabold text-[#111827] border-t border-[#E2D6C3] pt-3">
                     <span className="sf-heading">Total Payable</span>
                     <span className="sf-heading text-xl">
                       PKR {cartCalculations.totalPkr.toLocaleString()}
@@ -1029,7 +1029,7 @@ export function CheckoutView({
                     : `Place Order • PKR ${cartCalculations.totalPkr.toLocaleString()}`}
                 </button>
 
-                <p className="text-[11.5px] text-[#607481] text-center leading-relaxed">
+                <p className="text-[11.5px] text-[#6B7280] text-center leading-relaxed">
                   Orders are received directly at {displayName}&apos;s POS counter for live stock
                   verification.
                 </p>

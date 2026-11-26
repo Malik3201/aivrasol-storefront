@@ -1,27 +1,27 @@
 :root {
   --sf-primary: #0a7c66;
-  --sf-primary-hover: #086352;
+  --sf-primary-hover: #076351;
   --sf-primary-soft: #ecfdf5;
-  --sf-primary-border: #bbf7d0;
+  --sf-primary-border: #a7f3d0;
   --sf-primary-fg: #ffffff;
   --sf-primary-ink: #065f46;
-  --sf-forest: #0f172a;
-  --sf-forest-deep: #0f172a;
+  --sf-forest: #0b1220;
+  --sf-forest-deep: #0b1220;
   --sf-teal: #0e7490;
   --sf-accent: #0e7490;
   --sf-mint: #f0fdf4;
-  --sf-ivory: #fffbeb;
-  --sf-canvas: #f5f7f9;
+  --sf-ivory: #f8fafc;
+  --sf-canvas: #f6f7f9;
   --sf-surface: #ffffff;
-  --sf-surface-muted: #f1f5f9;
+  --sf-surface-muted: #f3f4f6;
   --sf-warm-accent: #f59e0b;
   --sf-warm-accent-soft: #fef3c7;
-  --sf-ink: #0f172a;
-  --sf-text: #0f172a;
-  --sf-slate: #475569;
-  --sf-text-secondary: #475569;
-  --sf-border: #e2e8f0;
-  --sf-border-strong: #cbd5e1;
+  --sf-ink: #111827;
+  --sf-text: #111827;
+  --sf-slate: #4b5563;
+  --sf-text-secondary: #4b5563;
+  --sf-border: #e5e7eb;
+  --sf-border-strong: #d1d5db;
   --sf-border-warm: #fde68a;
 }
 
@@ -37,6 +37,7 @@ body {
   line-height: 1.5;
   overflow-x: hidden;
   text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
 }
 
 h1,
@@ -65,13 +66,13 @@ select:focus-visible,
 
 /* Solid Retail Brand Surfaces */
 .sf-surface-forest {
-  background-color: var(--sf-forest);
+  background-color: #0b1220;
   color: #ffffff;
 }
 
 .sf-surface-footer {
-  background-color: #0f172a;
-  color: #e2e8f0;
+  background-color: #0b1220;
+  color: #d1d5db;
 }
 
 .sf-surface-teal {
@@ -84,24 +85,24 @@ select:focus-visible,
 }
 
 .sf-surface-ivory {
-  background-color: #fffbeb;
+  background-color: #f8fafc;
 }
 
-/* Solid E-Commerce Buttons */
+/* Sharp Commercial E-Commerce Buttons */
 .sf-btn-primary {
   background-color: var(--sf-primary);
   color: var(--sf-primary-fg);
   border: 1px solid transparent;
-  transition: background-color 140ms ease, box-shadow 140ms ease, transform 120ms ease;
+  transition: background-color 140ms ease, box-shadow 140ms ease;
 }
 
 .sf-btn-primary:hover:not(:disabled) {
   background-color: var(--sf-primary-hover);
-  box-shadow: 0 4px 12px -4px rgba(15, 23, 42, 0.25);
+  box-shadow: 0 3px 10px -4px rgba(15, 23, 42, 0.28);
 }
 
 .sf-btn-primary:active:not(:disabled) {
-  transform: scale(0.99);
+  filter: brightness(0.96);
 }
 
 .sf-btn-primary:disabled {
@@ -110,37 +111,37 @@ select:focus-visible,
 }
 
 .sf-btn-warm {
-  background-color: #0f172a;
+  background-color: #111827;
   color: #ffffff;
-  border: 1px solid #0f172a;
-  transition: background-color 140ms ease, transform 120ms ease;
+  border: 1px solid #111827;
+  transition: background-color 140ms ease;
 }
 
 .sf-btn-warm:hover:not(:disabled) {
-  background-color: #1e293b;
+  background-color: #1f2937;
 }
 
 .sf-btn-secondary {
   background-color: #ffffff;
-  color: #0f172a;
-  border: 1px solid #cbd5e1;
+  color: #111827;
+  border: 1px solid #d1d5db;
   transition: background-color 140ms ease, border-color 140ms ease;
 }
 
 .sf-btn-secondary:hover:not(:disabled) {
-  background-color: #f8fafc;
-  border-color: #94a3b8;
+  background-color: #f9fafb;
+  border-color: #9ca3af;
 }
 
 .sf-btn-ghost-light {
-  background-color: rgba(255, 255, 255, 0.12);
+  background-color: rgba(255, 255, 255, 0.14);
   color: #ffffff;
-  border: 1px solid rgba(255, 255, 255, 0.26);
+  border: 1px solid rgba(255, 255, 255, 0.28);
   transition: background-color 140ms ease, border-color 140ms ease;
 }
 
 .sf-btn-ghost-light:hover:not(:disabled) {
-  background-color: rgba(255, 255, 255, 0.2);
+  background-color: rgba(255, 255, 255, 0.22);
   border-color: rgba(255, 255, 255, 0.45);
 }
 
@@ -152,7 +153,7 @@ select:focus-visible,
 }
 
 .sf-btn-soft:hover:not(:disabled) {
-  filter: brightness(0.97);
+  filter: brightness(0.96);
 }
 
 .sf-pill-active {
@@ -177,47 +178,45 @@ select:focus-visible,
   color: var(--sf-primary-ink);
 }
 
-/* Solid E-Commerce Cards — Zero Blur, Zero Glassmorphism, Zero Muddy Shadows */
+/* Flagship Retail Cards — Disciplined 1px Hairline Borders, Flat White Surfaces */
 .sf-card {
   background-color: #ffffff;
-  border: 1px solid #e2e8f0;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 1px 2px rgba(17, 24, 39, 0.03);
 }
 
 .sf-card-elevated {
   background-color: #ffffff;
-  border: 1px solid #cbd5e1;
-  box-shadow: 0 8px 24px -10px rgba(15, 23, 42, 0.1);
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 4px 16px -6px rgba(17, 24, 39, 0.08);
 }
 
 .sf-card-interactive {
   background-color: #ffffff;
-  border: 1px solid #e2e8f0;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  border: 1px solid #e5e7eb;
   transition: border-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
 }
 
 .sf-card-interactive:hover {
-  border-color: var(--sf-primary);
-  box-shadow: 0 10px 24px -12px rgba(15, 23, 42, 0.14);
-  transform: translateY(-2px);
+  border-color: #cbd5e1;
+  box-shadow: 0 8px 20px -12px rgba(17, 24, 39, 0.16);
+  transform: translateY(-1px);
 }
 
 .sf-product-card-v2 {
   background-color: #ffffff;
-  border: 1px solid #e2e8f0;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+  border: 1px solid #e5e7eb;
   transition: border-color 150ms ease, box-shadow 150ms ease;
 }
 
 .sf-product-card-v2:hover {
-  border-color: #94a3b8;
-  box-shadow: 0 8px 22px -10px rgba(15, 23, 42, 0.12);
+  border-color: #cbd5e1;
+  box-shadow: 0 10px 24px -14px rgba(17, 24, 39, 0.18);
 }
 
 .sf-glass-unit {
-  background-color: #f8fafc;
-  border: 1px solid #cbd5e1;
+  background-color: #f9fafb;
+  border: 1px solid #e5e7eb;
   transition: background-color 120ms ease, border-color 120ms ease;
 }
 
@@ -244,13 +243,13 @@ select:focus-visible,
 }
 
 .sf-glass-stepper {
-  background-color: #f1f5f9;
-  border: 1px solid #cbd5e1;
+  background-color: #f3f4f6;
+  border: 1px solid #d1d5db;
 }
 
-/* Supporting Info Page Masthead (Solid Dark Slate, Clean & Crisp) */
+/* Supporting Info Page Header — Clean Editorial Retail Banner (No AI Aurora/Glass) */
 .sf-hero-aurora {
-  background-color: #0f172a;
+  background-color: #0b1220;
   color: #ffffff;
 }
 
@@ -260,40 +259,40 @@ select:focus-visible,
 
 .sf-hero-glass-frame {
   background-color: #ffffff;
-  border: 1px solid #e2e8f0;
-  box-shadow: 0 12px 28px -12px rgba(15, 23, 42, 0.25);
+  border: 1px solid #1f2937;
+  box-shadow: 0 12px 28px -14px rgba(0, 0, 0, 0.45);
 }
 
 .sf-hero-glass-mini {
-  background-color: rgba(255, 255, 255, 0.12);
-  border: 1px solid rgba(255, 255, 255, 0.22);
+  background-color: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.18);
 }
 
 .sf-glass-surface-card {
   background-color: #ffffff;
-  border: 1px solid #e2e8f0;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 1px 2px rgba(17, 24, 39, 0.03);
 }
 
 .sf-glass-pill {
-  background-color: #f1f5f9;
-  border: 1px solid #cbd5e1;
+  background-color: #f3f4f6;
+  border: 1px solid #e5e7eb;
 }
 
 /* Crisp Form Inputs */
 .sf-input {
   background-color: #ffffff;
-  border: 1px solid #cbd5e1;
-  color: #0f172a;
+  border: 1px solid #d1d5db;
+  color: #111827;
   transition: border-color 140ms ease, box-shadow 140ms ease;
 }
 
 .sf-input::placeholder {
-  color: #64748b;
+  color: #6b7280;
 }
 
 .sf-input:hover:not(:focus):not(:disabled) {
-  border-color: #94a3b8;
+  border-color: #9ca3af;
 }
 
 .sf-input:focus {
@@ -302,7 +301,7 @@ select:focus-visible,
   box-shadow: 0 0 0 3px var(--sf-primary-soft);
 }
 
-/* Lightweight Micro-Animations */
+/* Subtle Retail Micro-Animations */
 @keyframes sfSlideInRight {
   from {
     transform: translateX(100%);
@@ -315,7 +314,7 @@ select:focus-visible,
 @keyframes sfFadeUp {
   from {
     opacity: 0;
-    transform: translateY(4px);
+    transform: translateY(3px);
   }
   to {
     opacity: 1;
@@ -326,7 +325,7 @@ select:focus-visible,
 @keyframes sfZoomIn {
   from {
     opacity: 0;
-    transform: scale(0.97);
+    transform: scale(0.98);
   }
   to {
     opacity: 1;
@@ -335,15 +334,15 @@ select:focus-visible,
 }
 
 .sf-drawer-enter {
-  animation: sfSlideInRight 190ms cubic-bezier(0.22, 1, 0.36, 1);
+  animation: sfSlideInRight 180ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .sf-fade-up {
-  animation: sfFadeUp 150ms cubic-bezier(0.22, 1, 0.36, 1);
+  animation: sfFadeUp 130ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .sf-zoom-in {
-  animation: sfZoomIn 150ms cubic-bezier(0.22, 1, 0.36, 1);
+  animation: sfZoomIn 140ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -371,11 +370,11 @@ select:focus-visible,
 }
 
 .shadow-2xs {
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  box-shadow: 0 1px 2px rgba(17, 24, 39, 0.04);
 }
 
 .shadow-xs {
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.07), 0 1px 2px rgba(15, 23, 42, 0.04);
+  box-shadow: 0 1px 3px rgba(17, 24, 39, 0.06), 0 1px 2px rgba(17, 24, 39, 0.04);
 }
 
 input.qty-stepper-input::-webkit-outer-spin-button,

@@ -27,7 +27,7 @@ export function DoctorsView({ sf, displayName, doctors, onSelectView }: DoctorsV
   const defaultWhatsapp = (sf.whatsapp_phone || sf.contact_phone || "").replace(/[^0-9]/g, "");
 
   return (
-    <main className="flex-1 bg-[#F5F7F9] sf-fade-up">
+    <main className="flex-1 bg-[#F6F7F9] sf-fade-up">
       <section className="bg-white border-b border-[#E2E8F0]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-2">
           <nav className="flex items-center gap-1.5 text-xs text-[#64748B]">
@@ -234,7 +234,7 @@ export function CustomServicesView({
   }, [services, testSearch]);
 
   return (
-    <main className="flex-1 bg-[#F5F7F9] sf-fade-up">
+    <main className="flex-1 bg-[#F6F7F9] sf-fade-up">
       <section className="bg-white border-b border-[#E2E8F0]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 flex flex-col md:flex-row md:items-end justify-between gap-4">
           <div className="space-y-1.5">

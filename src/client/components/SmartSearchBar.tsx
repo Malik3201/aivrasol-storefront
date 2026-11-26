@@ -20,6 +20,7 @@ interface SmartSearchBarProps {
   size?: "header" | "hero" | "catalog";
   testId?: string;
   showShortcutHint?: boolean;
+  showSubmitButton?: boolean;
 }
 
 function highlightMatch(text: string, query: string): React.ReactNode {
@@ -188,6 +189,7 @@ export function SmartSearchBar({
   size = "header",
   testId,
   showShortcutHint = false,
+  showSubmitButton = false,
 }: SmartSearchBarProps) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -289,10 +291,10 @@ export function SmartSearchBar({
         }}
         className={`flex items-center bg-white border transition-all ${
           isHero
-            ? "h-12 sm:h-[52px] rounded-xl border-[#CBD5E1] focus-within:border-[var(--sf-primary)] focus-within:ring-3 focus-within:ring-[var(--sf-primary-soft)] p-1.5 shadow-xs"
+            ? "h-12 sm:h-[50px] rounded-lg border-[#D1D5DB] focus-within:border-[var(--sf-primary)] focus-within:ring-2 focus-within:ring-[var(--sf-primary-soft)] p-1 shadow-2xs"
             : isCatalog
-              ? "h-11 rounded-xl border-[#CBD5E1] focus-within:border-[var(--sf-primary)] focus-within:ring-2 focus-within:ring-[var(--sf-primary-soft)] px-1"
-              : "h-10 sm:h-11 rounded-xl border-[#CBD5E1] bg-[#F8FAFC] focus-within:bg-white focus-within:border-[var(--sf-primary)] focus-within:ring-2 focus-within:ring-[var(--sf-primary-soft)] px-1"
+              ? "h-10 rounded-lg border-[#D1D5DB] focus-within:border-[var(--sf-primary)] focus-within:ring-2 focus-within:ring-[var(--sf-primary-soft)] pl-1 pr-1"
+              : "h-11 rounded-lg border-[#D1D5DB] bg-[#F9FAFB] focus-within:bg-white focus-within:border-[var(--sf-primary)] focus-within:ring-2 focus-within:ring-[var(--sf-primary-soft)] pl-1 pr-1"
         }`}
       >
         <SearchIcon className="w-4 h-4 text-[#64748B] ml-2.5 shrink-0" />
@@ -361,13 +363,13 @@ export function SmartSearchBar({
           </kbd>
         ) : null}
 
-        {isHero && (
+        {(isHero || showSubmitButton) && (
           <button
             type="submit"
-            className="h-9 sm:h-10 px-4 sm:px-5 rounded-lg sf-btn-primary text-xs sm:text-[13px] font-bold inline-flex items-center gap-1.5 shrink-0"
+            className="h-9 px-4 rounded-md sf-btn-primary text-xs font-bold inline-flex items-center gap-1.5 shrink-0"
           >
             <span>Search</span>
-            <ArrowRightIcon className="w-3.5 h-3.5" />
+            {isHero && <ArrowRightIcon className="w-3.5 h-3.5" />}
           </button>
         )}
       </form>

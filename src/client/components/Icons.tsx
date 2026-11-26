@@ -794,3 +794,73 @@ export function ReceiptDownloadIcon({ className = "w-4 h-4" }: IconProps) {
     </svg>
   );
 }
+
+export function HealthConcernIcon({
+  kind,
+  className = "w-5 h-5",
+}: {
+  kind: "fever" | "cough" | "stomach" | "allergy" | "diabetes" | "heart" | "vitamins" | "antibiotics";
+  className?: string;
+}) {
+  switch (kind) {
+    case "fever":
+      return (
+        <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M14 14.76V3.5a2 2 0 0 0-4 0v11.26a4 4 0 1 0 4 0Z" />
+          <circle cx="12" cy="17.5" r="1.4" fill="currentColor" />
+          <path d="M12 10v6" />
+        </svg>
+      );
+    case "cough":
+      return (
+        <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M12 4v8" />
+          <path d="M12 12c-1.5 0-4 1-5 3.5-1 2.4-.5 5.5 1.8 5.5 1.4 0 2.2-1 2.2-2.5V12" />
+          <path d="M12 12c1.5 0 4 1 5 3.5 1 2.4.5 5.5-1.8 5.5-1.4 0-2.2-1-2.2-2.5V12" />
+        </svg>
+      );
+    case "stomach":
+      return (
+        <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M9 4v3a3 3 0 0 1-2.4 2.94A5 5 0 0 0 5 18a4 4 0 0 0 6.5 1.1c1.3-1 3.5-1.1 5-2.1 2-1.4 3-3.8 2.5-6.5-.5-2.6-2.5-4.5-5-4.5-1.2 0-2 .6-2.5 1.5" />
+          <path d="M10.5 13.5h3M12 12v3" />
+        </svg>
+      );
+    case "allergy":
+      return (
+        <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M12 3 5 6v6c0 5 3.5 8 7 9 3.5-1 7-4 7-9V6l-7-3Z" />
+          <path d="M12 8v6M9 11h6" />
+        </svg>
+      );
+    case "diabetes":
+      return (
+        <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M12 3s6 6.8 6 11a6 6 0 1 1-12 0c0-4.2 6-11 6-11Z" />
+          <path d="M10 15h4M12 13v4" />
+        </svg>
+      );
+    case "heart":
+      return (
+        <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M19.5 12.5 12 20l-7.5-7.5A5 5 0 0 1 12 5.9a5 5 0 0 1 7.5 6.6Z" />
+          <path d="M7.5 12h2.2l1.3-2.5 2 5 1.3-2.5h2.2" />
+        </svg>
+      );
+    case "vitamins":
+      return (
+        <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="4" />
+          <path d="M12 3v2M12 19v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M3 12h2M19 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+        </svg>
+      );
+    case "antibiotics":
+    default:
+      return (
+        <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="m10.5 20.5 10-10a4.95 4.95 0 1 0-7-7l-10 10a4.95 4.95 0 1 0 7 7Z" />
+          <path d="m8.5 8.5 7 7" />
+        </svg>
+      );
+  }
+}

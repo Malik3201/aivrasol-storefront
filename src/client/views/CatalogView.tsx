@@ -119,54 +119,51 @@ export function CatalogView({
   const hasActiveFilters = activeFilterChips.length > 0;
 
   return (
-    <main id="catalog" className="flex-1 flex flex-col bg-[#F5F7F9] sf-fade-up">
-      {/* 1. Clean Solid E-Commerce Breadcrumb & Title Strip */}
-      <section className="bg-white border-b border-[#E2E8F0]">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="space-y-1">
-            <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-xs text-[#64748B]">
+    <main id="catalog" className="flex-1 flex flex-col bg-[#F6F7F9] sf-fade-up">
+      {/* 1. Clean E-Commerce Breadcrumb & Department Title Bar */}
+      <section className="bg-white border-b border-[#E5E7EB]">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+          <div className="space-y-0.5">
+            <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-xs text-[#6B7280]">
               <button
                 type="button"
                 onClick={onSelectHome}
-                className="hover:text-[#0F172A] font-medium transition"
+                className="hover:text-[#111827] font-medium transition"
               >
                 Home
               </button>
-              <ChevronRightIcon className="w-3.5 h-3.5 text-[#94A3B8]" />
-              <span className="font-semibold text-[#0F172A]">
-                {selectedCategory !== "all" ? selectedCategory : "Medicines & Healthcare Catalog"}
+              <ChevronRightIcon className="w-3.5 h-3.5 text-[#9CA3AF]" />
+              <span className="font-semibold text-[#111827]">
+                {selectedCategory !== "all" ? selectedCategory : "All Medicines"}
               </span>
             </nav>
-            <h1 className="sf-heading text-xl sm:text-2xl font-extrabold text-[#0F172A]">
-              {selectedCategory !== "all"
-                ? selectedCategory
-                : `${displayName} — Medicines Catalog`}
+            <h1 className="sf-heading text-lg sm:text-2xl font-extrabold text-[#111827]">
+              {selectedCategory !== "all" ? selectedCategory : `${displayName} Medicines`}
             </h1>
           </div>
 
-          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#F8FAFC] border border-[#E2E8F0] text-xs font-semibold text-[#334155] self-start sm:self-auto tabular-nums">
+          <div className="inline-flex items-center gap-2 text-xs font-medium text-[#4B5563] tabular-nums">
             <span className="w-2 h-2 rounded-full bg-emerald-600" />
             <span>
-              Showing <strong>{displayedProducts.length}</strong>
-              {hasActiveFilters ? " matching" : ""} of{" "}
-              <strong>{sf.published_products_count}</strong> live products
+              Showing <strong className="text-[#111827]">{displayedProducts.length}</strong> of{" "}
+              <strong className="text-[#111827]">{sf.published_products_count}</strong> live products
             </span>
           </div>
         </div>
       </section>
 
-      {/* 2. Solid 2-Column E-Commerce Catalog Workspace */}
-      <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-6 sm:py-7">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          {/* Desktop Left Sticky Filter Sidebar */}
+      {/* 2. Flagship Retail 2-Column Catalog Grid */}
+      <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-5 sm:py-6">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+          {/* Desktop Sticky Left Filter Sidebar */}
           <aside
             aria-label="Catalog Filters"
-            className="hidden lg:block lg:col-span-3 sticky top-[128px] space-y-4"
+            className="hidden lg:block lg:col-span-3 sticky top-[120px] space-y-4"
           >
-            <div className="sf-card rounded-2xl p-4 space-y-5">
-              <div className="flex items-center justify-between border-b border-[#EDF2F7] pb-3">
-                <h2 className="sf-heading text-sm font-extrabold text-[#0F172A] uppercase tracking-wider">
-                  Filters
+            <div className="bg-white rounded-xl border border-[#E5E7EB] p-4 space-y-5">
+              <div className="flex items-center justify-between border-b border-[#F3F4F6] pb-3">
+                <h2 className="sf-heading text-xs font-extrabold text-[#111827] uppercase tracking-wider">
+                  Filter Products
                 </h2>
                 {hasActiveFilters && (
                   <button
@@ -179,9 +176,9 @@ export function CatalogView({
                 )}
               </div>
 
-              {/* Availability Toggle */}
+              {/* Availability */}
               <div className="space-y-2">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-[#64748B] block">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-[#6B7280] block">
                   Availability
                 </span>
                 <button
@@ -189,45 +186,45 @@ export function CatalogView({
                   role="switch"
                   aria-checked={inStockOnly}
                   onClick={() => onToggleInStockOnly(!inStockOnly)}
-                  className={`w-full h-10 px-3 rounded-xl border text-xs font-bold flex items-center justify-between transition ${
+                  className={`w-full h-9 px-3 rounded-lg border text-xs font-bold flex items-center justify-between transition ${
                     inStockOnly
                       ? "bg-[var(--sf-primary-soft)] text-[var(--sf-primary-ink)] border-[var(--sf-primary-border)]"
-                      : "bg-[#F8FAFC] text-[#334155] border-[#E2E8F0] hover:border-[#CBD5E1]"
+                      : "bg-[#F9FAFB] text-[#374151] border-[#E5E7EB] hover:border-[#D1D5DB]"
                   }`}
                 >
                   <span>In-Stock Only</span>
                   <span
-                    className={`w-5 h-5 rounded-full flex items-center justify-center transition ${
+                    className={`w-4.5 h-4.5 rounded-full flex items-center justify-center transition ${
                       inStockOnly
                         ? "bg-[var(--sf-primary)] text-white"
-                        : "bg-white border border-[#CBD5E1]"
+                        : "bg-white border border-[#D1D5DB]"
                     }`}
                   >
-                    {inStockOnly && <CheckCircleIcon className="w-3.5 h-3.5" />}
+                    {inStockOnly && <CheckCircleIcon className="w-3 h-3" />}
                   </span>
                 </button>
               </div>
 
-              {/* Departments / Categories List */}
+              {/* Departments */}
               {validCategories.length > 0 && (
-                <div className="space-y-1.5 border-t border-[#EDF2F7] pt-4">
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-[#64748B] block pb-1">
+                <div className="space-y-1 border-t border-[#F3F4F6] pt-4">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-[#6B7280] block pb-1">
                     Department
                   </span>
-                  <div className="space-y-1 max-h-[280px] overflow-y-auto pr-1">
+                  <div className="space-y-0.5 max-h-[280px] overflow-y-auto pr-1">
                     <button
                       type="button"
                       onClick={() => onSelectCategory("all")}
-                      className={`w-full px-3 py-2 rounded-xl text-xs flex items-center justify-between transition ${
+                      className={`w-full px-2.5 py-2 rounded-lg text-xs flex items-center justify-between transition ${
                         selectedCategory === "all"
-                          ? "sf-pill-active font-bold"
-                          : "text-[#334155] hover:bg-[#F1F5F9] font-semibold"
+                          ? "bg-[#111827] text-white font-bold"
+                          : "text-[#374151] hover:bg-[#F3F4F6] font-medium"
                       }`}
                     >
                       <span>All Departments</span>
                       <span
                         className={`tabular-nums text-[11px] ${
-                          selectedCategory === "all" ? "text-white/85" : "text-[#64748B]"
+                          selectedCategory === "all" ? "text-slate-300" : "text-[#6B7280]"
                         }`}
                       >
                         {sf.published_products_count}
@@ -242,17 +239,17 @@ export function CatalogView({
                           key={cat.id}
                           type="button"
                           onClick={() => onSelectCategory(active ? "all" : cat.name)}
-                          className={`w-full px-3 py-2 rounded-xl text-xs flex items-center justify-between gap-2 transition ${
+                          className={`w-full px-2.5 py-2 rounded-lg text-xs flex items-center justify-between gap-2 transition ${
                             active
-                              ? "sf-pill-active font-bold"
-                              : "text-[#334155] hover:bg-[#F1F5F9] font-semibold"
+                              ? "bg-[#111827] text-white font-bold"
+                              : "text-[#374151] hover:bg-[#F3F4F6] font-medium"
                           }`}
                         >
                           <span className="truncate text-left">{cat.name}</span>
                           {count > 0 && (
                             <span
                               className={`tabular-nums text-[11px] shrink-0 ${
-                                active ? "text-white/85" : "text-[#64748B]"
+                                active ? "text-slate-300" : "text-[#6B7280]"
                               }`}
                             >
                               {count}
@@ -265,20 +262,20 @@ export function CatalogView({
                 </div>
               )}
 
-              {/* Dosage Form Filter */}
+              {/* Dosage Form */}
               {availableDosageForms.length > 1 && (
-                <div className="space-y-2 border-t border-[#EDF2F7] pt-4">
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-[#64748B] block">
+                <div className="space-y-2 border-t border-[#F3F4F6] pt-4">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-[#6B7280] block">
                     Dosage Form
                   </span>
                   <div className="flex flex-wrap gap-1.5">
                     <button
                       type="button"
                       onClick={() => onSelectDosageForm("all")}
-                      className={`px-2.5 py-1 rounded-lg text-[11.5px] font-bold border transition ${
+                      className={`px-2.5 py-1 rounded-md text-[11px] font-bold border transition ${
                         selectedDosageForm === "all"
-                          ? "sf-pill-active"
-                          : "bg-[#F8FAFC] text-[#475569] border-[#E2E8F0] hover:border-[#94A3B8]"
+                          ? "bg-[#111827] text-white border-[#111827]"
+                          : "bg-[#F9FAFB] text-[#4B5563] border-[#E5E7EB] hover:border-[#9CA3AF]"
                       }`}
                     >
                       All
@@ -290,10 +287,10 @@ export function CatalogView({
                           key={form}
                           type="button"
                           onClick={() => onSelectDosageForm(active ? "all" : form)}
-                          className={`px-2.5 py-1 rounded-lg text-[11.5px] font-bold border transition ${
+                          className={`px-2.5 py-1 rounded-md text-[11px] font-bold border transition ${
                             active
-                              ? "sf-pill-active"
-                              : "bg-[#F8FAFC] text-[#475569] border-[#E2E8F0] hover:border-[#94A3B8]"
+                              ? "bg-[#111827] text-white border-[#111827]"
+                              : "bg-[#F9FAFB] text-[#4B5563] border-[#E5E7EB] hover:border-[#9CA3AF]"
                           }`}
                         >
                           {form}
@@ -306,11 +303,11 @@ export function CatalogView({
             </div>
           </aside>
 
-          {/* Main Catalog Column */}
+          {/* Main Product Column */}
           <div className="lg:col-span-9 space-y-4">
-            {/* Solid Top Control Toolbar (Search + Sort + Mobile Filters) */}
-            <div className="sf-card rounded-2xl p-3.5 sm:p-4 space-y-3">
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+            {/* Compact Toolbar (Filter within results + Sort + Mobile Pills) */}
+            <div className="bg-white rounded-xl border border-[#E5E7EB] p-3 space-y-2.5">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
                 <div className="flex-1">
                   <SmartSearchBar
                     value={searchQuery}
@@ -321,7 +318,7 @@ export function CatalogView({
                     size="catalog"
                     showShortcutHint
                     testId="catalog-search-input"
-                    placeholder="Search medicine name, generic salt, or strength…"
+                    placeholder="Filter by medicine name, generic salt, or strength…"
                   />
                 </div>
 
@@ -331,7 +328,7 @@ export function CatalogView({
                       value={selectedDosageForm}
                       onChange={(e) => onSelectDosageForm(e.target.value)}
                       aria-label="Filter by Dosage Form"
-                      className="lg:hidden h-11 rounded-xl sf-input px-3 text-xs font-bold text-[#0F172A]"
+                      className="lg:hidden h-10 rounded-lg sf-input px-2.5 text-xs font-bold text-[#111827]"
                     >
                       <option value="all">All Forms</option>
                       {availableDosageForms.map((form) => (
@@ -346,7 +343,7 @@ export function CatalogView({
                     value={sortBy}
                     onChange={(e) => onSortChange(e.target.value)}
                     aria-label="Sort Medicines"
-                    className="h-11 rounded-xl sf-input px-3 text-xs font-bold text-[#0F172A] cursor-pointer"
+                    className="h-10 rounded-lg sf-input px-3 text-xs font-bold text-[#111827] cursor-pointer"
                   >
                     <option value="featured">Sort: Featured</option>
                     <option value="name_asc">Name: A to Z</option>
@@ -359,10 +356,10 @@ export function CatalogView({
                     role="switch"
                     aria-checked={inStockOnly}
                     onClick={() => onToggleInStockOnly(!inStockOnly)}
-                    className={`lg:hidden h-11 px-3 rounded-xl border text-xs font-bold inline-flex items-center gap-1.5 transition ${
+                    className={`lg:hidden h-10 px-3 rounded-lg border text-xs font-bold inline-flex items-center gap-1.5 transition ${
                       inStockOnly
                         ? "bg-[var(--sf-primary-soft)] text-[var(--sf-primary-ink)] border-[var(--sf-primary-border)]"
-                        : "bg-[#F8FAFC] text-[#334155] border-[#CBD5E1]"
+                        : "bg-[#F9FAFB] text-[#374151] border-[#D1D5DB]"
                     }`}
                   >
                     <span>In-Stock</span>
@@ -370,16 +367,16 @@ export function CatalogView({
                 </div>
               </div>
 
-              {/* Mobile Category Pill Strip */}
+              {/* Mobile Horizontal Categories */}
               {validCategories.length > 0 && (
-                <div className="lg:hidden flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-1">
+                <div className="lg:hidden flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-0.5">
                   <button
                     type="button"
                     onClick={() => onSelectCategory("all")}
                     className={`h-8 px-3 rounded-lg text-xs whitespace-nowrap border transition shrink-0 ${
                       selectedCategory === "all"
-                        ? "sf-pill-active font-bold"
-                        : "bg-[#F8FAFC] text-[#475569] border-[#E2E8F0] font-semibold"
+                        ? "bg-[#111827] text-white border-[#111827] font-bold"
+                        : "bg-[#F9FAFB] text-[#4B5563] border-[#E5E7EB] font-semibold"
                     }`}
                   >
                     All ({sf.published_products_count})
@@ -393,8 +390,8 @@ export function CatalogView({
                         onClick={() => onSelectCategory(active ? "all" : cat.name)}
                         className={`h-8 px-3 rounded-lg text-xs whitespace-nowrap border transition shrink-0 ${
                           active
-                            ? "sf-pill-active font-bold"
-                            : "bg-[#F8FAFC] text-[#475569] border-[#E2E8F0] font-semibold"
+                            ? "bg-[#111827] text-white border-[#111827] font-bold"
+                            : "bg-[#F9FAFB] text-[#4B5563] border-[#E5E7EB] font-semibold"
                         }`}
                       >
                         {cat.name}
@@ -404,10 +401,10 @@ export function CatalogView({
                 </div>
               )}
 
-              {/* Active Filter Chips Bar */}
+              {/* Active Filter Chips */}
               {hasActiveFilters && (
-                <div className="pt-2.5 border-t border-[#EDF2F7] flex flex-wrap items-center gap-1.5 text-xs">
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-[#64748B] mr-1">
+                <div className="pt-2 border-t border-[#F3F4F6] flex flex-wrap items-center gap-1.5 text-xs">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-[#6B7280] mr-1">
                     Active:
                   </span>
                   {activeFilterChips.map((chip) => (
@@ -415,7 +412,7 @@ export function CatalogView({
                       key={chip.id}
                       type="button"
                       onClick={chip.onRemove}
-                      className="inline-flex items-center gap-1.5 h-7 pl-2.5 pr-2 rounded-lg sf-badge-brand hover:brightness-95 font-bold transition"
+                      className="inline-flex items-center gap-1.5 h-7 pl-2.5 pr-2 rounded-md sf-badge-brand hover:brightness-95 font-bold transition"
                     >
                       <span>{chip.label}</span>
                       <CloseIcon className="w-3 h-3" />
@@ -432,75 +429,74 @@ export function CatalogView({
               )}
             </div>
 
-            {/* Automatic Same-Formula Generic Alternatives Section When Searched Medicine Is Unavailable */}
+            {/* Same-Formula Generic Alternatives */}
             {genericAlternatives.length > 0 && (
-              <div className="rounded-2xl border-2 border-emerald-300 bg-[#ECFDF5] p-4 sm:p-5 space-y-4">
+              <div className="rounded-xl border border-emerald-300 bg-[#ECFDF5] p-4 space-y-3.5">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
-                    <span className="text-[11px] font-extrabold uppercase tracking-wider text-emerald-800 block">
+                    <span className="text-[10.5px] font-extrabold uppercase tracking-wider text-emerald-800 block">
                       Same-Formula Alternatives In Stock
                     </span>
-                    <h2 className="sf-heading text-base sm:text-lg font-extrabold text-[#0F172A]">
+                    <h2 className="sf-heading text-base font-extrabold text-[#111827]">
                       {matchedGeneric
-                        ? `Available Medicines with Generic Formula: ${matchedGeneric}`
+                        ? `Available Medicines with Generic: ${matchedGeneric}`
                         : "Available Same-Formula Alternatives"}
                     </h2>
                   </div>
-                  <span className="px-2.5 py-1 rounded-lg bg-white border border-emerald-200 text-xs font-bold text-emerald-800">
+                  <span className="px-2.5 py-1 rounded-md bg-white border border-emerald-200 text-xs font-bold text-emerald-800">
                     {genericAlternatives.length} in stock
                   </span>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
                   {genericAlternatives.map((alt) => renderProductCard(alt))}
                 </div>
               </div>
             )}
 
-            {/* Main Product Grid */}
+            {/* Main Dense Commercial Grid (2-col Mobile, 4-col Desktop) */}
             {loadingProducts && displayedProducts.length === 0 ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-5">
-                {[1, 2, 3, 4, 5, 6].map((n) => (
+              <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
+                {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
                   <div
                     key={n}
-                    className="rounded-2xl bg-white border border-[#E2E8F0] overflow-hidden animate-pulse"
+                    className="rounded-xl bg-white border border-[#E5E7EB] overflow-hidden animate-pulse"
                   >
-                    <div className="h-8 bg-[#F8FAFC]" />
-                    <div className="aspect-[4/3] bg-[#F1F5F9]" />
-                    <div className="p-4 space-y-2.5">
-                      <div className="h-3 w-20 bg-[#E2E8F0] rounded" />
-                      <div className="h-4 w-4/5 bg-[#E2E8F0] rounded" />
-                      <div className="h-9 w-full bg-[#E2E8F0] rounded-xl mt-2" />
+                    <div className="h-[175px] bg-[#F3F4F6]" />
+                    <div className="p-3.5 space-y-2">
+                      <div className="h-2.5 w-16 bg-[#E5E7EB] rounded" />
+                      <div className="h-4 w-4/5 bg-[#E5E7EB] rounded" />
+                      <div className="h-9 w-full bg-[#E5E7EB] rounded-lg mt-2" />
                     </div>
                   </div>
                 ))}
               </div>
             ) : displayedProducts.length === 0 ? (
               genericAlternatives.length === 0 ? (
-                <div className="sf-card rounded-2xl p-10 sm:p-12 text-center space-y-3.5 max-w-lg mx-auto my-4">
-                  <div className="w-14 h-14 rounded-2xl bg-[#F1F5F9] border border-[#E2E8F0] flex items-center justify-center mx-auto sf-text-brand">
-                    <SearchIcon className="w-6 h-6" />
+                <div className="bg-white rounded-xl border border-[#E5E7EB] p-10 text-center space-y-3 max-w-lg mx-auto my-4">
+                  <div className="w-12 h-12 rounded-xl bg-[#F3F4F6] flex items-center justify-center mx-auto sf-text-brand">
+                    <SearchIcon className="w-5 h-5" />
                   </div>
-                  <h2 className="sf-heading text-lg font-bold text-[#0F172A]">
+                  <h2 className="sf-heading text-base font-bold text-[#111827]">
                     No Matching Medicines Found
                   </h2>
-                  <p className="text-sm text-[#64748B] max-w-md mx-auto">
+                  <p className="text-xs sm:text-sm text-[#6B7280] max-w-md mx-auto">
                     Try searching by generic salt (e.g. Paracetamol, Amoxicillin, Omeprazole) or
-                    clearing active department and stock filters.
+                    clearing active filters.
                   </p>
                   {hasActiveFilters && (
                     <button
                       type="button"
                       onClick={onResetFilters}
-                      className="mt-1 h-10 px-5 rounded-xl sf-btn-primary text-xs font-bold"
+                      className="mt-1 h-9 px-4 rounded-lg sf-btn-primary text-xs font-bold"
                     >
-                      Reset Search &amp; Filters
+                      Reset Filters
                     </button>
                   )}
                 </div>
               ) : null
             ) : (
               <div
-                className={`grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-5 transition-opacity duration-150 ${
+                className={`grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4 transition-opacity duration-150 ${
                   loadingProducts ? "opacity-75" : "opacity-100"
                 }`}
                 data-testid="public-product-grid"
@@ -509,18 +505,18 @@ export function CatalogView({
               </div>
             )}
 
-            {/* Load More Pagination */}
+            {/* Load More */}
             {hasMore && nextCursor && (
-              <div className="text-center pt-3 space-y-2">
+              <div className="text-center pt-3 space-y-1.5">
                 <button
                   type="button"
                   disabled={loadingProducts}
                   onClick={onLoadMore}
-                  className="h-11 px-7 rounded-xl sf-btn-secondary text-xs font-bold"
+                  className="h-10 px-6 rounded-lg sf-btn-secondary text-xs font-bold"
                 >
                   {loadingProducts ? "Loading more medicines…" : "Load More Medicines"}
                 </button>
-                <p className="text-xs text-[#64748B] tabular-nums">
+                <p className="text-xs text-[#6B7280] tabular-nums">
                   Showing {displayedProducts.length} of {sf.published_products_count} medicines
                 </p>
               </div>

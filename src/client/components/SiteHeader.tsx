@@ -90,40 +90,32 @@ export function SiteHeader({
   }, [mobileMenuOpen]);
 
   const hasVerifiedLicense = Boolean(sf.drug_sale_license_no && sf.drug_sale_license_no.trim());
-  const showLicenseBadge =
-    hasVerifiedLicense && Number(branding?.show_verified_license_badge ?? 1) === 1;
-
-  const rawTagline = branding?.tagline?.trim();
-  const safeSubtitle = rawTagline
-    ? sanitizePublicCopy(rawTagline, sf, `Online Pharmacy • ${sf.city}`)
-    : `Online Pharmacy • ${sf.city}`;
-
   const announcementEnabled = Number(settings?.announcement_bar_enabled ?? 1) === 1;
   const announcementText = sanitizePublicCopy(
     settings?.announcement_bar_text,
     sf,
-    `${displayName} (${sf.city}) — Genuine medicines delivered to your door & free counter pickup`
+    `Genuine medicines from ${displayName} (${sf.city}) — Home delivery & free counter pickup`
   );
 
   const whatsappDigits = (sf.whatsapp_phone || sf.contact_phone || "").replace(/[^0-9]/g, "");
-  const topCategories = categories.filter(isMeaningfulCategory).slice(0, 4);
+  const topCategories = categories.filter(isMeaningfulCategory).slice(0, 5);
 
   return (
     <>
-      {/* 1. Crisp Top Commercial Utility Strip */}
+      {/* Tier 1: Slim Commercial Utility Strip */}
       {announcementEnabled && (
-        <div className="bg-[#0F172A] text-slate-200 text-xs border-b border-slate-800">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 min-h-[34px] py-1.5 flex items-center justify-between gap-4">
+        <div className="bg-[#0B1220] text-[#D1D5DB] text-[11.5px] border-b border-white/10">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-8 flex items-center justify-between gap-4">
             <div className="flex items-center gap-2 min-w-0">
               <span
                 className="w-1.5 h-1.5 rounded-full shrink-0"
                 style={{ backgroundColor: "var(--sf-primary)" }}
               />
-              <p className="truncate font-medium text-slate-200">{announcementText}</p>
+              <p className="truncate font-medium">{announcementText}</p>
             </div>
-            <div className="hidden sm:flex items-center gap-4 shrink-0 text-[11.5px]">
+            <div className="hidden sm:flex items-center gap-4 shrink-0">
               {hasVerifiedLicense && (
-                <span className="inline-flex items-center gap-1 font-mono text-emerald-300">
+                <span className="inline-flex items-center gap-1 font-mono text-[11px] text-emerald-300">
                   <ShieldCheckIcon className="w-3.5 h-3.5" />
                   <span>Lic: {sf.drug_sale_license_no}</span>
                 </span>
@@ -131,9 +123,9 @@ export function SiteHeader({
               {sf.contact_phone && (
                 <a
                   href={`tel:${sf.contact_phone}`}
-                  className="hidden md:inline-flex items-center gap-1.5 text-slate-300 hover:text-white transition"
+                  className="hidden md:inline-flex items-center gap-1 text-[#D1D5DB] hover:text-white transition"
                 >
-                  <PhoneIcon className="w-3.5 h-3.5 text-emerald-400" />
+                  <PhoneIcon className="w-3 h-3 text-emerald-400" />
                   <span className="tabular-nums font-medium">{sf.contact_phone}</span>
                 </a>
               )}
@@ -144,8 +136,8 @@ export function SiteHeader({
                   rel="noreferrer"
                   className="hidden lg:inline-flex items-center gap-1 text-emerald-300 hover:text-emerald-200 font-semibold transition"
                 >
-                  <WhatsAppIcon className="w-3.5 h-3.5" />
-                  <span>Pharmacist Help</span>
+                  <WhatsAppIcon className="w-3 h-3" />
+                  <span>Pharmacist WhatsApp</span>
                 </a>
               )}
               <button
@@ -153,7 +145,7 @@ export function SiteHeader({
                 onClick={() => onSelectView("track")}
                 className="inline-flex items-center gap-1 text-white hover:text-emerald-300 font-semibold transition whitespace-nowrap"
               >
-                <PackageTrackIcon className="w-3.5 h-3.5" />
+                <PackageTrackIcon className="w-3 h-3" />
                 <span>Track Order</span>
               </button>
             </div>
@@ -161,17 +153,17 @@ export function SiteHeader({
         </div>
       )}
 
-      {/* 2. Solid E-Commerce Sticky Header (Brand + Center Smart Search + Cart) */}
-      <header className="sticky top-0 z-30 bg-white border-b border-[#E2E8F0] shadow-[0_1px_4px_rgba(15,23,42,0.05)]">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 sm:h-[72px] flex items-center justify-between gap-3 lg:gap-6">
-          {/* Left: Strong Pharmacy Brand Lockup */}
+      {/* Tier 2: Flagship Pure-White Sticky E-Commerce Header */}
+      <header className="sticky top-0 z-30 bg-white border-b border-[#E5E7EB] shadow-[0_1px_3px_rgba(17,24,39,0.04)]">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 sm:h-[68px] flex items-center justify-between gap-3 lg:gap-6">
+          {/* Brand Identity */}
           <button
             type="button"
             onClick={() => onSelectView("home")}
-            className="flex items-center gap-2.5 sm:gap-3 min-w-0 text-left group shrink-0"
+            className="flex items-center gap-2.5 min-w-0 text-left shrink-0 group"
           >
             {branding?.logo_url && !logoFailed ? (
-              <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl border border-[#E2E8F0] bg-white p-1 flex items-center justify-center shrink-0">
+              <div className="w-10 h-10 rounded-lg border border-[#E5E7EB] bg-white p-1 flex items-center justify-center shrink-0">
                 <img
                   src={branding.logo_url}
                   alt={displayName}
@@ -182,40 +174,32 @@ export function SiteHeader({
               </div>
             ) : (
               <div
-                className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl flex items-center justify-center shrink-0 relative text-white"
+                className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0 relative text-white"
                 style={{ backgroundColor: "var(--sf-primary)" }}
               >
                 <span className="text-sm font-extrabold tracking-tight sf-heading">
                   {getPharmacyMonogram(displayName)}
                 </span>
-                <span className="absolute -bottom-1 -right-1 w-4 h-4 rounded-md bg-[#0F172A] text-white flex items-center justify-center border border-white">
+                <span className="absolute -bottom-1 -right-1 w-4 h-4 rounded bg-[#111827] text-white flex items-center justify-center border border-white">
                   <PharmacyCrossIcon className="w-2.5 h-2.5" />
                 </span>
               </div>
             )}
 
             <div className="min-w-0">
-              <div className="flex items-center gap-1.5">
-                <span
-                  className="sf-heading text-[16px] sm:text-[18px] font-extrabold text-[#0F172A] tracking-tight leading-tight truncate max-w-[155px] sm:max-w-[210px]"
-                  data-testid="pharmacy-display-name"
-                >
-                  {displayName}
-                </span>
-                {showLicenseBadge && (
-                  <span className="hidden xl:inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold sf-badge-brand whitespace-nowrap">
-                    <ShieldCheckIcon className="w-3 h-3" />
-                    <span>Licensed</span>
-                  </span>
-                )}
-              </div>
-              <p className="hidden sm:block text-[11.5px] text-[#64748B] truncate max-w-[210px]">
-                {safeSubtitle}
-              </p>
+              <span
+                className="sf-heading block text-[16px] sm:text-[18px] font-extrabold text-[#111827] tracking-tight leading-tight truncate max-w-[155px] sm:max-w-[200px]"
+                data-testid="pharmacy-display-name"
+              >
+                {displayName}
+              </span>
+              <span className="hidden sm:block text-[11px] font-medium text-[#6B7280] truncate max-w-[200px]">
+                {sf.city} • Licensed Pharmacy
+              </span>
             </div>
           </button>
 
-          {/* Center: Prominent E-Commerce Live Smart Search Bar (Desktop) */}
+          {/* Authoritative Wide E-Commerce Search Bar (Single Primary Search Input) */}
           <div className="hidden md:block flex-1 max-w-2xl">
             <SmartSearchBar
               value={searchQuery}
@@ -225,27 +209,28 @@ export function SiteHeader({
               onQuickAdd={onQuickAddToCart}
               size="header"
               showShortcutHint
+              showSubmitButton
               testId={activeView !== "shop" ? "catalog-search-input" : "header-search-input"}
-              placeholder={`Search medicines, salts (e.g. Paracetamol) at ${displayName}…`}
+              placeholder={`Search medicines, generic salts (e.g. Panadol, Paracetamol)…`}
             />
           </div>
 
-          {/* Right: Track Order + Cart Button + Mobile Controls */}
+          {/* Right Commerce Actions */}
           <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
               onClick={() => setMobileSearchOpen((v) => !v)}
               aria-label="Toggle medicine search"
-              className="md:hidden w-10 h-10 rounded-xl sf-btn-secondary flex items-center justify-center"
+              className="md:hidden w-10 h-10 rounded-lg sf-btn-secondary flex items-center justify-center"
             >
-              <SearchIcon className="w-4 h-4 text-[#0F172A]" />
+              <SearchIcon className="w-4 h-4 text-[#111827]" />
             </button>
 
             <button
               type="button"
               onClick={() => onSelectView("track")}
               title="Track Order"
-              className="hidden xl:inline-flex items-center gap-1.5 h-10 px-3 rounded-xl sf-btn-secondary text-xs font-bold text-[#334155]"
+              className="hidden xl:inline-flex items-center gap-1.5 h-10 px-3 rounded-lg sf-btn-secondary text-xs font-semibold text-[#374151]"
             >
               <PackageTrackIcon className="w-4 h-4 sf-text-brand" />
               <span>Track Order</span>
@@ -255,16 +240,16 @@ export function SiteHeader({
               type="button"
               onClick={onOpenCartDrawer}
               data-testid="header-cart-button"
-              className="inline-flex items-center gap-2 h-10 sm:h-11 px-3 sm:px-4 rounded-xl sf-btn-primary text-xs font-bold whitespace-nowrap"
+              className="inline-flex items-center gap-2 h-10 sm:h-11 px-3 sm:px-4 rounded-lg sf-btn-primary text-xs font-bold whitespace-nowrap"
             >
               <ShoppingBagIcon className="w-4 h-4 shrink-0" />
               <span className="hidden sm:inline">Cart</span>
-              <span className="min-w-[22px] h-5 px-1.5 rounded-full bg-white text-[#0F172A] text-[11px] font-extrabold inline-flex items-center justify-center tabular-nums">
+              <span className="min-w-[20px] h-5 px-1.5 rounded-full bg-white text-[#111827] text-[11px] font-extrabold inline-flex items-center justify-center tabular-nums">
                 {cartTotalItems}
               </span>
               {cartSubtotalPkr > 0 && (
                 <span className="hidden lg:inline font-bold border-l border-white/25 pl-2 tabular-nums">
-                  PKR {cartSubtotalPkr.toLocaleString()}
+                  Rs. {cartSubtotalPkr.toLocaleString()}
                 </span>
               )}
             </button>
@@ -273,48 +258,54 @@ export function SiteHeader({
               type="button"
               onClick={() => setMobileMenuOpen(true)}
               aria-label="Open navigation menu"
-              className="lg:hidden w-10 h-10 rounded-xl sf-btn-secondary flex items-center justify-center"
+              className="lg:hidden w-10 h-10 rounded-lg sf-btn-secondary flex items-center justify-center"
             >
-              <MenuIcon className="w-5 h-5 text-[#0F172A]" />
+              <MenuIcon className="w-5 h-5 text-[#111827]" />
             </button>
           </div>
         </div>
 
-        {/* 3. Desktop Department & Store Navigation Bar (Classic Solid E-Commerce Structure) */}
+        {/* Tier 3: Clean Retail Department Navigation Bar (Underline Active State) */}
         <nav
           aria-label="Primary Store Navigation"
-          className="hidden lg:block bg-[#F8FAFC] border-t border-[#E2E8F0]"
+          className="hidden lg:block bg-white border-t border-[#F3F4F6]"
         >
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-10 flex items-center justify-between gap-4">
-            <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
+            <div className="flex items-center gap-5 overflow-x-auto no-scrollbar h-full">
               <button
                 type="button"
                 onClick={() => onSelectView("home")}
-                className={`px-3 h-8 rounded-lg text-xs font-bold whitespace-nowrap transition ${
+                className={`h-full inline-flex items-center text-xs font-bold whitespace-nowrap border-b-2 transition ${
                   activeView === "home"
-                    ? "bg-white text-[var(--sf-primary-ink)] border border-[#CBD5E1] shadow-2xs"
-                    : "text-[#334155] hover:text-[#0F172A] hover:bg-white/70"
+                    ? "border-[var(--sf-primary)] text-[var(--sf-primary-ink)]"
+                    : "border-transparent text-[#374151] hover:text-[#111827]"
                 }`}
               >
                 Home
               </button>
+
               <button
                 type="button"
                 onClick={() => {
                   onSelectCategory?.("all");
                   onSelectView("shop");
                 }}
-                className={`px-3 h-8 rounded-lg text-xs font-bold whitespace-nowrap transition ${
+                className={`h-full inline-flex items-center gap-1.5 text-xs font-bold whitespace-nowrap border-b-2 transition ${
                   (activeView === "shop" && selectedCategory === "all") || activeView === "product"
-                    ? "bg-white text-[var(--sf-primary-ink)] border border-[#CBD5E1] shadow-2xs"
-                    : "text-[#334155] hover:text-[#0F172A] hover:bg-white/70"
+                    ? "border-[var(--sf-primary)] text-[var(--sf-primary-ink)]"
+                    : "border-transparent text-[#374151] hover:text-[#111827]"
                 }`}
               >
-                All Medicines ({sf.published_products_count})
+                <span>All Medicines</span>
+                {sf.published_products_count > 0 && (
+                  <span className="text-[11px] font-semibold text-[#6B7280] tabular-nums">
+                    ({sf.published_products_count})
+                  </span>
+                )}
               </button>
 
               {topCategories.length > 0 && (
-                <span className="h-4 w-px bg-[#CBD5E1] mx-1 shrink-0" aria-hidden="true" />
+                <span className="h-3.5 w-px bg-[#E5E7EB] shrink-0" aria-hidden="true" />
               )}
 
               {topCategories.map((cat) => {
@@ -329,10 +320,10 @@ export function SiteHeader({
                       onSelectCategory?.(cat.name);
                       onSelectView("shop");
                     }}
-                    className={`px-3 h-8 rounded-lg text-xs font-semibold whitespace-nowrap transition ${
+                    className={`h-full inline-flex items-center text-xs whitespace-nowrap border-b-2 transition ${
                       isCatActive
-                        ? "bg-white text-[var(--sf-primary-ink)] border border-[#CBD5E1] font-bold shadow-2xs"
-                        : "text-[#475569] hover:text-[#0F172A] hover:bg-white/70"
+                        ? "border-[var(--sf-primary)] text-[var(--sf-primary-ink)] font-bold"
+                        : "border-transparent text-[#4B5563] hover:text-[#111827] font-medium"
                     }`}
                   >
                     {cat.name}
@@ -341,15 +332,15 @@ export function SiteHeader({
               })}
             </div>
 
-            <div className="flex items-center gap-1 shrink-0">
+            <div className="flex items-center gap-4 shrink-0 h-full">
               {hasDoctors && (
                 <button
                   type="button"
                   onClick={() => onSelectView("doctors")}
-                  className={`px-2.5 h-8 rounded-lg text-xs whitespace-nowrap transition ${
+                  className={`h-full inline-flex items-center text-xs font-bold whitespace-nowrap border-b-2 transition ${
                     activeView === "doctors"
-                      ? "font-bold sf-text-brand bg-white border border-[#CBD5E1]"
-                      : "font-bold text-emerald-700 hover:bg-emerald-50"
+                      ? "border-[var(--sf-primary)] text-[var(--sf-primary-ink)]"
+                      : "border-transparent text-emerald-700 hover:text-emerald-800"
                   }`}
                 >
                   Doctors
@@ -359,10 +350,10 @@ export function SiteHeader({
                 <button
                   type="button"
                   onClick={() => onSelectView("services")}
-                  className={`px-2.5 h-8 rounded-lg text-xs whitespace-nowrap transition ${
+                  className={`h-full inline-flex items-center text-xs font-bold whitespace-nowrap border-b-2 transition ${
                     activeView === "services"
-                      ? "font-bold sf-text-brand bg-white border border-[#CBD5E1]"
-                      : "font-bold text-sky-700 hover:bg-sky-50"
+                      ? "border-[var(--sf-primary)] text-[var(--sf-primary-ink)]"
+                      : "border-transparent text-sky-700 hover:text-sky-800"
                   }`}
                 >
                   Lab &amp; Services
@@ -375,10 +366,10 @@ export function SiteHeader({
                     key={item.id}
                     type="button"
                     onClick={() => onSelectView(item.id)}
-                    className={`px-2.5 h-8 rounded-lg text-xs whitespace-nowrap transition ${
+                    className={`h-full inline-flex items-center text-xs whitespace-nowrap border-b-2 transition ${
                       active
-                        ? "font-bold sf-text-brand bg-white border border-[#CBD5E1]"
-                        : "font-medium text-[#475569] hover:text-[#0F172A]"
+                        ? "border-[var(--sf-primary)] text-[var(--sf-primary-ink)] font-bold"
+                        : "border-transparent font-medium text-[#4B5563] hover:text-[#111827]"
                     }`}
                   >
                     {item.label}
@@ -389,40 +380,41 @@ export function SiteHeader({
           </div>
         </nav>
 
-        {/* Mobile Expandable Smart Search Bar */}
-        {mobileSearchOpen && (
-          <div className="md:hidden border-t border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3">
-            <SmartSearchBar
-              value={searchQuery}
-              onChange={onSearchChange}
-              onSubmit={(q) => {
-                setMobileSearchOpen(false);
-                onSubmitSearch(q);
-              }}
-              onSelectProduct={(prod) => {
-                setMobileSearchOpen(false);
-                onOpenProductDetail(prod);
-              }}
-              onQuickAdd={onQuickAddToCart}
-              size="header"
-              placeholder={`Search medicines or salts at ${displayName}…`}
-            />
-          </div>
-        )}
+        {/* Mobile Always-Accessible Search Row */}
+        <div className="md:hidden border-t border-[#F3F4F6] bg-white px-4 py-2.5">
+          <SmartSearchBar
+            value={searchQuery}
+            onChange={onSearchChange}
+            onSubmit={(q) => {
+              setMobileSearchOpen(false);
+              onSubmitSearch(q);
+            }}
+            onSelectProduct={(prod) => {
+              setMobileSearchOpen(false);
+              onOpenProductDetail(prod);
+            }}
+            onQuickAdd={onQuickAddToCart}
+            size="header"
+            placeholder={`Search medicines or salts…`}
+          />
+        </div>
+
+        {/* Keep mobileSearchOpen clean if toggled */}
+        {mobileSearchOpen && null}
       </header>
 
       {/* Mobile Slide-Over Navigation Drawer */}
       {mobileMenuOpen && (
         <div
-          className="fixed inset-0 z-50 bg-[#0F172A]/55 flex justify-end lg:hidden"
+          className="fixed inset-0 z-50 bg-[#0B1220]/55 flex justify-end lg:hidden"
           onClick={() => setMobileMenuOpen(false)}
         >
           <div
-            className="sf-drawer-enter w-full max-w-[320px] bg-white h-full shadow-2xl border-l border-[#E2E8F0] flex flex-col justify-between"
+            className="sf-drawer-enter w-full max-w-[310px] bg-white h-full shadow-2xl border-l border-[#E5E7EB] flex flex-col justify-between"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="overflow-y-auto">
-              <div className="p-5 bg-[#0F172A] text-white flex items-center justify-between gap-3">
+              <div className="p-4 bg-[#0B1220] text-white flex items-center justify-between gap-3">
                 <div className="min-w-0">
                   <p className="sf-heading text-base font-bold truncate">{displayName}</p>
                   <p className="text-xs text-slate-300 truncate">{sf.city}, Pakistan</p>
@@ -431,13 +423,13 @@ export function SiteHeader({
                   type="button"
                   onClick={() => setMobileMenuOpen(false)}
                   aria-label="Close menu"
-                  className="w-9 h-9 rounded-xl bg-white/15 hover:bg-white/25 text-white flex items-center justify-center transition"
+                  className="w-8 h-8 rounded-lg bg-white/15 hover:bg-white/25 text-white flex items-center justify-center transition"
                 >
                   <CloseIcon className="w-4 h-4" />
                 </button>
               </div>
 
-              <nav className="p-4 space-y-1" aria-label="Mobile Navigation">
+              <nav className="p-3 space-y-0.5" aria-label="Mobile Navigation">
                 {[
                   { id: "home" as StorefrontView, label: "Home" },
                   { id: "shop" as StorefrontView, label: "All Medicines Catalog" },
@@ -457,10 +449,10 @@ export function SiteHeader({
                         onSelectView(item.id);
                         setMobileMenuOpen(false);
                       }}
-                      className={`w-full px-3.5 h-11 rounded-xl text-sm text-left flex items-center justify-between transition ${
+                      className={`w-full px-3 h-10 rounded-lg text-sm text-left flex items-center justify-between transition ${
                         active
                           ? "bg-[var(--sf-primary-soft)] sf-text-brand font-bold"
-                          : "text-[#0F172A] font-medium hover:bg-[#F1F5F9]"
+                          : "text-[#111827] font-medium hover:bg-[#F3F4F6]"
                       }`}
                     >
                       <span>{item.label}</span>
@@ -470,8 +462,8 @@ export function SiteHeader({
                 })}
 
                 {topCategories.length > 0 && (
-                  <div className="pt-3 mt-3 border-t border-[#E2E8F0] space-y-1">
-                    <span className="px-3.5 text-[11px] font-bold uppercase tracking-wider text-[#64748B] block pb-1">
+                  <div className="pt-3 mt-3 border-t border-[#E5E7EB] space-y-0.5">
+                    <span className="px-3 text-[11px] font-bold uppercase tracking-wider text-[#6B7280] block pb-1">
                       Departments
                     </span>
                     {topCategories.map((cat) => (
@@ -483,11 +475,11 @@ export function SiteHeader({
                           onSelectView("shop");
                           setMobileMenuOpen(false);
                         }}
-                        className="w-full px-3.5 h-10 rounded-xl text-xs font-semibold text-[#334155] hover:bg-[#F1F5F9] text-left flex items-center justify-between"
+                        className="w-full px-3 h-9 rounded-lg text-xs font-semibold text-[#374151] hover:bg-[#F3F4F6] text-left flex items-center justify-between"
                       >
                         <span className="truncate">{cat.name}</span>
                         {Number(cat.published_product_count || 0) > 0 && (
-                          <span className="text-[11px] text-[#64748B] tabular-nums">
+                          <span className="text-[11px] text-[#6B7280] tabular-nums">
                             {cat.published_product_count}
                           </span>
                         )}
@@ -498,9 +490,9 @@ export function SiteHeader({
               </nav>
             </div>
 
-            <div className="p-4 border-t border-[#E2E8F0] bg-[#F8FAFC] space-y-3 text-xs">
+            <div className="p-4 border-t border-[#E5E7EB] bg-[#F9FAFB] space-y-3 text-xs">
               {sf.address_line && (
-                <div className="flex items-start gap-2 text-[#475569]">
+                <div className="flex items-start gap-2 text-[#4B5563]">
                   <MapPinIcon className="w-4 h-4 shrink-0 mt-0.5 sf-text-brand" />
                   <span>
                     {sf.address_line}, {sf.city}
@@ -511,7 +503,7 @@ export function SiteHeader({
                 {sf.contact_phone && (
                   <a
                     href={`tel:${sf.contact_phone}`}
-                    className="h-10 rounded-xl sf-btn-secondary inline-flex items-center justify-center gap-1.5 font-bold text-xs"
+                    className="h-9 rounded-lg sf-btn-secondary inline-flex items-center justify-center gap-1.5 font-bold text-xs"
                   >
                     <PhoneIcon className="w-3.5 h-3.5 sf-text-brand" />
                     <span>Call</span>
@@ -522,7 +514,7 @@ export function SiteHeader({
                     href={`https://wa.me/${whatsappDigits}`}
                     target="_blank"
                     rel="noreferrer"
-                    className="h-10 rounded-xl sf-btn-primary inline-flex items-center justify-center gap-1.5 font-bold text-xs"
+                    className="h-9 rounded-lg sf-btn-primary inline-flex items-center justify-center gap-1.5 font-bold text-xs"
                   >
                     <WhatsAppIcon className="w-3.5 h-3.5" />
                     <span>WhatsApp</span>

@@ -95,25 +95,22 @@ export function CartDrawer({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-[#0B1D24]/50 flex justify-end"
+      className="fixed inset-0 z-50 bg-[#0B1220]/55 flex justify-end"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
       aria-label="Shopping Cart"
     >
       <aside
-        className="sf-drawer-enter bg-white w-full max-w-md h-full shadow-2xl border-l border-[#DCE7E2] flex flex-col justify-between"
+        className="sf-drawer-enter bg-white w-full max-w-md h-full shadow-2xl border-l border-[#E5E7EB] flex flex-col justify-between"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Crisp Branded Cart Header */}
-        <div
-          className="px-5 py-4 text-white flex items-center justify-between gap-3"
-          style={{ backgroundColor: "var(--sf-forest)" }}
-        >
+        <div className="px-5 py-4 bg-[#0B1220] text-white flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
             <div
-              className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 text-[#0F232C]"
-              style={{ backgroundColor: "var(--sf-warm-accent)" }}
+              className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 text-white"
+              style={{ backgroundColor: "var(--sf-primary)" }}
             >
               <ShoppingBagIcon className="w-4 h-4" />
             </div>
@@ -121,7 +118,7 @@ export function CartDrawer({
               <h2 className="sf-heading text-base font-bold text-white leading-tight">
                 Shopping Cart ({totalItems})
               </h2>
-              <p className="text-xs text-white/75 truncate">{displayName}</p>
+              <p className="text-xs text-slate-300 truncate">{displayName}</p>
             </div>
           </div>
 
@@ -153,15 +150,15 @@ export function CartDrawer({
 
         {/* Free Delivery Progress Strip */}
         {cart.length > 0 && deliveryEnabled && freeThreshold > 0 && (
-          <div className="px-5 py-3 bg-[#EEF7F4] border-b border-[#CDE3DB] space-y-1.5">
-            <div className="flex items-center justify-between text-xs text-[#0F232C]">
+          <div className="px-5 py-3 bg-[#F9FAFB] border-b border-[#E5E7EB] space-y-1.5">
+            <div className="flex items-center justify-between text-xs text-[#111827]">
               <span className="inline-flex items-center gap-1.5 font-medium">
                 <TruckIcon className="w-3.5 h-3.5 sf-text-brand" />
                 {remainingForFreeDelivery > 0 ? (
                   <span>
                     Add{" "}
                     <strong className="font-bold tabular-nums">
-                      PKR {remainingForFreeDelivery.toLocaleString()}
+                      Rs. {remainingForFreeDelivery.toLocaleString()}
                     </strong>{" "}
                     for free delivery
                   </span>
@@ -173,7 +170,7 @@ export function CartDrawer({
                 {progressPct}%
               </span>
             </div>
-            <div className="h-1.5 w-full rounded-full bg-white overflow-hidden">
+            <div className="h-1.5 w-full rounded-full bg-[#E5E7EB] overflow-hidden">
               <div
                 className="h-full rounded-full transition-all duration-300"
                 style={{
@@ -186,7 +183,7 @@ export function CartDrawer({
         )}
 
         {/* Items List with Large Full-Preview Product Images */}
-        <div className="flex-1 overflow-y-auto px-5 divide-y divide-[#EBF1EE]">
+        <div className="flex-1 overflow-y-auto px-5 divide-y divide-[#F3F4F6]">
           {cart.length === 0 ? (
             <div className="py-20 text-center space-y-3.5">
               <div className="w-14 h-14 rounded-2xl bg-[#EEF7F4] border border-[#CDE3DB] flex items-center justify-center mx-auto sf-text-brand">

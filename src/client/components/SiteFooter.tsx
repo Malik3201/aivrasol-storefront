@@ -44,7 +44,7 @@ export function SiteFooter({
   const footerDesc = sanitizePublicCopy(
     branding?.footer_tagline || branding?.tagline,
     sf,
-    `Community pharmacy serving ${sf.city} with counter-verified medicines, surgical supplies, and local healthcare fulfillment.`
+    `Licensed pharmacy serving ${sf.city} with counter-verified medicines, surgical supplies, and local home delivery.`
   );
 
   const scheduleSummary = openingHours?.is_24_hours
@@ -52,14 +52,14 @@ export function SiteFooter({
     : openingHours?.mon_sat || "Mon – Sat: 09:00 AM – 11:00 PM";
 
   return (
-    <footer className="bg-[#0F172A] text-slate-200 border-t border-slate-800">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 sm:py-14">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-10 lg:gap-12">
+    <footer className="bg-[#0B1220] text-[#D1D5DB] border-t border-white/10">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-8 lg:gap-10">
           {/* Column 1: Pharmacy Identity */}
           <div className="lg:col-span-4 space-y-4">
-            <div className="flex items-center gap-3.5">
+            <div className="flex items-center gap-3">
               {branding?.logo_url && !logoFailed ? (
-                <div className="w-11 h-11 rounded-xl bg-white p-1.5 flex items-center justify-center shrink-0 shadow-sm">
+                <div className="w-10 h-10 rounded-lg bg-white p-1.5 flex items-center justify-center shrink-0">
                   <img
                     src={branding.logo_url}
                     alt={displayName}
@@ -69,48 +69,45 @@ export function SiteFooter({
                 </div>
               ) : (
                 <div
-                  className="w-11 h-11 rounded-xl flex items-center justify-center bg-white/12 border border-white/20 relative shrink-0"
+                  className="w-10 h-10 rounded-lg flex items-center justify-center relative shrink-0 text-white"
+                  style={{ backgroundColor: "var(--sf-primary)" }}
                 >
-                  <span className="sf-heading text-xs font-bold text-white">
+                  <span className="sf-heading text-xs font-extrabold">
                     {getPharmacyMonogram(displayName)}
                   </span>
-                  <span
-                    className="absolute -bottom-1 -right-1 w-4 h-4 rounded-md flex items-center justify-center text-[#172B36]"
-                    style={{ backgroundColor: "var(--sf-warm-accent)" }}
-                  >
+                  <span className="absolute -bottom-1 -right-1 w-4 h-4 rounded bg-white text-[#0B1220] flex items-center justify-center">
                     <PharmacyCrossIcon className="w-2.5 h-2.5" />
                   </span>
                 </div>
               )}
               <div>
-                <p className="sf-heading text-lg font-bold text-white leading-tight">
+                <p className="sf-heading text-base font-extrabold text-white leading-tight">
                   {displayName}
                 </p>
-                <p className="text-xs text-[#B9D6CE]">{sf.city}, Pakistan</p>
+                <p className="text-xs text-[#9CA3AF]">{sf.city}, Pakistan</p>
               </div>
             </div>
 
-            <p className="text-sm text-[#C7DFD9] leading-relaxed max-w-sm">{footerDesc}</p>
+            <p className="text-xs sm:text-sm text-[#9CA3AF] leading-relaxed max-w-sm">
+              {footerDesc}
+            </p>
 
             {(sf.pharmacist_name || sf.drug_sale_license_no) && (
-              <div className="pt-1 space-y-1.5 text-xs text-[#B9D6CE]">
+              <div className="pt-1 space-y-1 text-xs text-[#9CA3AF]">
                 {sf.pharmacist_name && (
                   <p className="flex items-center gap-1.5">
-                    <ShieldCheckIcon className="w-3.5 h-3.5 text-[#E6A65B] shrink-0" />
+                    <ShieldCheckIcon className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                     <span>
-                      Pharmacist:{" "}
-                      <strong className="text-white font-semibold">{sf.pharmacist_name}</strong>
+                      Pharmacist: <strong className="text-white">{sf.pharmacist_name}</strong>
                     </span>
                   </p>
                 )}
                 {sf.drug_sale_license_no && (
                   <p className="flex items-center gap-1.5">
-                    <ShieldCheckIcon className="w-3.5 h-3.5 text-[#E6A65B] shrink-0" />
+                    <ShieldCheckIcon className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                     <span>
                       License:{" "}
-                      <strong className="text-white font-mono font-semibold">
-                        {sf.drug_sale_license_no}
-                      </strong>
+                      <strong className="text-white font-mono">{sf.drug_sale_license_no}</strong>
                     </span>
                   </p>
                 )}
@@ -119,134 +116,99 @@ export function SiteFooter({
           </div>
 
           {/* Column 2: Shop & Ordering */}
-          <div className="lg:col-span-2 space-y-3.5">
-            <h3 className="text-xs font-bold uppercase tracking-widest text-[#FFF8ED]">
-              Shop & Orders
+          <div className="lg:col-span-2 space-y-3">
+            <h3 className="text-[11px] font-bold uppercase tracking-widest text-white">
+              Shop &amp; Orders
             </h3>
-            <ul className="space-y-2.5 text-sm text-[#C7DFD9]">
+            <ul className="space-y-2 text-xs sm:text-sm text-[#9CA3AF]">
               <li>
-                <button
-                  type="button"
-                  onClick={() => onSelectView("home")}
-                  className="hover:text-white transition"
-                >
+                <button type="button" onClick={() => onSelectView("home")} className="hover:text-white transition">
                   Home
                 </button>
               </li>
               <li>
-                <button
-                  type="button"
-                  onClick={() => onSelectView("shop")}
-                  className="hover:text-white transition"
-                >
+                <button type="button" onClick={() => onSelectView("shop")} className="hover:text-white transition">
                   Medicines Catalog
                 </button>
               </li>
               <li>
-                <button
-                  type="button"
-                  onClick={() => onSelectView("delivery")}
-                  className="hover:text-white transition"
-                >
-                  Delivery & Pickup
+                <button type="button" onClick={() => onSelectView("delivery")} className="hover:text-white transition">
+                  Delivery &amp; Pickup
                 </button>
               </li>
               <li>
-                <button
-                  type="button"
-                  onClick={() => onSelectView("track")}
-                  className="hover:text-[#E6A65B] font-medium transition"
-                >
-                  Track Online Order
+                <button type="button" onClick={() => onSelectView("track")} className="text-emerald-400 hover:text-emerald-300 font-semibold transition">
+                  Track Order
                 </button>
               </li>
             </ul>
           </div>
 
           {/* Column 3: Pharmacy Info */}
-          <div className="lg:col-span-2 space-y-3.5">
-            <h3 className="text-xs font-bold uppercase tracking-widest text-[#FFF8ED]">
+          <div className="lg:col-span-2 space-y-3">
+            <h3 className="text-[11px] font-bold uppercase tracking-widest text-white">
               Pharmacy
             </h3>
-            <ul className="space-y-2.5 text-sm text-[#C7DFD9]">
+            <ul className="space-y-2 text-xs sm:text-sm text-[#9CA3AF]">
               <li>
-                <button
-                  type="button"
-                  onClick={() => onSelectView("about")}
-                  className="hover:text-white transition"
-                >
+                <button type="button" onClick={() => onSelectView("about")} className="hover:text-white transition">
                   About Us
                 </button>
               </li>
               <li>
-                <button
-                  type="button"
-                  onClick={() => onSelectView("branches")}
-                  className="hover:text-white transition"
-                >
-                  Locations
+                <button type="button" onClick={() => onSelectView("branches")} className="hover:text-white transition">
+                  Store Locations
                 </button>
               </li>
               <li>
-                <button
-                  type="button"
-                  onClick={() => onSelectView("contact")}
-                  className="hover:text-white transition"
-                >
+                <button type="button" onClick={() => onSelectView("contact")} className="hover:text-white transition">
                   Contact Us
                 </button>
               </li>
               <li>
-                <button
-                  type="button"
-                  onClick={() => onSelectView("hours")}
-                  className="hover:text-white transition"
-                >
+                <button type="button" onClick={() => onSelectView("hours")} className="hover:text-white transition">
                   Business Hours
                 </button>
               </li>
             </ul>
           </div>
 
-          {/* Column 4: Contact & Counter Hours */}
-          <div className="lg:col-span-4 space-y-3.5">
-            <h3 className="text-xs font-bold uppercase tracking-widest text-[#FFF8ED]">
-              Counter & Assistance
+          {/* Column 4: Counter Assistance */}
+          <div className="lg:col-span-4 space-y-3">
+            <h3 className="text-[11px] font-bold uppercase tracking-widest text-white">
+              Counter &amp; Support
             </h3>
-            <div className="space-y-3 text-sm text-[#C7DFD9]">
+            <div className="space-y-2.5 text-xs sm:text-sm text-[#9CA3AF]">
               {sf.address_line && (
-                <div className="flex items-start gap-2.5">
-                  <MapPinIcon className="w-4 h-4 shrink-0 mt-0.5 text-[#E6A65B]" />
+                <div className="flex items-start gap-2">
+                  <MapPinIcon className="w-4 h-4 shrink-0 mt-0.5 text-emerald-400" />
                   <span>
                     {sf.address_line}, {sf.city}
                   </span>
                 </div>
               )}
 
-              <div className="flex items-center gap-2.5">
-                <ClockIcon className="w-4 h-4 shrink-0 text-[#E6A65B]" />
+              <div className="flex items-center gap-2">
+                <ClockIcon className="w-4 h-4 shrink-0 text-emerald-400" />
                 <span>{scheduleSummary}</span>
               </div>
 
               {sf.contact_email && (
-                <div className="flex items-center gap-2.5">
-                  <MailIcon className="w-4 h-4 shrink-0 text-[#E6A65B]" />
-                  <a
-                    href={`mailto:${sf.contact_email}`}
-                    className="hover:text-white transition truncate"
-                  >
+                <div className="flex items-center gap-2">
+                  <MailIcon className="w-4 h-4 shrink-0 text-emerald-400" />
+                  <a href={`mailto:${sf.contact_email}`} className="hover:text-white transition truncate">
                     {sf.contact_email}
                   </a>
                 </div>
               )}
 
-              <div className="flex flex-wrap items-center gap-2.5 pt-1">
+              <div className="flex flex-wrap items-center gap-2 pt-1">
                 {sf.contact_phone && (
                   <a
                     href={`tel:${sf.contact_phone}`}
-                    className="h-9 px-3.5 rounded-xl bg-white/10 hover:bg-white/18 border border-white/20 text-white text-xs font-semibold inline-flex items-center gap-1.5 transition tabular-nums"
+                    className="h-9 px-3 rounded-lg bg-white/10 hover:bg-white/15 border border-white/15 text-white text-xs font-semibold inline-flex items-center gap-1.5 transition tabular-nums"
                   >
-                    <PhoneIcon className="w-3.5 h-3.5 text-[#E6A65B]" />
+                    <PhoneIcon className="w-3.5 h-3.5 text-emerald-400" />
                     <span>{sf.contact_phone}</span>
                   </a>
                 )}
@@ -256,7 +218,7 @@ export function SiteFooter({
                     href={`https://wa.me/${whatsappDigits}`}
                     target="_blank"
                     rel="noreferrer"
-                    className="h-9 px-3.5 rounded-xl sf-btn-warm text-xs font-bold inline-flex items-center gap-1.5"
+                    className="h-9 px-3 rounded-lg sf-btn-primary text-xs font-bold inline-flex items-center gap-1.5"
                   >
                     <WhatsAppIcon className="w-3.5 h-3.5" />
                     <span>WhatsApp</span>
@@ -267,33 +229,24 @@ export function SiteFooter({
           </div>
         </div>
 
-        {/* Bottom Legal & Policy Bar */}
-        <div className="mt-12 pt-6 border-t border-white/12 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-xs text-[#A7C8BF]">
+        {/* Bottom Legal Bar */}
+        <div className="mt-10 pt-5 border-t border-white/10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-[#9CA3AF]">
           <div className="space-y-1">
             <p>
-              © {year} <strong className="font-semibold text-white">{displayName}</strong>. All
-              rights reserved.
+              © {year} <strong className="font-semibold text-white">{displayName}</strong>. All rights reserved.
             </p>
             {settings?.legal_disclaimer_text && (
-              <p className="text-[11.5px] text-[#9BBDB3] max-w-2xl">
+              <p className="text-[11px] text-[#6B7280] max-w-2xl">
                 {settings.legal_disclaimer_text}
               </p>
             )}
           </div>
-          <div className="flex items-center gap-5 shrink-0 font-medium text-[#C7DFD9]">
-            <button
-              type="button"
-              onClick={() => onSelectView("privacy")}
-              className="hover:text-white transition"
-            >
+          <div className="flex items-center gap-5 shrink-0 font-medium">
+            <button type="button" onClick={() => onSelectView("privacy")} className="hover:text-white transition">
               Privacy Policy
             </button>
-            <button
-              type="button"
-              onClick={() => onSelectView("terms")}
-              className="hover:text-white transition"
-            >
-              Terms & Conditions
+            <button type="button" onClick={() => onSelectView("terms")} className="hover:text-white transition">
+              Terms &amp; Conditions
             </button>
           </div>
         </div>
