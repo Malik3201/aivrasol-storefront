@@ -1,6 +1,5 @@
 import React from "react";
 import type { PublicStorefrontProduct } from "../../shared/types";
-import { resolveProductStudioVisual } from "../design/editorialAssets";
 import { cleanProductText } from "../design/theme";
 import type { CartItem, ResolvedSellingUnit } from "../types-ui";
 import {
@@ -63,7 +62,7 @@ function formatReadablePackSubtitle(rawPack: string): string {
   return trimmed;
 }
 
-export function ProductCard({
+export const ProductCard = React.memo(function ProductCard({
   product,
   units,
   activeUnit,
@@ -83,6 +82,10 @@ export function ProductCard({
 }: ProductCardProps) {
   const [imgFailed, setImgFailed] = React.useState(false);
 
+  React.useEffect(() => {
+    setImgFailed(false);
+  }, [product.primary_image_url]);
+
   const isProductOut =
     product.availability_status === "out_of_stock" ||
     product.availability_status === "unavailable";
@@ -91,6 +94,9 @@ export function ProductCard({
   const effectivePrice = Number(activeUnit.price_pkr ?? 0);
   const comparePrice = Number(product.compare_at_price_pkr || 0);
   const hasDiscount = activeUnit.is_default && comparePrice > effectivePrice;
+  const discountPct = hasDiscount
+    ? Math.max(1, Math.round(((comparePrice - effectivePrice) / comparePrice) * 100))
+    : 0;
 
   const cleanBrand = cleanProductText(product.brand_name);
   const cleanCategory =
@@ -105,18 +111,9 @@ export function ProductCard({
     cleanProductText(product.unit_label);
 
   const rawPackLine =
-    [cleanForm, cleanGeneric, cleanPacking].filter(Boolean).join(" • ") ||
+    [cleanForm, cleanGeneric, cleanPacking].filter(Boolean).join(" · ") ||
     activeUnit.unit_name;
   const readablePackLine = formatReadablePackSubtitle(rawPackLine);
-
-  const studioSpec = resolveProductStudioVisual({
-    name: product.name,
-    dosageForm: product.dosage_form,
-    categoryName: product.category_name || product.brand_name,
-    packingLabel: product.packing_label,
-    requiresPrescription: product.requires_prescription,
-    availabilityStatus: product.availability_status,
-  });
 
   const isGenericPosGroupBrand =
     !!cleanBrand && /^(surgical items|general|general medicines|medicines)$/i.test(cleanBrand);
@@ -127,233 +124,207 @@ export function ProductCard({
       ? cleanBrand
       : null;
 
-  // Top-right media pill: Rx takes clinical priority, else strength/SKU or distinct brand
-  const topMediaRightBadge = product.requires_prescription
-    ? "Rx Required"
-    : cleanStrength || distinctBrand || null;
-
   return (
     <article
       data-testid="public-product-card"
-      className="h-full flex flex-col sf-product-card-v2 rounded-[26px] overflow-hidden group"
+      className="h-full flex flex-col sf-product-card-v2 rounded-2xl overflow-hidden group"
     >
-      {/* 1. Inset Frosted Glass Media Frame */}
-      <div className="p-2 pb-0 relative z-10">
-        <div
-          onClick={() => onOpenProductDetail(product)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              onOpenProductDetail(product);
-            }
-          }}
-          role="button"
-          tabIndex={0}
-          aria-label={`View details for ${product.name}`}
-          style={{ backgroundColor: studioSpec.stageBg }}
-          className="relative aspect-[4/3] w-full rounded-[19px] ring-1 ring-white/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.95),0_6px_16px_-8px_rgba(14,81,70,0.12)] cursor-pointer overflow-hidden flex items-center justify-center focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--sf-primary)]"
-        >
-          {product.primary_image_url && !imgFailed ? (
-            <div className="w-full h-full p-5 pt-11 pb-7 flex items-center justify-center">
-              <img
-                src={product.primary_image_url}
-                alt={product.name}
-                loading="lazy"
-                decoding="async"
-                onError={() => setImgFailed(true)}
-                className="max-h-full max-w-full object-contain rounded-xl drop-shadow-[0_10px_18px_rgba(17,36,45,0.13)] transition-transform duration-300 group-hover:scale-[1.04]"
-              />
-            </div>
-          ) : (
-            <MedicinePlaceholderIllustration
-              name={product.name}
-              dosageForm={product.dosage_form}
-              categoryName={product.category_name}
-              brandName={product.brand_name}
-              packingLabel={product.packing_label}
-              requiresPrescription={product.requires_prescription}
-              availabilityStatus={product.availability_status}
-              showSpecBadge={false}
-              className="w-full h-full"
-            />
-          )}
-
-          {/* Soft Glass Specular & Bottom Mist Blend */}
-          <div
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-0 bg-gradient-to-b from-white/25 via-transparent to-white/40"
+      {/* 1. Pure-White Full-Preview Media Stage (Zero Nested Box, Crisp Full Recognition) */}
+      <div
+        onClick={() => onOpenProductDetail(product)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onOpenProductDetail(product);
+          }
+        }}
+        role="button"
+        tabIndex={0}
+        aria-label={`View details for ${product.name}`}
+        className="relative aspect-[4/3] w-full bg-white border-b border-[#EDF3F0] cursor-pointer overflow-hidden flex items-center justify-center p-2 sm:p-2.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--sf-primary)]"
+      >
+        {product.primary_image_url && !imgFailed ? (
+          <img
+            src={product.primary_image_url}
+            alt={product.name}
+            loading="lazy"
+            decoding="async"
+            onError={() => setImgFailed(true)}
+            className="w-full h-full object-contain transition-transform duration-300 ease-out group-hover:scale-[1.06]"
           />
+        ) : (
+          <MedicinePlaceholderIllustration
+            name={product.name}
+            dosageForm={product.dosage_form}
+            categoryName={product.category_name}
+            brandName={product.brand_name}
+            packingLabel={product.packing_label}
+            requiresPrescription={product.requires_prescription}
+            availabilityStatus={product.availability_status}
+            showSpecBadge={false}
+            className="w-full h-full"
+          />
+        )}
 
-          {/* Top Frosted Glass Status & Spec Pills */}
-          <div className="absolute top-2.5 left-2.5 right-2.5 flex items-center justify-between gap-2 pointer-events-none">
+        {/* Top-Left Compact Availability Indicator */}
+        <div className="absolute top-2.5 left-2.5 right-2.5 flex items-start justify-between gap-1.5 pointer-events-none">
+          <span
+            className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10.5px] font-bold border shadow-2xs ${
+              isUnitOut
+                ? "bg-slate-50 text-slate-600 border-slate-200"
+                : product.availability_status === "low_stock"
+                  ? "bg-[#FFF8EB] text-[#92580E] border-[#F3D9A4]"
+                  : "bg-[#EDFAF4] text-[#0C684C] border-[#BCEAD5]"
+            }`}
+          >
             <span
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold backdrop-blur-md border shadow-[0_2px_8px_rgba(14,81,70,0.08),inset_0_1px_0_rgba(255,255,255,0.92)] ${
+              className={`w-1.5 h-1.5 rounded-full shrink-0 ${
                 isUnitOut
-                  ? "bg-white/75 text-slate-600 border-white/90"
+                  ? "bg-slate-400"
                   : product.availability_status === "low_stock"
-                    ? "bg-[#FFF4E0]/82 text-[#8F5B14] border-white/90"
-                    : "bg-[#E2F7EE]/80 text-[#0D674B] border-white/90"
+                    ? "bg-[#D98E2B]"
+                    : "bg-[#128761]"
               }`}
-            >
-              <span
-                className={`w-1.5 h-1.5 rounded-full ${
-                  isUnitOut
-                    ? "bg-slate-400"
-                    : product.availability_status === "low_stock"
-                      ? "bg-[#D9912B]"
-                      : "bg-[#12805C]"
-                }`}
-              />
-              <span>
-                {isUnitOut
-                  ? "Out of Stock"
-                  : product.availability_status === "low_stock"
-                    ? "Low Stock"
-                    : product.availability_unconfirmed
-                      ? "Counter Check"
-                      : "In Stock"}
-              </span>
+            />
+            <span>
+              {isUnitOut
+                ? "Out of Stock"
+                : product.availability_status === "low_stock"
+                  ? "Low Stock"
+                  : product.availability_unconfirmed
+                    ? "Counter Check"
+                    : "In Stock"}
             </span>
+          </span>
 
-            {topMediaRightBadge && (
-              <span
-                className={`px-2.5 py-1 rounded-full text-[11px] font-bold backdrop-blur-md border shadow-[0_2px_8px_rgba(14,81,70,0.07),inset_0_1px_0_rgba(255,255,255,0.92)] truncate max-w-[120px] ${
-                  product.requires_prescription
-                    ? "bg-rose-50/85 text-rose-700 border-white/90"
-                    : "bg-white/70 text-[#1B333E] border-white/90"
-                }`}
-              >
-                {topMediaRightBadge}
-              </span>
-            )}
-          </div>
+          {/* Top-Right Priority Clinical / Savings Badge Only */}
+          {product.requires_prescription ? (
+            <span className="px-2 py-0.5 rounded-full text-[10.5px] font-bold bg-rose-50 text-rose-700 border border-rose-200 shadow-2xs">
+              Rx
+            </span>
+          ) : hasDiscount ? (
+            <span className="px-2 py-0.5 rounded-full text-[10.5px] font-bold bg-[#0E5146] text-white shadow-2xs tabular-nums">
+              -{discountPct}%
+            </span>
+          ) : null}
         </div>
 
-        {/* Floating Frosted Spec Pill Overlapping Media Seam */}
+        {/* Subtle Hover View Cue */}
         <span
-          className={`pointer-events-none absolute -bottom-2.5 right-4 z-20 px-3 py-1 rounded-full text-[10.5px] font-bold tracking-wide backdrop-blur-md border border-white/95 shadow-[0_4px_12px_rgba(14,81,70,0.1),inset_0_1px_0_#ffffff] ${
-            studioSpec.specBadgeTone === "warm"
-              ? "bg-[#FFF3DE]/86 text-[#7D4E14]"
-              : studioSpec.specBadgeTone === "teal"
-                ? "bg-[#E2F5F1]/86 text-[#0E5146]"
-                : "bg-white/82 text-[#155749]"
-          }`}
+          aria-hidden="true"
+          className="pointer-events-none hidden sm:inline-flex items-center px-3 py-1 rounded-full bg-[#0F232C]/85 text-white text-[11px] font-semibold absolute bottom-2.5 left-1/2 -translate-x-1/2 opacity-0 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-200"
         >
-          {studioSpec.specBadge}
+          View Details
         </span>
       </div>
 
-      {/* 2. Translucent Frosted Glass Card Body */}
-      <div className="px-4 sm:px-5 pt-4 pb-4 sm:pb-5 flex-1 flex flex-col justify-between gap-4 relative z-10">
-        <div className="space-y-2.5">
-          {/* Category Eyebrow & Strength Pill */}
-          <div className="flex items-center justify-between gap-2 pr-1">
-            <span className="font-bold uppercase tracking-wider text-[11px] text-[#15443D] truncate">
+      {/* 2. Clean Structured Card Body */}
+      <div className="p-3.5 sm:p-4 flex-1 flex flex-col justify-between gap-3">
+        <div className="space-y-2">
+          {/* Category Eyebrow & Strength Chip */}
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-bold uppercase tracking-wider text-[10.5px] text-[#0E5146] truncate">
               {cleanCategory}
+              {distinctBrand ? ` · ${distinctBrand}` : ""}
             </span>
             {cleanStrength && (
-              <span className="px-2.5 py-0.5 rounded-md sf-glass-pill text-[#1B333E] font-mono text-[10.5px] font-bold shrink-0">
+              <span className="px-2 py-0.5 rounded-md bg-[#F2F6F4] border border-[#DCE7E2] text-[#28414C] font-mono text-[10px] font-bold shrink-0">
                 {cleanStrength}
               </span>
             )}
           </div>
 
-          {/* Product Name & Pack Subtitle */}
+          {/* Product Title & Composition / Pack Subtitle */}
           <div className="space-y-1">
-            <h3
-              onClick={() => onOpenProductDetail(product)}
-              className="sf-heading text-[18px] sm:text-[19px] font-extrabold text-[#0F222B] leading-snug line-clamp-2 min-h-[2.8rem] cursor-pointer group-hover:text-[var(--sf-primary-ink)] transition-colors"
-            >
-              {product.name}
+            <h3 className="sf-heading text-[15.5px] sm:text-[16px] font-bold text-[#0F232C] leading-[1.32] line-clamp-2 min-h-[2.65rem]">
+              <button
+                type="button"
+                onClick={() => onOpenProductDetail(product)}
+                className="text-left w-full hover:text-[var(--sf-primary-ink)] transition-colors focus:outline-none focus-visible:underline"
+              >
+                {product.name}
+              </button>
             </h3>
-            <p className="text-[12.5px] font-medium text-[#465E6A] truncate">
+            <p className="text-[12px] text-[#5B717D] truncate" title={readablePackLine}>
               {readablePackLine}
             </p>
           </div>
 
-          {/* 3. Glassy Selling-Unit Selection Zone */}
-          <div className="pt-1 min-h-[68px] flex flex-col justify-between space-y-1.5">
-            <span className="text-[11px] font-semibold text-[#4E6672] block">
-              {units.length > 1 ? "Select Selling Unit" : "Selling Unit"}
-            </span>
-
-            {units.length > 1 ? (
-              <div className="space-y-1.5" data-testid="product-unit-selector">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {units.map((u) => {
-                    const selected = u.unit_id === activeUnit.unit_id;
-                    const uOut = isProductOut || u.in_stock === false;
-                    return (
-                      <button
-                        key={u.unit_id}
-                        type="button"
-                        onClick={() => onSelectUnit(product.id, u.unit_id)}
-                        title={`${u.label || u.unit_name} — PKR ${Number(u.price_pkr).toLocaleString()}`}
-                        className={`h-8 px-3.5 rounded-xl text-xs font-bold transition ${
-                          selected
-                            ? "sf-glass-unit-active"
-                            : uOut
-                              ? "bg-white/40 text-slate-400 border border-white/60 line-through"
-                              : "sf-glass-unit text-[#18313C]"
-                        }`}
-                      >
-                        {u.unit_name}
-                      </button>
-                    );
-                  })}
-                </div>
-                {convertedStockText && (
-                  <p
-                    className={`text-[11.5px] font-semibold inline-flex items-center gap-1 ${
-                      isUnitOut ? "text-rose-600" : "text-[#2F4B57]"
-                    }`}
-                  >
-                    <span>{convertedStockText}</span>
-                    {!isUnitOut && (
-                      <CheckCircleIcon className="w-3.5 h-3.5 text-[#12805C] shrink-0" />
-                    )}
-                  </p>
-                )}
+          {/* 3. Compact Selling-Unit & Stock Row */}
+          {units.length > 1 ? (
+            <div className="pt-1 space-y-1.5" data-testid="product-unit-selector">
+              <div className="flex flex-wrap items-center gap-1.5">
+                {units.map((u) => {
+                  const selected = u.unit_id === activeUnit.unit_id;
+                  const uOut = isProductOut || u.in_stock === false;
+                  return (
+                    <button
+                      key={u.unit_id}
+                      type="button"
+                      onClick={() => onSelectUnit(product.id, u.unit_id)}
+                      title={`${u.label || u.unit_name} — PKR ${Number(u.price_pkr).toLocaleString()}`}
+                      className={`h-7 px-2.5 rounded-lg text-[11.5px] font-bold transition ${
+                        selected
+                          ? "sf-glass-unit-active"
+                          : uOut
+                            ? "bg-slate-50 text-slate-400 border border-slate-200 line-through"
+                            : "sf-glass-unit text-[#17303B]"
+                      }`}
+                    >
+                      {u.unit_name}
+                    </button>
+                  );
+                })}
               </div>
-            ) : (
-              <div className="flex items-center justify-between gap-2 pt-0.5">
-                <span className="inline-flex items-center h-8 px-3.5 rounded-xl bg-[#CFEAE2]/75 backdrop-blur-sm border border-white/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_0_0_1px_rgba(128,190,174,0.45)] text-[#0D4B41] text-xs font-bold truncate">
-                  {activeUnit.unit_name}
+              {convertedStockText && (
+                <p
+                  className={`text-[11px] font-semibold inline-flex items-center gap-1 ${
+                    isUnitOut ? "text-rose-600" : "text-[#496370]"
+                  }`}
+                >
+                  {!isUnitOut && (
+                    <CheckCircleIcon className="w-3.5 h-3.5 text-[#128761] shrink-0" />
+                  )}
+                  <span>{convertedStockText}</span>
+                </p>
+              )}
+            </div>
+          ) : (
+            <div className="pt-1 flex items-center justify-between gap-2 text-[11px]">
+              <span className="inline-flex items-center h-6 px-2.5 rounded-md bg-[#EEF6F3] border border-[#D3E7DF] text-[#0E5146] font-bold truncate">
+                {activeUnit.unit_name}
+              </span>
+              {convertedStockText && (
+                <span
+                  className={`font-semibold inline-flex items-center gap-1 truncate ${
+                    isUnitOut ? "text-rose-600" : "text-[#4A6370]"
+                  }`}
+                >
+                  {!isUnitOut && (
+                    <CheckCircleIcon className="w-3.5 h-3.5 text-[#128761] shrink-0" />
+                  )}
+                  <span className="truncate">{convertedStockText}</span>
                 </span>
-                {convertedStockText && (
-                  <span
-                    className={`px-2.5 py-1 rounded-full text-[11px] font-semibold inline-flex items-center gap-1 shrink-0 ${
-                      isUnitOut
-                        ? "bg-rose-50/85 text-rose-600 border border-rose-200"
-                        : "sf-glass-pill text-[#243F4B]"
-                    }`}
-                  >
-                    <span>{convertedStockText}</span>
-                    {!isUnitOut && (
-                      <CheckCircleIcon className="w-3.5 h-3.5 text-[#12805C] shrink-0" />
-                    )}
-                  </span>
-                )}
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          )}
         </div>
 
-        {/* 4. Frosted Hairline + Price + Glassy Stepper + Glossy CTA */}
-        <div className="pt-3.5 border-t border-white/80 shadow-[0_-1px_0_rgba(14,81,70,0.06)] space-y-3">
+        {/* 4. Price + Fast Add-to-Cart Footer */}
+        <div className="pt-3 border-t border-[#EDF3F0] space-y-2.5">
           <div className="flex items-baseline justify-between gap-2">
-            <div className="flex items-baseline gap-1.5">
-              <span className="sf-heading sf-price text-[20px] sm:text-[21px] font-extrabold text-[#0F222B] tracking-tight">
+            <div className="flex items-baseline gap-1.5 min-w-0">
+              <span className="sf-heading sf-price text-[18px] sm:text-[19px] font-extrabold text-[#0F232C] tracking-tight">
                 PKR {effectivePrice.toLocaleString()}
               </span>
               {hasDiscount && (
-                <span className="text-xs text-[#7D919D] line-through tabular-nums">
+                <span className="text-[11.5px] text-[#8396A1] line-through tabular-nums">
                   PKR {comparePrice.toLocaleString()}
                 </span>
               )}
             </div>
-            <span className="text-xs font-semibold text-[#4B636F] truncate">
-              per {activeUnit.unit_name}
+            <span className="text-[11.5px] font-medium text-[#5A707C] shrink-0">
+              / {activeUnit.unit_name}
             </span>
           </div>
 
@@ -370,7 +341,7 @@ export function ProductCard({
                 }
               />
               <div className="flex items-center gap-1.5">
-                <span className="px-2.5 py-1.5 rounded-xl text-[11px] font-bold sf-glass-pill text-[#0E5146] whitespace-nowrap">
+                <span className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-[#EAF5F1] text-[#0E5146] border border-[#C6E1D7] whitespace-nowrap">
                   In Cart
                 </span>
                 <button
@@ -379,7 +350,7 @@ export function ProductCard({
                   title="Remove from cart"
                   aria-label={`Remove ${product.name} from cart`}
                   data-testid="card-remove-cart-btn"
-                  className="w-9 h-9 rounded-full flex items-center justify-center text-rose-600 bg-rose-50/85 hover:bg-rose-100 border border-white/90 shadow-2xs transition shrink-0"
+                  className="w-8 h-8 rounded-lg flex items-center justify-center text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition shrink-0"
                 >
                   <TrashIcon className="w-3.5 h-3.5" />
                 </button>
@@ -390,7 +361,7 @@ export function ProductCard({
               type="button"
               disabled
               data-testid="add-to-cart-btn"
-              className="w-full h-10 rounded-full text-xs font-bold bg-white/55 text-[#8899A4] border border-white/80 cursor-not-allowed"
+              className="w-full h-9 rounded-xl text-xs font-bold bg-[#F3F6F5] text-[#8698A3] border border-[#E2EAE6] cursor-not-allowed"
             >
               Out of Stock
             </button>
@@ -413,7 +384,7 @@ export function ProductCard({
                   onChangeDraftQty(product.id, 1);
                 }}
                 data-testid="add-to-cart-btn"
-                className="flex-1 min-w-0 h-[38px] px-3.5 rounded-full sf-glass-cta text-xs font-bold inline-flex items-center justify-center gap-1.5 truncate"
+                className="flex-1 min-w-0 h-[36px] px-3 rounded-xl sf-glass-cta text-xs font-bold inline-flex items-center justify-center gap-1.5 truncate"
               >
                 <ShoppingBagIcon className="w-3.5 h-3.5 shrink-0" />
                 <span className="truncate">
@@ -426,4 +397,4 @@ export function ProductCard({
       </div>
     </article>
   );
-}
+});

@@ -65,6 +65,15 @@ export function SiteHeader({
     setLogoFailed(false);
   }, [branding?.logo_url]);
 
+  useEffect(() => {
+    if (!mobileMenuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMobileMenuOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [mobileMenuOpen]);
+
   const hasVerifiedLicense = Boolean(sf.drug_sale_license_no && sf.drug_sale_license_no.trim());
   const showLicenseBadge =
     hasVerifiedLicense && Number(branding?.show_verified_license_badge ?? 1) === 1;
@@ -128,8 +137,8 @@ export function SiteHeader({
         </div>
       )}
 
-      {/* Main Sticky Global Header */}
-      <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-[#DBE5E0] shadow-2xs">
+      {/* Main Sticky Global Header (Lightweight Solid Surface — Zero GPU Scroll Lag) */}
+      <header className="sticky top-0 z-30 bg-white border-b border-[#E1EAE5] shadow-[0_1px_4px_rgba(15,35,44,0.04)]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 sm:h-[76px] flex items-center justify-between gap-3 lg:gap-6">
           {/* Left: Pharmacy Brand Lockup */}
           <button
@@ -214,29 +223,44 @@ export function SiteHeader({
             })}
           </nav>
 
-          {/* Right: Search, Cart & Mobile Menu (Uniform 42px Desktop / 40px Mobile Controls) */}
+          {/* Right: Live Instant Search, Cart & Mobile Menu */}
           <div className="flex items-center gap-2 shrink-0">
-            {/* Desktop Search Trigger */}
-            <button
-              type="button"
-              onClick={() => {
+            {/* Inline Desktop Instant Medicine Search */}
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
                 if (activeView !== "shop") {
-                  onSelectView("shop");
+                  onSubmitSearch();
                 }
-                setTimeout(() => {
-                  const el = document.querySelector<HTMLInputElement>(
-                    '[data-testid="catalog-search-input"]'
-                  );
-                  el?.focus();
-                }, 60);
               }}
-              title="Search medicines"
-              aria-label="Search medicines"
-              className="hidden md:inline-flex items-center gap-2 h-[42px] px-3.5 rounded-xl bg-[#F4F7F5] hover:bg-[#EBF1EE] border border-[#DBE5E0] text-xs font-medium text-[#4D616E] transition"
+              className="hidden md:flex items-center relative"
             >
-              <SearchIcon className="w-4 h-4 text-[var(--sf-primary-ink)]" />
-              <span className="hidden xl:inline pr-2">Search medicines…</span>
-            </button>
+              <SearchIcon className="w-4 h-4 text-[#0E5146] absolute left-3 pointer-events-none" />
+              <input
+                type="search"
+                value={searchQuery}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  onSearchChange(val);
+                  if (activeView !== "shop" && val.trim().length > 0) {
+                    onSelectView("shop");
+                  }
+                }}
+                placeholder="Search medicines…"
+                aria-label="Search medicines"
+                className="h-[40px] w-44 xl:w-56 pl-9 pr-8 rounded-xl bg-[#F4F7F6] hover:bg-[#EDF3F0] focus:bg-white border border-[#DCE6E1] focus:border-[var(--sf-primary)] focus:ring-2 focus:ring-[var(--sf-primary-soft)] focus:outline-none text-xs font-medium text-[#0F232C] placeholder:text-[#6B7F8B] transition-all"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => onSearchChange("")}
+                  aria-label="Clear header search"
+                  className="absolute right-2 w-6 h-6 rounded-md hover:bg-[#E6EFEA] flex items-center justify-center text-[#546A76]"
+                >
+                  <CloseIcon className="w-3 h-3" />
+                </button>
+              )}
+            </form>
 
             {/* Mobile Search Toggle */}
             <button

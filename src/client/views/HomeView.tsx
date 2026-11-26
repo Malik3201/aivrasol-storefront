@@ -686,24 +686,8 @@ export function HomeView({
                                 key={prod.id}
                                 className="px-3.5 py-2.5 sm:px-4 sm:py-3 flex items-center justify-between gap-3 hover:bg-[#F7FBF9] transition-colors"
                               >
-                                <div className="min-w-0 flex-1">
-                                  <div className="flex items-center gap-2 min-w-0">
-                                    <span
-                                      title={
-                                        preview.isOut
-                                          ? "Out of stock"
-                                          : preview.isLow
-                                            ? "Low stock"
-                                            : "In stock"
-                                      }
-                                      className={`w-2 h-2 rounded-full shrink-0 ${
-                                        preview.isOut
-                                          ? "bg-slate-400"
-                                          : preview.isLow
-                                            ? "bg-amber-500"
-                                            : "bg-emerald-500"
-                                      }`}
-                                    />
+                                <div className="flex items-center gap-3 min-w-0 flex-1">
+                                  {prod.primary_image_url ? (
                                     <button
                                       type="button"
                                       onClick={() =>
@@ -711,30 +695,67 @@ export function HomeView({
                                           ? onOpenProductDetail(prod)
                                           : onSelectView("shop")
                                       }
-                                      className="text-[13.5px] font-bold text-[#132630] hover:text-[#0E5146] truncate text-left transition-colors"
+                                      className="w-11 h-11 rounded-lg bg-white border border-[#E1EAE5] p-0.5 flex items-center justify-center shrink-0 overflow-hidden hover:border-[var(--sf-primary)] transition"
                                     >
-                                      {prod.name}
+                                      <img
+                                        src={prod.primary_image_url}
+                                        alt={prod.name}
+                                        loading="lazy"
+                                        decoding="async"
+                                        className="w-full h-full object-contain"
+                                      />
                                     </button>
-                                    {strengthText && (
-                                      <span className="hidden sm:inline-block px-1.5 py-0.5 rounded bg-[#EFF5F2] text-[10.5px] font-semibold text-[#4F6571] shrink-0">
-                                        {strengthText}
-                                      </span>
-                                    )}
-                                    {Boolean(prod.requires_prescription) && (
-                                      <span className="px-1.5 py-0.5 rounded bg-amber-50 border border-amber-200 text-[10px] font-extrabold text-amber-800 shrink-0">
-                                        Rx
-                                      </span>
-                                    )}
-                                  </div>
+                                  ) : null}
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <span
+                                        title={
+                                          preview.isOut
+                                            ? "Out of stock"
+                                            : preview.isLow
+                                              ? "Low stock"
+                                              : "In stock"
+                                        }
+                                        className={`w-2 h-2 rounded-full shrink-0 ${
+                                          preview.isOut
+                                            ? "bg-slate-400"
+                                            : preview.isLow
+                                              ? "bg-amber-500"
+                                              : "bg-emerald-500"
+                                        }`}
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          onOpenProductDetail
+                                            ? onOpenProductDetail(prod)
+                                            : onSelectView("shop")
+                                        }
+                                        className="text-[13.5px] font-bold text-[#132630] hover:text-[#0E5146] truncate text-left transition-colors"
+                                      >
+                                        {prod.name}
+                                      </button>
+                                      {strengthText && (
+                                        <span className="hidden sm:inline-block px-1.5 py-0.5 rounded bg-[#EFF5F2] text-[10.5px] font-semibold text-[#4F6571] shrink-0">
+                                          {strengthText}
+                                        </span>
+                                      )}
+                                      {Boolean(prod.requires_prescription) && (
+                                        <span className="px-1.5 py-0.5 rounded bg-amber-50 border border-amber-200 text-[10px] font-extrabold text-amber-800 shrink-0">
+                                          Rx
+                                        </span>
+                                      )}
+                                    </div>
 
-                                  <div className="mt-0.5 pl-4 text-[11.5px] text-[#607481] flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-                                    <span className="truncate max-w-[130px] sm:max-w-none">
-                                      {categoryText}
-                                    </span>
-                                    <span aria-hidden="true">•</span>
-                                    <span className="font-medium text-[#3E5561]">
-                                      Units: {preview.unitNames.slice(0, 3).join(" · ")}
-                                    </span>
+                                    <div className="mt-0.5 pl-4 text-[11.5px] text-[#607481] flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                                      <span className="truncate max-w-[130px] sm:max-w-none">
+                                        {categoryText}
+                                      </span>
+                                      <span aria-hidden="true">•</span>
+                                      <span className="font-medium text-[#3E5561]">
+                                        Units: {preview.unitNames.slice(0, 3).join(" · ")}
+                                      </span>
+                                    </div>
                                   </div>
                                 </div>
 
@@ -1162,22 +1183,8 @@ export function HomeView({
       {/* =================================================================== */}
       {/* SECTION 3: FEATURED MEDICINES & HEALTHCARE SUPPLIES                 */}
       {/* =================================================================== */}
-      <section className="sf-catalog-showcase-bg relative overflow-hidden border-b border-[#CFE5DD]">
-        {/* Ambient Mint-Aqua & Warm Pearl Light Blooms Behind Frosted Glass Cards */}
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute -left-24 top-1/3 w-96 h-96 rounded-full bg-[#64D6BA]/38 blur-3xl"
-        />
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute -right-20 top-16 w-96 h-96 rounded-full bg-[#77DCD0]/38 blur-3xl"
-        />
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute left-1/3 bottom-6 w-[28rem] h-72 rounded-full bg-[#FCE0B6]/42 blur-3xl"
-        />
-
-        <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-12 sm:py-16 space-y-7 relative z-10">
+      <section className="sf-catalog-showcase-bg relative border-b border-[#E1EAE5]">
+        <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-12 sm:py-16 space-y-7">
           <div className="flex flex-wrap items-end justify-between gap-4">
             <div className="space-y-1.5">
               <span className="inline-block px-3 py-1 rounded-md bg-[#0E5146] text-white text-[11px] font-bold uppercase tracking-wider shadow-2xs">

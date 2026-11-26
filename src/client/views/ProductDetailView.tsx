@@ -52,6 +52,7 @@ interface ProductDetailViewProps {
   onUpdateCartQty: (cartKey: string, nextQty: number) => void;
   onRemoveFromCart: (cartKey: string) => void;
   onSelectView: (view: StorefrontView) => void;
+  onBackToCatalog?: () => void;
   onSelectCategory: (cat: string) => void;
   onShowToast: (msg: string) => void;
   renderProductCard: (prod: PublicStorefrontProduct) => React.ReactNode;
@@ -77,6 +78,7 @@ export function ProductDetailView({
   onUpdateCartQty,
   onRemoveFromCart,
   onSelectView,
+  onBackToCatalog,
   onSelectCategory,
   onShowToast,
   renderProductCard,
@@ -107,10 +109,29 @@ export function ProductDetailView({
   const [selectedImageUrl, setSelectedImageUrl] = useState<string | null>(
     galleryImages[0]?.url || null
   );
+  const [lightboxOpen, setLightboxOpen] = useState(false);
 
   useEffect(() => {
     setSelectedImageUrl(galleryImages[0]?.url || null);
+    setLightboxOpen(false);
   }, [product.id, galleryImages]);
+
+  useEffect(() => {
+    if (!lightboxOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setLightboxOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [lightboxOpen]);
+
+  const handleBack = () => {
+    if (onBackToCatalog) {
+      onBackToCatalog();
+    } else {
+      onSelectView("shop");
+    }
+  };
 
   const isProductOut =
     product.availability_status === "out_of_stock" ||
@@ -153,8 +174,8 @@ export function ProductDetailView({
             <ChevronRightIcon className="w-3.5 h-3.5 text-[#8899A4]" />
             <button
               type="button"
-              onClick={() => onSelectView("shop")}
-              className="hover:text-[#172B36] transition font-medium"
+              onClick={handleBack}
+              className="hover:text-[#0F232C] transition font-medium"
             >
               Medicines
             </button>
@@ -167,22 +188,23 @@ export function ProductDetailView({
                     onSelectCategory(cleanCategory);
                     onSelectView("shop");
                   }}
-                  className="hover:text-[#172B36] transition font-medium"
+                  className="hover:text-[#0F232C] transition font-medium"
                 >
                   {cleanCategory}
                 </button>
               </>
             )}
             <ChevronRightIcon className="w-3.5 h-3.5 text-[#8899A4]" />
-            <span className="text-[#172B36] font-semibold truncate max-w-[190px] sm:max-w-xs">
+            <span className="text-[#0F232C] font-semibold truncate max-w-[190px] sm:max-w-xs">
               {product.name}
             </span>
           </nav>
 
           <button
             type="button"
-            onClick={() => onSelectView("shop")}
-            className="inline-flex items-center gap-1.5 font-semibold sf-text-brand hover:underline"
+            onClick={handleBack}
+            data-testid="product-back-to-catalog"
+            className="inline-flex items-center gap-1.5 font-bold sf-text-brand hover:underline"
           >
             <ArrowLeftIcon className="w-3.5 h-3.5" />
             <span>Back to Catalog</span>
@@ -191,18 +213,34 @@ export function ProductDetailView({
       </div>
 
       {/* Main Product Showcase */}
-      <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8 sm:py-10 space-y-12">
-        <div className="sf-card rounded-3xl p-5 sm:p-8 lg:p-10 grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12">
-          {/* Left Column: Product Media Stage + Pharmacy Fulfillment Strip */}
+      <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-7 sm:py-9 space-y-10">
+        <div className="sf-card rounded-3xl p-5 sm:p-7 lg:p-9 grid grid-cols-1 lg:grid-cols-12 gap-7 lg:gap-10">
+          {/* Left Column: Pure-White Full-Preview Media Stage + Zoom Lightbox */}
           <div className="lg:col-span-5 space-y-4">
-            <div className="relative w-full aspect-[4/3] rounded-2xl bg-white border border-[#DBE5E0] overflow-hidden flex items-center justify-center">
+            <div
+              onClick={() => {
+                if (selectedImageUrl) setLightboxOpen(true);
+              }}
+              onKeyDown={(e) => {
+                if (selectedImageUrl && (e.key === "Enter" || e.key === " ")) {
+                  e.preventDefault();
+                  setLightboxOpen(true);
+                }
+              }}
+              role={selectedImageUrl ? "button" : undefined}
+              tabIndex={selectedImageUrl ? 0 : undefined}
+              aria-label={selectedImageUrl ? `Zoom image of ${product.name}` : undefined}
+              className={`relative w-full aspect-[4/3] sm:aspect-square max-h-[420px] rounded-2xl bg-white border border-[#DCE7E2] overflow-hidden flex items-center justify-center group ${
+                selectedImageUrl ? "cursor-zoom-in hover:border-[#9EC6B8] transition-colors" : ""
+              }`}
+            >
               {selectedImageUrl ? (
-                <div className="w-full h-full p-6 flex items-center justify-center bg-white">
+                <div className="w-full h-full p-3 sm:p-4 flex items-center justify-center bg-white">
                   <img
                     src={selectedImageUrl}
                     alt={product.name}
                     onError={() => setSelectedImageUrl(null)}
-                    className="max-h-full max-w-full object-contain"
+                    className="w-full h-full object-contain transition-transform duration-300 group-hover:scale-[1.03]"
                   />
                 </div>
               ) : (
@@ -216,14 +254,14 @@ export function ProductDetailView({
                 />
               )}
 
-              <div className="absolute top-3.5 left-3.5 right-3.5 flex items-center justify-between gap-2 pointer-events-none">
+              <div className="absolute top-3 left-3 right-3 flex items-center justify-between gap-2 pointer-events-none">
                 <span
-                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border backdrop-blur-xs ${
+                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border shadow-2xs ${
                     isUnitOut
-                      ? "bg-white/95 text-slate-600 border-slate-200"
+                      ? "bg-slate-50 text-slate-600 border-slate-200"
                       : product.availability_status === "low_stock"
-                        ? "bg-[#FFF8ED]/95 text-[#8A5311] border-[#F0D7B0]"
-                        : "bg-white/95 text-[#0E5146] border-[#C5DFD7]"
+                        ? "bg-[#FFF8EB] text-[#92580E] border-[#F3D9A4]"
+                        : "bg-[#EDFAF4] text-[#0C684C] border-[#BCEAD5]"
                   }`}
                 >
                   <span
@@ -231,8 +269,8 @@ export function ProductDetailView({
                       isUnitOut
                         ? "bg-slate-400"
                         : product.availability_status === "low_stock"
-                          ? "bg-[#E6A65B]"
-                          : "bg-[#0E5146]"
+                          ? "bg-[#D98E2B]"
+                          : "bg-[#128761]"
                     }`}
                   />
                   <span>
@@ -247,12 +285,18 @@ export function ProductDetailView({
                 </span>
 
                 {product.requires_prescription && (
-                  <span className="px-3 py-1 rounded-full bg-rose-50/95 text-rose-700 border border-rose-200 text-xs font-semibold inline-flex items-center gap-1">
+                  <span className="px-3 py-1 rounded-full bg-rose-50 text-rose-700 border border-rose-200 text-xs font-bold inline-flex items-center gap-1 shadow-2xs">
                     <PrescriptionIcon className="w-3.5 h-3.5" />
                     <span>Rx Required</span>
                   </span>
                 )}
               </div>
+
+              {selectedImageUrl && (
+                <span className="pointer-events-none absolute bottom-3 right-3 px-2.5 py-1 rounded-full bg-[#0F232C]/80 text-white text-[11px] font-semibold opacity-85 group-hover:opacity-100 transition-opacity">
+                  Click to zoom
+                </span>
+              )}
             </div>
 
             {galleryImages.length > 1 && (
@@ -584,6 +628,48 @@ export function ProductDetailView({
           </section>
         )}
       </div>
+
+      {/* Full-Screen High-Clarity Image Zoom Lightbox */}
+      {lightboxOpen && selectedImageUrl && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Full preview of ${product.name}`}
+          onClick={() => setLightboxOpen(false)}
+          className="fixed inset-0 z-50 bg-[#08171D]/85 flex items-center justify-center p-4 sm:p-8"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="sf-zoom-in relative bg-white rounded-3xl max-w-3xl w-full max-h-[88vh] p-4 sm:p-6 shadow-2xl flex flex-col gap-3"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="sf-heading text-sm sm:text-base font-bold text-[#0F232C] truncate">
+                  {product.name}
+                </p>
+                {cleanStrength && (
+                  <p className="text-xs text-[#546A76] truncate">{cleanStrength}</p>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setLightboxOpen(false)}
+                aria-label="Close full image preview"
+                className="w-9 h-9 rounded-xl sf-btn-secondary flex items-center justify-center shrink-0"
+              >
+                <CloseIcon className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="flex-1 min-h-0 flex items-center justify-center bg-white rounded-2xl border border-[#E6EEEA] p-3 overflow-hidden">
+              <img
+                src={selectedImageUrl}
+                alt={product.name}
+                className="max-h-[70vh] max-w-full object-contain"
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

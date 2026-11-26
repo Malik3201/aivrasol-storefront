@@ -1,4 +1,5 @@
-import React from "react";
+import React, { useState } from "react";
+import type { PublicStorefrontProduct } from "../../shared/types";
 import type { CartItem } from "../types-ui";
 import {
   CloseIcon,
@@ -25,7 +26,47 @@ interface CartDrawerProps {
   onClose: () => void;
   onProceedToCheckout: () => void;
   onBrowseMedicines: () => void;
+  onOpenProductDetail?: (product: PublicStorefrontProduct) => void;
   onShowToast: (msg: string) => void;
+}
+
+function CartItemThumb({
+  product,
+  onClick,
+}: {
+  product: PublicStorefrontProduct;
+  onClick?: () => void;
+}) {
+  const [imgFailed, setImgFailed] = useState(false);
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={`Inspect ${product.name}`}
+      className="w-20 h-20 rounded-xl border border-[#DCE7E2] bg-white overflow-hidden flex items-center justify-center shrink-0 p-0.5 hover:border-[var(--sf-primary)] hover:shadow-xs transition group/thumb"
+    >
+      {product.primary_image_url && !imgFailed ? (
+        <img
+          src={product.primary_image_url}
+          alt={product.name}
+          loading="lazy"
+          decoding="async"
+          onError={() => setImgFailed(true)}
+          className="w-full h-full object-contain transition-transform duration-200 group-hover/thumb:scale-105"
+        />
+      ) : (
+        <MedicinePlaceholderIllustration
+          name={product.name}
+          dosageForm={product.dosage_form}
+          categoryName={product.category_name}
+          brandName={product.brand_name}
+          packingLabel={product.packing_label}
+          className="w-full h-full scale-90"
+        />
+      )}
+    </button>
+  );
 }
 
 export function CartDrawer({
@@ -44,6 +85,7 @@ export function CartDrawer({
   onClose,
   onProceedToCheckout,
   onBrowseMedicines,
+  onOpenProductDetail,
   onShowToast,
 }: CartDrawerProps) {
   if (!open) return null;
@@ -53,22 +95,24 @@ export function CartDrawer({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-[#0F2028]/55 backdrop-blur-xs flex justify-end"
+      className="fixed inset-0 z-50 bg-[#0B1D24]/50 flex justify-end"
       onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Shopping Cart"
     >
       <aside
-        aria-label="Shopping Cart"
-        className="sf-drawer-enter bg-white w-full max-w-md h-full shadow-2xl border-l border-[#DBE5E0] flex flex-col justify-between"
+        className="sf-drawer-enter bg-white w-full max-w-md h-full shadow-2xl border-l border-[#DCE7E2] flex flex-col justify-between"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Deep Forest Branded Cart Header */}
+        {/* Crisp Branded Cart Header */}
         <div
           className="px-5 py-4 text-white flex items-center justify-between gap-3"
           style={{ backgroundColor: "var(--sf-forest)" }}
         >
           <div className="flex items-center gap-3 min-w-0">
             <div
-              className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 text-[#172B36]"
+              className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 text-[#0F232C]"
               style={{ backgroundColor: "var(--sf-warm-accent)" }}
             >
               <ShoppingBagIcon className="w-4 h-4" />
@@ -109,8 +153,8 @@ export function CartDrawer({
 
         {/* Free Delivery Progress Strip */}
         {cart.length > 0 && deliveryEnabled && freeThreshold > 0 && (
-          <div className="px-5 py-3 sf-surface-mint border-b border-[#C5DFD7] space-y-1.5">
-            <div className="flex items-center justify-between text-xs text-[#172B36]">
+          <div className="px-5 py-3 bg-[#EEF7F4] border-b border-[#CDE3DB] space-y-1.5">
+            <div className="flex items-center justify-between text-xs text-[#0F232C]">
               <span className="inline-flex items-center gap-1.5 font-medium">
                 <TruckIcon className="w-3.5 h-3.5 sf-text-brand" />
                 {remainingForFreeDelivery > 0 ? (
@@ -122,16 +166,14 @@ export function CartDrawer({
                     for free delivery
                   </span>
                 ) : (
-                  <span className="font-semibold sf-text-brand">
-                    Unlocked Free Home Delivery
-                  </span>
+                  <span className="font-bold sf-text-brand">Unlocked Free Home Delivery</span>
                 )}
               </span>
-              <span className="text-[11px] font-semibold sf-text-brand tabular-nums">
+              <span className="text-[11px] font-bold sf-text-brand tabular-nums">
                 {progressPct}%
               </span>
             </div>
-            <div className="h-1.5 w-full rounded-full bg-white/80 overflow-hidden">
+            <div className="h-1.5 w-full rounded-full bg-white overflow-hidden">
               <div
                 className="h-full rounded-full transition-all duration-300"
                 style={{
@@ -143,16 +185,16 @@ export function CartDrawer({
           </div>
         )}
 
-        {/* Items List */}
-        <div className="flex-1 overflow-y-auto px-5 divide-y divide-[#E8EFEA]">
+        {/* Items List with Large Full-Preview Product Images */}
+        <div className="flex-1 overflow-y-auto px-5 divide-y divide-[#EBF1EE]">
           {cart.length === 0 ? (
             <div className="py-20 text-center space-y-3.5">
-              <div className="w-14 h-14 rounded-2xl sf-surface-mint border border-[var(--sf-primary-border)] flex items-center justify-center mx-auto sf-text-brand">
+              <div className="w-14 h-14 rounded-2xl bg-[#EEF7F4] border border-[#CDE3DB] flex items-center justify-center mx-auto sf-text-brand">
                 <ShoppingBagIcon className="w-6 h-6" />
               </div>
               <div className="space-y-1">
-                <p className="sf-heading text-base font-bold text-[#172B36]">Your cart is empty</p>
-                <p className="text-xs text-[#607481] max-w-xs mx-auto leading-relaxed">
+                <p className="sf-heading text-base font-bold text-[#0F232C]">Your cart is empty</p>
+                <p className="text-xs text-[#546A76] max-w-xs mx-auto leading-relaxed">
                   Browse medicines, surgical items, and healthcare essentials from {displayName}.
                 </p>
               </div>
@@ -176,39 +218,29 @@ export function CartDrawer({
 
               return (
                 <div key={cartKey} className="py-4 flex items-start gap-3.5">
-                  {/* Product Thumbnail */}
-                  <div className="w-16 h-16 rounded-xl border border-[#DBE5E0] bg-[#FAF8F4] overflow-hidden flex items-center justify-center shrink-0 p-1">
-                    {product.primary_image_url ? (
-                      <img
-                        src={product.primary_image_url}
-                        alt={product.name}
-                        loading="lazy"
-                        className="max-h-full max-w-full object-contain"
-                      />
-                    ) : (
-                      <MedicinePlaceholderIllustration
-                        name={product.name}
-                        dosageForm={product.dosage_form}
-                        categoryName={product.category_name}
-                        brandName={product.brand_name}
-                        packingLabel={product.packing_label}
-                        className="w-full h-full scale-75"
-                      />
-                    )}
-                  </div>
+                  <CartItemThumb
+                    product={product}
+                    onClick={onOpenProductDetail ? () => onOpenProductDetail(product) : undefined}
+                  />
 
                   {/* Item Details & Controls */}
                   <div className="flex-1 min-w-0 space-y-2">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="sf-heading text-sm font-bold text-[#172B36] leading-snug line-clamp-1">
+                        <button
+                          type="button"
+                          onClick={
+                            onOpenProductDetail ? () => onOpenProductDetail(product) : undefined
+                          }
+                          className="sf-heading text-sm font-bold text-[#0F232C] hover:text-[var(--sf-primary-ink)] leading-snug line-clamp-2 text-left transition-colors"
+                        >
                           {product.name}
-                        </p>
-                        <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                          <span className="px-2 py-0.5 rounded-md bg-[#F3F6F4] text-[#4D616E] text-[10.5px] font-semibold">
+                        </button>
+                        <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                          <span className="px-2 py-0.5 rounded-md bg-[#EEF6F3] text-[#0E5146] text-[10.5px] font-bold">
                             {selectedUnit.label || selectedUnit.unit_name}
                           </span>
-                          <span className="text-xs text-[#607481] tabular-nums">
+                          <span className="text-xs text-[#546A76] tabular-nums">
                             PKR {unitPrice.toLocaleString()} / {selectedUnit.unit_name}
                           </span>
                         </div>
@@ -226,7 +258,7 @@ export function CartDrawer({
                       </button>
                     </div>
 
-                    <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center justify-between gap-2 pt-0.5">
                       <QuantityStepperInput
                         value={qty}
                         min={1}
@@ -237,7 +269,7 @@ export function CartDrawer({
                           onShowToast(`Maximum ${cap} ${selectedUnit.unit_name} available.`)
                         }
                       />
-                      <span className="sf-heading text-sm font-bold text-[#172B36] tabular-nums">
+                      <span className="sf-heading text-sm font-extrabold text-[#0F232C] tabular-nums">
                         PKR {lineTotal.toLocaleString()}
                       </span>
                     </div>
@@ -248,17 +280,17 @@ export function CartDrawer({
           )}
         </div>
 
-        {/* Warm Ivory Summary Footer */}
+        {/* Clean Summary Footer */}
         {cart.length > 0 && (
-          <div className="p-5 border-t border-[#EADFCE] sf-surface-ivory space-y-3.5">
-            <div className="space-y-1 text-xs text-[#607481]">
+          <div className="p-5 border-t border-[#E2EAE6] bg-[#F8FAF9] space-y-3.5">
+            <div className="space-y-1 text-xs text-[#546A76]">
               <div className="flex items-center justify-between text-sm">
-                <span className="font-semibold text-[#172B36]">Items Subtotal</span>
-                <span className="sf-heading text-lg font-extrabold text-[#172B36] tabular-nums">
+                <span className="font-semibold text-[#0F232C]">Items Subtotal</span>
+                <span className="sf-heading text-lg font-extrabold text-[#0F232C] tabular-nums">
                   PKR {subtotalPkr.toLocaleString()}
                 </span>
               </div>
-              <p className="text-[11.5px] text-[#607481]">
+              <p className="text-[11.5px] text-[#546A76]">
                 Delivery zone fee, promo code, or free counter pickup is finalized at checkout.
               </p>
             </div>
@@ -267,7 +299,7 @@ export function CartDrawer({
               type="button"
               onClick={onProceedToCheckout}
               data-testid="drawer-proceed-checkout-btn"
-              className="w-full h-12 rounded-xl sf-btn-primary text-sm font-semibold shadow-xs"
+              className="w-full h-12 rounded-xl sf-btn-primary text-sm font-bold shadow-xs"
             >
               Proceed to Checkout
             </button>

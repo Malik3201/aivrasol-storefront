@@ -14,6 +14,41 @@ import type {
 
 const SLUG_PATH_RE = /^\/s\/([a-z0-9][a-z0-9-]{1,38}[a-z0-9])(?:\/|$)/i;
 
+// Lightweight tenant-safe in-memory TTL cache to eliminate redundant fetches on Back / filter switches
+interface CacheEntry<T> {
+  expiresAt: number;
+  value: T;
+}
+
+const CLIENT_CACHE_MAX = 80;
+const clientCache = new Map<string, CacheEntry<any>>();
+
+function readCache<T>(key: string): T | undefined {
+  const entry = clientCache.get(key);
+  if (!entry) return undefined;
+  if (Date.now() > entry.expiresAt) {
+    clientCache.delete(key);
+    return undefined;
+  }
+  return entry.value as T;
+}
+
+function writeCache<T>(key: string, value: T, ttlMs: number): void {
+  if (clientCache.size >= CLIENT_CACHE_MAX) {
+    const oldestKey = clientCache.keys().next().value;
+    if (oldestKey) clientCache.delete(oldestKey);
+  }
+  clientCache.set(key, { expiresAt: Date.now() + ttlMs, value });
+}
+
+export function clearStorefrontProductCache(): void {
+  for (const key of clientCache.keys()) {
+    if (key.includes("/api/v1/public/products")) {
+      clientCache.delete(key);
+    }
+  }
+}
+
 export function getActiveStoreSlug(): string | null {
   if (typeof window === "undefined") return null;
   const pathMatch = window.location.pathname.match(SLUG_PATH_RE);
@@ -124,52 +159,72 @@ export async function fetchPublicSettings(): Promise<any> {
 }
 
 export async function fetchPublicCategories(): Promise<StorefrontCategoryRecord[]> {
-  const res = await fetch(buildPublicUrl("/api/v1/public/categories"), {
-    headers: buildHeaders(),
-  });
+  const url = buildPublicUrl("/api/v1/public/categories");
+  const cached = readCache<StorefrontCategoryRecord[]>(url);
+  if (cached) return cached;
+  const res = await fetch(url, { headers: buildHeaders() });
   if (!res.ok) return [];
   const data = await res.json();
-  return data.categories || [];
+  const categories = (data.categories || []) as StorefrontCategoryRecord[];
+  writeCache(url, categories, 180_000);
+  return categories;
 }
 
 export async function fetchPublicBanners(): Promise<StorefrontBannerRecord[]> {
-  const res = await fetch(buildPublicUrl("/api/v1/public/banners"), {
-    headers: buildHeaders(),
-    cache: "no-store",
-  });
+  const url = buildPublicUrl("/api/v1/public/banners");
+  const cached = readCache<StorefrontBannerRecord[]>(url);
+  if (cached) return cached;
+  const res = await fetch(url, { headers: buildHeaders() });
   if (!res.ok) return [];
   const data = await res.json();
-  return (data.banners || []).map((b: StorefrontBannerRecord) => ({
+  const banners = (data.banners || []).map((b: StorefrontBannerRecord) => ({
     ...b,
     image_url: resolvePublicAssetUrl(b.image_url),
   }));
+  writeCache(url, banners, 180_000);
+  return banners;
 }
 
-export async function fetchPublicPromotions(): Promise<StorefrontPromotionRecord[]> {
-  const res = await fetch(buildPublicUrl("/api/v1/public/promotions"), {
+export async function fetchPublicPromotions(
+  bypassCache = false
+): Promise<StorefrontPromotionRecord[]> {
+  const url = buildPublicUrl("/api/v1/public/promotions");
+  if (!bypassCache) {
+    const cached = readCache<StorefrontPromotionRecord[]>(url);
+    if (cached) return cached;
+  }
+  const res = await fetch(url, {
     headers: buildHeaders(),
-    cache: "no-store",
+    ...(bypassCache ? { cache: "no-store" as RequestCache } : {}),
   });
   if (!res.ok) return [];
   const data = await res.json();
-  return data.promotions || [];
+  const promotions = (data.promotions || []) as StorefrontPromotionRecord[];
+  writeCache(url, promotions, 120_000);
+  return promotions;
 }
 
 export async function fetchPublicDeliveryConfig(): Promise<any> {
-  const res = await fetch(buildPublicUrl("/api/v1/public/delivery-config"), {
-    headers: buildHeaders(),
-  });
+  const url = buildPublicUrl("/api/v1/public/delivery-config");
+  const cached = readCache<any>(url);
+  if (cached !== undefined) return cached;
+  const res = await fetch(url, { headers: buildHeaders() });
   if (!res.ok) return null;
   const data = await res.json();
-  return data.delivery_config || null;
+  const config = data.delivery_config || null;
+  writeCache(url, config, 180_000);
+  return config;
 }
 
 export async function fetchPublicOpeningHours(): Promise<any> {
-  const res = await fetch(buildPublicUrl("/api/v1/public/opening-hours"), {
-    headers: buildHeaders(),
-  });
+  const url = buildPublicUrl("/api/v1/public/opening-hours");
+  const cached = readCache<any>(url);
+  if (cached !== undefined) return cached;
+  const res = await fetch(url, { headers: buildHeaders() });
   if (!res.ok) return null;
-  return await res.json();
+  const parsed = await res.json();
+  writeCache(url, parsed, 180_000);
+  return parsed;
 }
 
 export async function fetchPublicProducts(options?: {
@@ -181,6 +236,7 @@ export async function fetchPublicProducts(options?: {
   popularOnly?: boolean;
   sort?: string;
   limit?: number;
+  signal?: AbortSignal;
 }): Promise<{
   items: PublicStorefrontProduct[];
   next_cursor: string | null;
@@ -190,30 +246,43 @@ export async function fetchPublicProducts(options?: {
 }> {
   const isSearch = Boolean(options?.search && options.search.trim());
   const endpoint = isSearch ? "/api/v1/public/products/search" : "/api/v1/public/products";
-  const res = await fetch(
-    buildPublicUrl(endpoint, {
-      q: isSearch ? options?.search?.trim() : undefined,
-      category: options?.category && options.category !== "all" ? options.category : undefined,
-      cursor: options?.cursor,
-      in_stock: options?.inStockOnly ? "true" : undefined,
-      featured: options?.featuredOnly ? "true" : undefined,
-      popular: options?.popularOnly ? "true" : undefined,
-      sort: options?.sort,
-      limit: String(options?.limit || 24),
-    }),
-    { headers: buildHeaders(), cache: "no-store" }
-  );
+  const url = buildPublicUrl(endpoint, {
+    q: isSearch ? options?.search?.trim() : undefined,
+    category: options?.category && options.category !== "all" ? options.category : undefined,
+    cursor: options?.cursor,
+    in_stock: options?.inStockOnly ? "true" : undefined,
+    featured: options?.featuredOnly ? "true" : undefined,
+    popular: options?.popularOnly ? "true" : undefined,
+    sort: options?.sort,
+    limit: String(options?.limit || 24),
+  });
+
+  const cached = readCache<{
+    items: PublicStorefrontProduct[];
+    next_cursor: string | null;
+    has_more: boolean;
+    stock_sync_stale?: boolean;
+    last_sync_at?: string | null;
+  }>(url);
+  if (cached) return cached;
+
+  const res = await fetch(url, {
+    headers: buildHeaders(),
+    signal: options?.signal,
+  });
   if (!res.ok) {
     return { items: [], next_cursor: null, has_more: false };
   }
   const data = await res.json();
-  return {
+  const payload = {
     items: (data.items || []).map(normalizeProductMedia),
     next_cursor: data.next_cursor || null,
     has_more: Boolean(data.has_more),
     stock_sync_stale: Boolean(data.stock_sync_stale),
     last_sync_at: data.last_sync_at || null,
   };
+  writeCache(url, payload, 90_000);
+  return payload;
 }
 
 export async function fetchPublicProductDetails(
@@ -222,10 +291,14 @@ export async function fetchPublicProductDetails(
   product: PublicStorefrontProduct & { images?: Array<{ id: string; image_url: string; alt_text?: string }> };
   related_products: PublicStorefrontProduct[];
 } | null> {
-  const res = await fetch(
-    buildPublicUrl(`/api/v1/public/products/${encodeURIComponent(idOrSlug)}`),
-    { headers: buildHeaders(), cache: "no-store" }
-  );
+  const url = buildPublicUrl(`/api/v1/public/products/${encodeURIComponent(idOrSlug)}`);
+  const cached = readCache<{
+    product: PublicStorefrontProduct & { images?: Array<{ id: string; image_url: string; alt_text?: string }> };
+    related_products: PublicStorefrontProduct[];
+  }>(url);
+  if (cached) return cached;
+
+  const res = await fetch(url, { headers: buildHeaders() });
   if (!res.ok) return null;
   const data = await res.json();
   if (!data.product) return null;
@@ -240,10 +313,12 @@ export async function fetchPublicProductDetails(
         }
       : {}),
   };
-  return {
+  const result = {
     product: normalizedProd,
     related_products: (data.related_products || []).map(normalizeProductMedia),
   };
+  writeCache(url, result, 180_000);
+  return result;
 }
 
 export interface SubmitPublicOrderInput {
@@ -284,6 +359,9 @@ export async function submitPublicOrder(input: SubmitPublicOrderInput): Promise<
     body: JSON.stringify(input),
   });
   const data = await res.json();
+  if (res.ok && data.ok) {
+    clearStorefrontProductCache();
+  }
   return {
     ok: Boolean(res.ok && data.ok),
     duplicate: data.duplicate,

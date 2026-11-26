@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   DomainResolutionResponse,
   PublicStorefrontProduct,
@@ -35,6 +35,13 @@ import {
   getPharmacyMonogram,
   resolvePharmacyDisplayName,
 } from "./design/theme";
+import {
+  buildCatalogFilterKey,
+  buildStorefrontUrl,
+  parseStorefrontRoute,
+  type CatalogFilterState,
+  type StorefrontHistoryState,
+} from "./router";
 import type { CartItem, ResolvedSellingUnit, StorefrontView } from "./types-ui";
 import { CatalogView } from "./views/CatalogView";
 import { CheckoutView } from "./views/CheckoutView";
@@ -214,6 +221,8 @@ function normalizeRestoredCart(rawItems: any[]): CartItem[] {
 }
 
 export function App() {
+  const initialRoute = useMemo(() => parseStorefrontRoute(), []);
+
   const [loading, setLoading] = useState(true);
   const [resolution, setResolution] = useState<DomainResolutionResponse | null>(null);
   const [categories, setCategories] = useState<StorefrontCategoryRecord[]>([]);
@@ -221,8 +230,8 @@ export function App() {
   const [promotions, setPromotions] = useState<StorefrontPromotionRecord[]>([]);
   const [deliveryConfig, setDeliveryConfig] = useState<any>(null);
 
-  // Navigation View State
-  const [activeView, setActiveView] = useState<StorefrontView>("home");
+  // Navigation View State (Hydrated from URL so Reload & Browser Back preserve exact route)
+  const [activeView, setActiveView] = useState<StorefrontView>(initialRoute.view);
 
   // Catalog State
   const [products, setProducts] = useState<PublicStorefrontProduct[]>([]);
@@ -232,11 +241,15 @@ export function App() {
   const [stockSyncStale, setStockSyncStale] = useState(false);
   const [loadingProducts, setLoadingProducts] = useState(false);
 
-  const [selectedCategory, setSelectedCategory] = useState<string>("all");
-  const [selectedDosageForm, setSelectedDosageForm] = useState<string>("all");
-  const [searchQuery, setSearchQuery] = useState<string>("");
-  const [inStockOnly, setInStockOnly] = useState<boolean>(false);
-  const [sortBy, setSortBy] = useState<string>("featured");
+  const [selectedCategory, setSelectedCategoryState] = useState<string>(
+    initialRoute.filters.selectedCategory
+  );
+  const [selectedDosageForm, setSelectedDosageFormState] = useState<string>(
+    initialRoute.filters.selectedDosageForm
+  );
+  const [searchQuery, setSearchQueryState] = useState<string>(initialRoute.filters.searchQuery);
+  const [inStockOnly, setInStockOnlyState] = useState<boolean>(initialRoute.filters.inStockOnly);
+  const [sortBy, setSortByState] = useState<string>(initialRoute.filters.sortBy);
 
   // Product Detail & Unit Selection State
   const [selectedProduct, setSelectedProduct] = useState<
@@ -245,6 +258,9 @@ export function App() {
       })
     | null
   >(null);
+  const [loadingProductDetail, setLoadingProductDetail] = useState<boolean>(
+    initialRoute.view === "product" && Boolean(initialRoute.productSlug)
+  );
   const [relatedProducts, setRelatedProducts] = useState<PublicStorefrontProduct[]>([]);
   const [detailQty, setDetailQty] = useState<number>(1);
   const [modalQty, setModalQty] = useState<number>(1);
@@ -286,22 +302,139 @@ export function App() {
   const [invoiceEmailQueued, setInvoiceEmailQueued] = useState<boolean>(false);
 
   // Order Tracking State
-  const [trackOrderNumber, setTrackOrderNumber] = useState("");
+  const [trackOrderNumber, setTrackOrderNumber] = useState(initialRoute.trackOrder);
   const [trackPhone, setTrackPhone] = useState("");
   const [trackToken, setTrackToken] = useState("");
   const [trackingLoading, setTrackingLoading] = useState(false);
   const [trackedOrder, setTrackedOrder] = useState<any | null>(null);
   const [trackingError, setTrackingError] = useState<string | null>(null);
 
+  // Refs for History API, instant scroll restoration, and zero-refetch Back navigation
+  const activeViewRef = useRef<StorefrontView>(activeView);
+  activeViewRef.current = activeView;
+
+  const filtersRef = useRef<CatalogFilterState>({
+    searchQuery,
+    selectedCategory,
+    selectedDosageForm,
+    inStockOnly,
+    sortBy,
+  });
+
+  const lastFetchedFilterKeyRef = useRef<string>("");
+  const productsAbortRef = useRef<AbortController | null>(null);
+  const catalogScrollYRef = useRef<number>(0);
+  const pendingScrollRestoreRef = useRef<number | null>(null);
+  const productsListRef = useRef<PublicStorefrontProduct[]>([]);
+  productsListRef.current = products;
+  const homeCatalogRef = useRef<PublicStorefrontProduct[]>([]);
+  homeCatalogRef.current = initialHomeCatalog;
+
+  // Synchronous-ref-updating filter setters so consecutive calls like `setSelectedCategory(cat); handleSelectView("shop")`
+  // always serialize the brand-new filter into the pushed URL immediately.
+  const setSearchQuery = useCallback((next: string) => {
+    filtersRef.current = { ...filtersRef.current, searchQuery: next };
+    setSearchQueryState(next);
+  }, []);
+
+  const setSelectedCategory = useCallback((next: string) => {
+    filtersRef.current = { ...filtersRef.current, selectedCategory: next };
+    setSelectedCategoryState(next);
+  }, []);
+
+  const setSelectedDosageForm = useCallback((next: string) => {
+    filtersRef.current = { ...filtersRef.current, selectedDosageForm: next };
+    setSelectedDosageFormState(next);
+  }, []);
+
+  const setInStockOnly = useCallback((next: boolean) => {
+    filtersRef.current = { ...filtersRef.current, inStockOnly: next };
+    setInStockOnlyState(next);
+  }, []);
+
+  const setSortBy = useCallback((next: string) => {
+    filtersRef.current = { ...filtersRef.current, sortBy: next };
+    setSortByState(next);
+  }, []);
+
+  const resetCatalogFilters = useCallback(() => {
+    filtersRef.current = {
+      searchQuery: "",
+      selectedCategory: "all",
+      selectedDosageForm: "all",
+      inStockOnly: false,
+      sortBy: "featured",
+    };
+    setSearchQueryState("");
+    setSelectedCategoryState("all");
+    setSelectedDosageFormState("all");
+    setInStockOnlyState(false);
+    setSortByState("featured");
+  }, []);
+
   const targetHost = getEffectiveTargetHost();
 
-  const handleSelectView = useCallback((nextView: StorefrontView) => {
-    if (nextView !== "checkout" && nextView !== "cart") {
-      setCompletedOrder(null);
+  const snapshotCurrentHistoryScroll = useCallback(() => {
+    if (typeof window === "undefined") return 0;
+    const currentScroll = window.scrollY;
+    if (activeViewRef.current === "shop") {
+      catalogScrollYRef.current = currentScroll;
     }
-    setActiveView(nextView);
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    try {
+      const prevState = (window.history.state || {}) as StorefrontHistoryState;
+      window.history.replaceState(
+        {
+          ...prevState,
+          view: activeViewRef.current,
+          filters: { ...filtersRef.current },
+          scrollY: currentScroll,
+        },
+        "",
+        window.location.href
+      );
+    } catch {
+      // ignore history errors in sandboxed iframes
+    }
+    return currentScroll;
   }, []);
+
+  const handleSelectView = useCallback(
+    (nextView: StorefrontView, opts?: { replace?: boolean; trackOrder?: string }) => {
+      if (nextView !== "checkout" && nextView !== "cart") {
+        setCompletedOrder(null);
+      }
+      const prevView = activeViewRef.current;
+      snapshotCurrentHistoryScroll();
+
+      const nextUrl = buildStorefrontUrl({
+        view: nextView,
+        filters: filtersRef.current,
+        trackOrder: opts?.trackOrder,
+      });
+      const currentRelative = `${window.location.pathname}${window.location.search}`;
+      const nextState: StorefrontHistoryState = {
+        view: nextView,
+        fromView: prevView,
+        filters: { ...filtersRef.current },
+        scrollY: 0,
+      };
+
+      try {
+        if (opts?.replace || (nextView === prevView && nextUrl === currentRelative)) {
+          window.history.replaceState(nextState, "", nextUrl);
+        } else {
+          window.history.pushState(nextState, "", nextUrl);
+        }
+      } catch {
+        // ignore history API failures
+      }
+
+      activeViewRef.current = nextView;
+      setActiveView(nextView);
+      window.scrollTo({ top: 0, behavior: "auto" });
+    },
+    [snapshotCurrentHistoryScroll]
+  );
 
   const loadProductsPage = useCallback(
     async (opts: {
@@ -312,6 +445,14 @@ export function App() {
       cursor?: string;
       append?: boolean;
     }) => {
+      if (!opts.append && productsAbortRef.current) {
+        productsAbortRef.current.abort();
+      }
+      const controller = new AbortController();
+      if (!opts.append) {
+        productsAbortRef.current = controller;
+      }
+
       setLoadingProducts(true);
       try {
         const res = await fetchPublicProducts({
@@ -321,6 +462,14 @@ export function App() {
           sort: opts.sort,
           cursor: opts.cursor,
           limit: 24,
+          signal: controller.signal,
+        });
+        if (controller.signal.aborted) return;
+        lastFetchedFilterKeyRef.current = buildCatalogFilterKey({
+          category: opts.category,
+          search: opts.search,
+          inStockOnly: opts.inStockOnly,
+          sort: opts.sort,
         });
         setProducts((prev) => (opts.append ? [...prev, ...res.items] : res.items));
         setNextCursor(res.next_cursor);
@@ -328,12 +477,146 @@ export function App() {
         if (res.stock_sync_stale !== undefined) {
           setStockSyncStale(Boolean(res.stock_sync_stale));
         }
+      } catch (err: any) {
+        if (err?.name === "AbortError") return;
+        console.error("Failed to fetch products:", err);
       } finally {
-        setLoadingProducts(false);
+        if (!controller.signal.aborted) {
+          setLoadingProducts(false);
+        }
       }
     },
     []
   );
+
+  // Configure manual scroll restoration & seed initial history state
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if ("scrollRestoration" in window.history) {
+      window.history.scrollRestoration = "manual";
+    }
+    try {
+      const existing = (window.history.state || {}) as StorefrontHistoryState;
+      window.history.replaceState(
+        {
+          ...existing,
+          view: initialRoute.view,
+          productSlug: initialRoute.productSlug,
+          filters: initialRoute.filters,
+          scrollY: existing.scrollY ?? 0,
+        },
+        "",
+        window.location.href
+      );
+    } catch {
+      // ignore
+    }
+  }, [initialRoute]);
+
+  // Restore saved scroll position immediately after Back / Forward view commit
+  useEffect(() => {
+    if (pendingScrollRestoreRef.current === null) return;
+    const targetY = pendingScrollRestoreRef.current;
+    pendingScrollRestoreRef.current = null;
+    const raf1 = window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        window.scrollTo({ top: targetY, behavior: "auto" });
+      });
+    });
+    return () => window.cancelAnimationFrame(raf1);
+  }, [activeView]);
+
+  // Listen to Browser Back / Forward (`popstate`) — restores exact route, filters & scroll position!
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onPopState = (event: PopStateEvent) => {
+      const parsed = parseStorefrontRoute(window.location);
+      const state = (event.state || {}) as StorefrontHistoryState;
+
+      // Close overlays cleanly on Back navigation
+      setCartDrawerOpen(false);
+      setQuickModalProduct(null);
+
+      if (parsed.view === "shop") {
+        filtersRef.current = { ...parsed.filters };
+        setSearchQueryState(parsed.filters.searchQuery);
+        setSelectedCategoryState(parsed.filters.selectedCategory);
+        setSelectedDosageFormState(parsed.filters.selectedDosageForm);
+        setInStockOnlyState(parsed.filters.inStockOnly);
+        setSortByState(parsed.filters.sortBy);
+        pendingScrollRestoreRef.current =
+          typeof state.scrollY === "number" ? state.scrollY : catalogScrollYRef.current;
+      } else if (parsed.view === "product" && parsed.productSlug) {
+        const slug = parsed.productSlug;
+        const cachedProd =
+          productsListRef.current.find((p) => p.slug === slug || p.id === slug) ||
+          homeCatalogRef.current.find((p) => p.slug === slug || p.id === slug) ||
+          null;
+        if (cachedProd) {
+          setSelectedProduct(cachedProd);
+          setLoadingProductDetail(false);
+        } else {
+          setLoadingProductDetail(true);
+        }
+        setDetailQty(1);
+        pendingScrollRestoreRef.current = typeof state.scrollY === "number" ? state.scrollY : 0;
+        void fetchPublicProductDetails(slug).then((full) => {
+          if (full) {
+            setSelectedProduct(full.product);
+            setRelatedProducts(full.related_products || []);
+          }
+          setLoadingProductDetail(false);
+        });
+      } else {
+        if (parsed.view === "track" && parsed.trackOrder) {
+          setTrackOrderNumber(parsed.trackOrder);
+        }
+        pendingScrollRestoreRef.current = typeof state.scrollY === "number" ? state.scrollY : 0;
+      }
+
+      activeViewRef.current = parsed.view;
+      setActiveView(parsed.view);
+    };
+
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
+  // Global keyboard polish: Escape closes drawer/modal; `/` focuses catalog search cleanly
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (quickModalProduct) {
+          setQuickModalProduct(null);
+          return;
+        }
+        if (cartDrawerOpen) {
+          setCartDrawerOpen(false);
+          return;
+        }
+      }
+      if (
+        e.key === "/" &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.altKey &&
+        document.activeElement?.tagName !== "INPUT" &&
+        document.activeElement?.tagName !== "TEXTAREA" &&
+        document.activeElement?.tagName !== "SELECT"
+      ) {
+        const searchInput = document.querySelector<HTMLInputElement>(
+          '[data-testid="catalog-search-input"]'
+        );
+        if (searchInput) {
+          e.preventDefault();
+          searchInput.focus();
+          searchInput.select();
+        }
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [cartDrawerOpen, quickModalProduct]);
 
   // Bootstrap Storefront Resolution & Initial Data
   useEffect(() => {
@@ -344,19 +627,6 @@ export function App() {
         const { data } = await fetchStorefrontResolution();
         if (cancelled) return;
         setResolution(data);
-
-        if (data.storefront) {
-          const resolvedName = resolvePharmacyDisplayName(data.storefront, data.branding);
-          const rawSeoTitle = data.settings?.seo_title?.trim();
-          const hasStaleOwnerTitle =
-            rawSeoTitle &&
-            resolvedName.toLowerCase() !== "abdul rehman" &&
-            /abdul\s*rehman/i.test(rawSeoTitle);
-          document.title =
-            rawSeoTitle && !hasStaleOwnerTitle
-              ? rawSeoTitle
-              : `${resolvedName} — Online Pharmacy (${data.storefront.city})`;
-        }
 
         if (data.storefront?.city) {
           setDeliveryCity(data.storefront.city);
@@ -376,23 +646,72 @@ export function App() {
         }
 
         if (data.resolution_status === "active") {
-          const [cats, bans, promos, deliv, initialProds] = await Promise.all([
-            fetchPublicCategories(),
-            fetchPublicBanners(),
-            fetchPublicPromotions(),
-            fetchPublicDeliveryConfig(),
-            fetchPublicProducts({ limit: 24, sort: "featured" }),
-          ]);
+          const initF = initialRoute.filters;
+          const hasInitialUrlFilters =
+            Boolean(initF.searchQuery) ||
+            initF.selectedCategory !== "all" ||
+            initF.inStockOnly ||
+            initF.sortBy !== "featured";
+
+          const [cats, bans, promos, deliv, initialProds, homeCatalogRes, initialProdDetail] =
+            await Promise.all([
+              fetchPublicCategories(),
+              fetchPublicBanners(),
+              fetchPublicPromotions(),
+              fetchPublicDeliveryConfig(),
+              fetchPublicProducts({
+                category: initF.selectedCategory,
+                search: initF.searchQuery,
+                inStockOnly: initF.inStockOnly,
+                sort: initF.sortBy,
+                limit: 24,
+              }),
+              hasInitialUrlFilters
+                ? fetchPublicProducts({ limit: 24, sort: "featured" })
+                : Promise.resolve(null),
+              initialRoute.view === "product" && initialRoute.productSlug
+                ? fetchPublicProductDetails(initialRoute.productSlug)
+                : Promise.resolve(null),
+            ]);
+
           if (cancelled) return;
           setCategories(cats);
           setBanners(bans);
           setPromotions(promos);
           setDeliveryConfig(deliv);
           setProducts(initialProds.items);
-          setInitialHomeCatalog(initialProds.items);
+          setInitialHomeCatalog(
+            homeCatalogRes ? homeCatalogRes.items : initialProds.items
+          );
           setNextCursor(initialProds.next_cursor);
           setHasMore(initialProds.has_more);
           setStockSyncStale(Boolean(initialProds.stock_sync_stale));
+          lastFetchedFilterKeyRef.current = buildCatalogFilterKey({
+            category: initF.selectedCategory,
+            search: initF.searchQuery,
+            inStockOnly: initF.inStockOnly,
+            sort: initF.sortBy,
+          });
+
+          if (initialRoute.view === "product" && initialRoute.productSlug) {
+            if (initialProdDetail) {
+              setSelectedProduct(initialProdDetail.product);
+              setRelatedProducts(initialProdDetail.related_products || []);
+            } else {
+              // Product slug no longer exists — fall back smoothly to catalog
+              setActiveView("shop");
+              activeViewRef.current = "shop";
+            }
+            setLoadingProductDetail(false);
+          }
+
+          if (initialRoute.view === "track" && initialRoute.trackOrder) {
+            void trackPublicOrder({ orderNumber: initialRoute.trackOrder }).then((res) => {
+              if (!cancelled && res.ok && res.order) {
+                setTrackedOrder(res.order);
+              }
+            });
+          }
 
           if (deliv && !deliv.delivery_enabled && deliv.pickup_enabled) {
             setFulfillmentType("pickup");
@@ -408,7 +727,37 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [initialRoute]);
+
+  // Keep browser tab title informative across views & product detail pages
+  useEffect(() => {
+    if (!resolution?.storefront) return;
+    const resolvedName = resolvePharmacyDisplayName(resolution.storefront, resolution.branding);
+    const rawSeoTitle = resolution.settings?.seo_title?.trim();
+    const hasStaleOwnerTitle =
+      rawSeoTitle &&
+      resolvedName.toLowerCase() !== "abdul rehman" &&
+      /abdul\s*rehman/i.test(rawSeoTitle);
+    const baseTitle =
+      rawSeoTitle && !hasStaleOwnerTitle
+        ? rawSeoTitle
+        : `${resolvedName} — Online Pharmacy (${resolution.storefront.city})`;
+
+    if (activeView === "product" && selectedProduct?.name) {
+      document.title = `${selectedProduct.name} — ${resolvedName}`;
+    } else if (activeView === "shop") {
+      document.title =
+        selectedCategory !== "all"
+          ? `${selectedCategory} — ${resolvedName}`
+          : `Medicines Catalog — ${resolvedName}`;
+    } else if (activeView === "checkout" || activeView === "cart") {
+      document.title = `Checkout — ${resolvedName}`;
+    } else if (activeView === "track") {
+      document.title = `Track Order — ${resolvedName}`;
+    } else {
+      document.title = baseTitle;
+    }
+  }, [resolution, activeView, selectedProduct?.name, selectedCategory]);
 
   // Persist tenant-scoped cart
   useEffect(() => {
@@ -420,9 +769,37 @@ export function App() {
     }
   }, [cart, resolution?.storefront?.id]);
 
-  // Reload catalog when filters change
+  // Keep Catalog URL synchronized in-place (replaceState) when filters change so F5 & Back never lose filters
+  useEffect(() => {
+    if (typeof window === "undefined" || activeView !== "shop") return;
+    const nextUrl = buildStorefrontUrl({ view: "shop", filters: filtersRef.current });
+    const currentRelative = `${window.location.pathname}${window.location.search}`;
+    if (nextUrl !== currentRelative) {
+      try {
+        const currState = (window.history.state || {}) as StorefrontHistoryState;
+        window.history.replaceState(
+          { ...currState, view: "shop", filters: { ...filtersRef.current } },
+          "",
+          nextUrl
+        );
+      } catch {
+        // ignore
+      }
+    }
+  }, [activeView, selectedCategory, selectedDosageForm, searchQuery, inStockOnly, sortBy]);
+
+  // Reload catalog ONLY when server filter key genuinely changes (zero refetch on Browser Back!)
   useEffect(() => {
     if (!resolution || resolution.resolution_status !== "active") return;
+    const desiredKey = buildCatalogFilterKey({
+      category: selectedCategory,
+      search: searchQuery,
+      inStockOnly,
+      sort: sortBy,
+    });
+    if (desiredKey === lastFetchedFilterKeyRef.current) return;
+
+    const delayMs = searchQuery.trim() ? 220 : 40;
     const timer = setTimeout(() => {
       void loadProductsPage({
         category: selectedCategory,
@@ -431,7 +808,7 @@ export function App() {
         sort: sortBy,
         append: false,
       });
-    }, 180);
+    }, delayMs);
     return () => clearTimeout(timer);
   }, [selectedCategory, searchQuery, inStockOnly, sortBy, resolution, loadProductsPage]);
 
@@ -620,18 +997,53 @@ export function App() {
     setPromoCodeInput("");
   }, []);
 
-  const openProductDetailPage = useCallback(async (prod: PublicStorefrontProduct) => {
-    setSelectedProduct(prod);
-    setDetailQty(1);
-    setRelatedProducts([]);
-    setActiveView("product");
-    window.scrollTo({ top: 0, behavior: "smooth" });
-    const full = await fetchPublicProductDetails(prod.slug || prod.id);
-    if (full) {
-      setSelectedProduct(full.product);
-      setRelatedProducts(full.related_products || []);
+  const openProductDetailPage = useCallback(
+    async (prod: PublicStorefrontProduct) => {
+      const prevView = activeViewRef.current;
+      snapshotCurrentHistoryScroll();
+
+      const slug = prod.slug || prod.id;
+      const nextUrl = buildStorefrontUrl({ view: "product", productSlug: slug });
+      const nextState: StorefrontHistoryState = {
+        view: "product",
+        productSlug: slug,
+        fromView: prevView,
+        filters: { ...filtersRef.current },
+        scrollY: 0,
+      };
+      try {
+        window.history.pushState(nextState, "", nextUrl);
+      } catch {
+        // ignore history errors
+      }
+
+      setCartDrawerOpen(false);
+      setQuickModalProduct(null);
+      setSelectedProduct(prod);
+      setLoadingProductDetail(false);
+      setDetailQty(1);
+      setRelatedProducts([]);
+      activeViewRef.current = "product";
+      setActiveView("product");
+      window.scrollTo({ top: 0, behavior: "auto" });
+
+      const full = await fetchPublicProductDetails(slug);
+      if (full) {
+        setSelectedProduct(full.product);
+        setRelatedProducts(full.related_products || []);
+      }
+    },
+    [snapshotCurrentHistoryScroll]
+  );
+
+  const handleBackToCatalog = useCallback(() => {
+    const state = (window.history.state || {}) as StorefrontHistoryState;
+    if (state?.fromView === "shop" && window.history.length > 1) {
+      window.history.back();
+      return;
     }
-  }, []);
+    handleSelectView("shop");
+  }, [handleSelectView]);
 
   // Filtered products client-side refinement for dosage form
   const displayedProducts = useMemo(() => {
@@ -643,14 +1055,14 @@ export function App() {
 
   const availableDosageForms = useMemo(() => {
     const forms = new Set<string>();
-    for (const p of products) {
+    for (const p of [...products, ...initialHomeCatalog]) {
       const clean = cleanProductText(p.dosage_form);
       if (clean) {
         forms.add(clean);
       }
     }
-    return Array.from(forms).slice(0, 8);
-  }, [products]);
+    return Array.from(forms).sort().slice(0, 12);
+  }, [products, initialHomeCatalog]);
 
   const homeProducts = useMemo(() => {
     if (searchQuery.trim().length > 0) {
@@ -788,7 +1200,7 @@ export function App() {
       // Refresh live promotions in case the owner just added or updated the code in Owner Panel
       if (!matched) {
         try {
-          const fresh = await fetchPublicPromotions();
+          const fresh = await fetchPublicPromotions(true);
           setPromotions(fresh);
           currentPromos = fresh;
           matched = fresh.find((p) => p.code && String(p.code).trim().toUpperCase() === cleaned);
@@ -1225,7 +1637,7 @@ export function App() {
   return (
     <div
       style={themeVars}
-      className="min-h-screen flex flex-col bg-[#FAF8F4] text-[#172B36] antialiased"
+      className="min-h-screen flex flex-col bg-[#F6F8F7] text-[#11242D] antialiased"
       data-testid="storefront-active"
     >
       {/* Global Header */}
@@ -1298,7 +1710,7 @@ export function App() {
             onQuickTrackOrder={(orderNo) => {
               const cleaned = orderNo.trim().toUpperCase();
               setTrackOrderNumber(cleaned);
-              handleSelectView("track");
+              handleSelectView("track", { trackOrder: cleaned });
               if (cleaned) {
                 void handleTrackOrder(undefined, cleaned);
               }
@@ -1341,17 +1753,26 @@ export function App() {
               });
             }
           }}
-          onResetFilters={() => {
-            setSearchQuery("");
-            setSelectedCategory("all");
-            setSelectedDosageForm("all");
-            setInStockOnly(false);
-          }}
+          onResetFilters={resetCatalogFilters}
           renderProductCard={renderProductCard}
         />
       )}
 
       {/* VIEW 2: PRODUCT DETAIL PAGE */}
+      {activeView === "product" && loadingProductDetail && !selectedProduct && (
+        <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-10">
+          <div className="sf-card rounded-3xl p-6 sm:p-10 grid grid-cols-1 lg:grid-cols-12 gap-8 animate-pulse">
+            <div className="lg:col-span-5 aspect-[4/3] rounded-2xl bg-[#EEF3F0]" />
+            <div className="lg:col-span-7 space-y-4">
+              <div className="h-5 w-32 bg-[#E6EEEA] rounded-full" />
+              <div className="h-8 w-3/4 bg-[#E6EEEA] rounded-xl" />
+              <div className="h-4 w-1/2 bg-[#EEF3F0] rounded-lg" />
+              <div className="h-36 w-full bg-[#EEF3F0] rounded-2xl mt-4" />
+            </div>
+          </div>
+        </main>
+      )}
+
       {activeView === "product" && selectedProduct && activeDetailUnit && (
         <ProductDetailView
           sf={sf}
@@ -1377,6 +1798,7 @@ export function App() {
           onUpdateCartQty={updateCartQty}
           onRemoveFromCart={removeFromCart}
           onSelectView={handleSelectView}
+          onBackToCatalog={handleBackToCatalog}
           onSelectCategory={setSelectedCategory}
           onShowToast={showToast}
           renderProductCard={renderProductCard}
@@ -1530,6 +1952,10 @@ export function App() {
           handleSelectView("checkout");
         }}
         onBrowseMedicines={() => handleSelectView("shop")}
+        onOpenProductDetail={(prod) => {
+          setCartDrawerOpen(false);
+          void openProductDetailPage(prod);
+        }}
         onShowToast={showToast}
       />
 

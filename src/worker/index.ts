@@ -63,8 +63,8 @@ export async function injectStorefrontSeoMetadata(
     const canonicalUrl = `https://${sf.primary_domain}${url.pathname === "/" ? "" : url.pathname}`;
     let jsonLd = "";
 
-    // Check if this is a product detail URL (`/product/:slug`)
-    const prodMatch = url.pathname.match(/^\/product\/([^/]+)$/);
+    // Check if this is a product detail URL (`/product/:slug` or `/s/:store/product/:slug`)
+    const prodMatch = url.pathname.match(/^(?:\/s\/[a-z0-9-]+)?\/product\/([^/]+)$/i);
     if (prodMatch) {
       const slug = decodeURIComponent(prodMatch[1]);
       const prod = await env.DB.prepare(

@@ -49,9 +49,9 @@ export function QuantityStepperInput({
   return (
     <div
       onClick={(e) => e.stopPropagation()}
-      className={`inline-flex items-center rounded-full sf-glass-stepper ${
+      className={`inline-flex items-center rounded-xl sf-glass-stepper ${
         disabled ? "opacity-50 pointer-events-none" : ""
-      } ${isMd ? "p-1 gap-1 h-[42px]" : "p-1 gap-0.5 h-[38px]"}`}
+      } ${isMd ? "p-1 gap-1 h-[44px]" : "p-0.5 gap-0.5 h-[36px]"}`}
     >
       <button
         type="button"
@@ -60,7 +60,7 @@ export function QuantityStepperInput({
         aria-label="Decrease quantity"
         className={`${
           isMd ? "w-8 h-8 text-base" : "w-7 h-7 text-sm"
-        } rounded-full font-bold text-[#172B36] hover:bg-white/85 disabled:opacity-35 disabled:hover:bg-transparent transition flex items-center justify-center select-none`}
+        } rounded-lg font-bold text-[#142B35] hover:bg-white disabled:opacity-35 disabled:hover:bg-transparent transition flex items-center justify-center select-none`}
       >
         −
       </button>
@@ -116,8 +116,8 @@ export function QuantityStepperInput({
           }
         }}
         className={`qty-stepper-input sf-num ${
-          isMd ? "w-14 h-8 text-sm" : "w-11 h-7 text-xs"
-        } rounded-full bg-white/92 border border-white shadow-[0_1px_3px_rgba(14,81,70,0.08)] text-center font-bold text-[#10232C] focus:outline-none focus:border-[var(--sf-primary)] focus:ring-2 focus:ring-[var(--sf-primary-soft)]`}
+          isMd ? "w-12 h-8 text-sm" : "w-10 h-7 text-xs"
+        } rounded-lg bg-white border border-[#DCE6E1] text-center font-bold text-[#0F232C] focus:outline-none focus:border-[var(--sf-primary)] focus:ring-2 focus:ring-[var(--sf-primary-soft)]`}
       />
       <button
         type="button"
@@ -126,11 +126,10 @@ export function QuantityStepperInput({
         aria-label="Increase quantity"
         className={`${
           isMd ? "w-8 h-8 text-base" : "w-7 h-7 text-sm"
-        } rounded-full font-bold text-[#172B36] hover:bg-white/85 disabled:opacity-35 disabled:hover:bg-transparent transition flex items-center justify-center select-none`}
+        } rounded-lg font-bold text-[#142B35] hover:bg-white disabled:opacity-35 disabled:hover:bg-transparent transition flex items-center justify-center select-none`}
       >
         +
       </button>
     </div>
   );
 }
-

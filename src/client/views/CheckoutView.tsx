@@ -790,12 +790,14 @@ export function CheckoutView({
 
                     return (
                       <div key={cartKey} className="py-3.5 flex items-start gap-3">
-                        <div className="w-12 h-12 rounded-xl border border-[#DBE5E0] bg-[#FAF8F4] overflow-hidden flex items-center justify-center shrink-0 p-1">
+                        <div className="w-16 h-16 rounded-xl border border-[#DCE7E2] bg-white overflow-hidden flex items-center justify-center shrink-0 p-1">
                           {product.primary_image_url ? (
                             <img
                               src={product.primary_image_url}
                               alt={product.name}
-                              className="max-h-full max-w-full object-contain"
+                              loading="lazy"
+                              decoding="async"
+                              className="w-full h-full object-contain"
                             />
                           ) : (
                             <MedicinePlaceholderIllustration
@@ -804,7 +806,7 @@ export function CheckoutView({
                               categoryName={product.category_name}
                               brandName={product.brand_name}
                               packingLabel={product.packing_label}
-                              className="w-full h-full scale-75"
+                              className="w-full h-full scale-90"
                             />
                           )}
                         </div>
