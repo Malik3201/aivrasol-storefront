@@ -174,43 +174,45 @@ export function HomeView({
   return (
     <div className="sf-fade-up bg-[#F6F7F9]">
       {/* =================================================================== */}
-      {/* 1. FLAGSHIP RETAIL MERCHANDISING HERO (8+4 ASYMMETRIC COMMERCE GRID) */}
+      {/* 1. FLAGSHIP RETAIL MERCHANDISING HERO (MOBILE-FIRST + 8+4 DESKTOP)  */}
       {/* =================================================================== */}
       <section className="bg-white border-b border-[#E5E7EB]">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-6">
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-            {/* Primary 8-Column Full-Bleed Editorial Retail Banner */}
-            <div className="lg:col-span-8 relative rounded-xl overflow-hidden bg-[#0B1220] border border-[#E5E7EB] min-h-[270px] sm:min-h-[340px] lg:min-h-[360px] flex items-end sm:items-center">
-              <img
-                src={heroImgSrc}
-                alt={`${displayName} retail pharmacy counter in ${sf.city}`}
-                loading="eager"
-                decoding="async"
-                onError={() => {
-                  if (heroImgSrc !== EDITORIAL_MEDIA.heroDesktopWebp) {
-                    setHeroImgSrc(EDITORIAL_MEDIA.heroDesktopWebp);
-                  }
-                }}
-                data-testid="hero-pharmacy-photo"
-                className="absolute inset-0 w-full h-full object-cover object-center"
-              />
-              {/* Crisp Directional Editorial Contrast Scrim (Left readable, Right bright store photo) */}
-              <div
-                aria-hidden="true"
-                className="absolute inset-0"
-                style={{
-                  background:
-                    "linear-gradient(95deg, rgba(11,18,32,0.92) 0%, rgba(11,18,32,0.78) 44%, rgba(11,18,32,0.18) 100%)",
-                }}
-              />
+        <div className="max-w-7xl mx-auto px-3.5 sm:px-6 lg:px-8 py-3.5 sm:py-6">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 sm:gap-4">
+            {/* Primary 8-Column Visual Retail Banner (Crisp 16:10 Top Banner on Mobile, Full-Bleed Overlay on Desktop) */}
+            <div className="lg:col-span-8 relative rounded-xl overflow-hidden bg-[#0B1220] border border-[#E5E7EB] flex flex-col sm:flex-row sm:items-center sm:min-h-[340px] lg:min-h-[360px]">
+              <div className="relative w-full aspect-[16/10] sm:aspect-auto sm:absolute sm:inset-0 sm:h-full overflow-hidden shrink-0">
+                <img
+                  src={heroImgSrc}
+                  alt={`${displayName} retail pharmacy counter in ${sf.city}`}
+                  loading="eager"
+                  decoding="async"
+                  onError={() => {
+                    if (heroImgSrc !== EDITORIAL_MEDIA.heroDesktopWebp) {
+                      setHeroImgSrc(EDITORIAL_MEDIA.heroDesktopWebp);
+                    }
+                  }}
+                  data-testid="hero-pharmacy-photo"
+                  className="w-full h-full object-cover object-center"
+                />
+                {/* Crisp Directional Editorial Contrast Scrim (Desktop/Tablet) */}
+                <div
+                  aria-hidden="true"
+                  className="hidden sm:block absolute inset-0"
+                  style={{
+                    background:
+                      "linear-gradient(95deg, rgba(11,18,32,0.92) 0%, rgba(11,18,32,0.78) 44%, rgba(11,18,32,0.18) 100%)",
+                  }}
+                />
+              </div>
 
-              <div className="relative z-10 p-5 sm:p-8 lg:p-10 max-w-lg space-y-4">
-                <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-300">
+              <div className="relative z-10 p-4 sm:p-8 lg:p-10 max-w-lg space-y-2.5 sm:space-y-4">
+                <p className="text-[10.5px] sm:text-[11px] font-bold uppercase tracking-[0.14em] text-emerald-300 truncate">
                   {displayName} · {sf.city}
                   {sf.drug_sale_license_no ? ` · Lic #${sf.drug_sale_license_no}` : ""}
                 </p>
 
-                <h1 className="sf-heading text-[24px] sm:text-[32px] lg:text-[36px] font-extrabold text-white tracking-tight leading-[1.12]">
+                <h1 className="sf-heading text-[21px] sm:text-[32px] lg:text-[36px] font-extrabold text-white tracking-tight leading-[1.15]">
                   {heroTitle}
                 </h1>
 
@@ -218,14 +220,14 @@ export function HomeView({
                   {heroSubtitle}
                 </p>
 
-                <div className="flex flex-wrap items-center gap-2.5 pt-1">
+                <div className="grid grid-cols-1 min-[370px]:grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 sm:gap-2.5 pt-1">
                   <button
                     type="button"
                     onClick={() => {
                       onSelectCategory("all");
                       onSelectView("shop");
                     }}
-                    className="h-10 sm:h-11 px-5 rounded-lg sf-btn-primary text-xs sm:text-sm font-bold inline-flex items-center gap-2"
+                    className="min-h-[44px] px-4 sm:px-5 rounded-lg sf-btn-primary text-xs sm:text-sm font-bold inline-flex items-center justify-center gap-1.5 sm:gap-2"
                   >
                     <span>Shop Medicines</span>
                     {publishedCount > 0 && (
@@ -233,7 +235,7 @@ export function HomeView({
                         {publishedCount}
                       </span>
                     )}
-                    <ArrowRightIcon className="w-4 h-4" />
+                    <ArrowRightIcon className="w-4 h-4 shrink-0" />
                   </button>
 
                   {rxWhatsAppUrl && (
@@ -241,10 +243,10 @@ export function HomeView({
                       href={rxWhatsAppUrl}
                       target="_blank"
                       rel="noreferrer"
-                      className="h-10 sm:h-11 px-4 rounded-lg bg-white/12 hover:bg-white/20 border border-white/25 text-white text-xs sm:text-sm font-bold inline-flex items-center gap-2 transition"
+                      className="min-h-[44px] px-3.5 sm:px-4 rounded-lg bg-white/12 hover:bg-white/20 border border-white/25 text-white text-xs sm:text-sm font-bold inline-flex items-center justify-center gap-1.5 sm:gap-2 transition active:scale-[0.97]"
                     >
-                      <WhatsAppIcon className="w-4 h-4 text-emerald-300" />
-                      <span>Order via Prescription</span>
+                      <WhatsAppIcon className="w-4 h-4 text-emerald-300 shrink-0" />
+                      <span className="truncate">Order via Rx</span>
                     </a>
                   )}
                 </div>
@@ -252,44 +254,44 @@ export function HomeView({
             </div>
 
             {/* Right 4-Column Stacked Retail Action Tiles */}
-            <div className="lg:col-span-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-4">
+            <div className="lg:col-span-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-3 sm:gap-4">
               {/* Tile 1: Prescription Desk */}
-              <div className="rounded-xl bg-[#F8FAFC] border border-[#E5E7EB] p-4 sm:p-5 flex items-center justify-between gap-4">
-                <div className="space-y-2 min-w-0">
-                  <span className="text-[10.5px] font-bold uppercase tracking-wider sf-text-brand block">
+              <div className="rounded-xl bg-[#F8FAFC] border border-[#E5E7EB] p-3.5 sm:p-5 flex items-center justify-between gap-3 sm:gap-4">
+                <div className="space-y-1.5 sm:space-y-2 min-w-0">
+                  <span className="text-[10px] sm:text-[10.5px] font-bold uppercase tracking-wider sf-text-brand block">
                     Pharmacist Care Desk
                   </span>
-                  <h2 className="sf-heading text-base font-extrabold text-[#111827] leading-snug">
+                  <h2 className="sf-heading text-[15px] sm:text-base font-extrabold text-[#111827] leading-snug">
                     Have a Doctor&apos;s Prescription?
                   </h2>
                   <p className="text-xs text-[#4B5563] leading-relaxed">
                     Send a photo on WhatsApp for quick billing &amp; exact generic substitutes.
                   </p>
-                  <div className="pt-1">
+                  <div className="pt-0.5">
                     {rxWhatsAppUrl ? (
                       <a
                         href={rxWhatsAppUrl}
                         target="_blank"
                         rel="noreferrer"
-                        className="inline-flex items-center gap-1.5 text-xs font-bold sf-text-brand hover:underline"
+                        className="inline-flex items-center gap-1.5 py-1 text-xs font-bold sf-text-brand hover:underline"
                       >
-                        <WhatsAppIcon className="w-3.5 h-3.5" />
+                        <WhatsAppIcon className="w-3.5 h-3.5 shrink-0" />
                         <span>Send Prescription Now</span>
-                        <ChevronRightIcon className="w-3.5 h-3.5" />
+                        <ChevronRightIcon className="w-3.5 h-3.5 shrink-0" />
                       </a>
                     ) : (
                       <button
                         type="button"
                         onClick={() => onSelectView("contact")}
-                        className="inline-flex items-center gap-1 text-xs font-bold sf-text-brand hover:underline"
+                        className="inline-flex items-center gap-1 py-1 text-xs font-bold sf-text-brand hover:underline"
                       >
                         <span>Contact Counter</span>
-                        <ChevronRightIcon className="w-3.5 h-3.5" />
+                        <ChevronRightIcon className="w-3.5 h-3.5 shrink-0" />
                       </button>
                     )}
                   </div>
                 </div>
-                <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-lg overflow-hidden border border-[#E5E7EB] bg-white shrink-0">
+                <div className="w-[72px] h-[72px] sm:w-24 sm:h-24 rounded-lg overflow-hidden border border-[#E5E7EB] bg-white shrink-0">
                   <img
                     src={EDITORIAL_MEDIA.dispensingDeskWebp}
                     alt="Pharmacist prescription help"
@@ -301,16 +303,16 @@ export function HomeView({
               </div>
 
               {/* Tile 2: Express Delivery & Track Order */}
-              <div className="rounded-xl bg-[#0B1220] text-white border border-[#1F2937] p-4 sm:p-5 flex items-center justify-between gap-4">
-                <div className="space-y-2 min-w-0">
-                  <span className="text-[10.5px] font-bold uppercase tracking-wider text-emerald-400 block">
+              <div className="rounded-xl bg-[#0B1220] text-white border border-[#1F2937] p-3.5 sm:p-5 flex items-center justify-between gap-3 sm:gap-4">
+                <div className="space-y-1.5 sm:space-y-2 min-w-0">
+                  <span className="text-[10px] sm:text-[10.5px] font-bold uppercase tracking-wider text-emerald-400 block truncate">
                     {deliveryEnabled
                       ? freeThresholdPkr > 0
                         ? `Free Delivery > Rs. ${freeThresholdPkr.toLocaleString()}`
                         : "Fast Doorstep Delivery"
                       : "Counter Pickup"}
                   </span>
-                  <h2 className="sf-heading text-base font-extrabold text-white leading-snug">
+                  <h2 className="sf-heading text-[15px] sm:text-base font-extrabold text-white leading-snug">
                     {deliveryEnabled
                       ? `~${estimatedMinutes} Min Dispatch in ${sf.city}`
                       : `Zero-Fee Pickup at ${displayName}`}
@@ -320,26 +322,26 @@ export function HomeView({
                       ? `Standard delivery Rs. ${deliveryFeePkr.toLocaleString()} or free counter pickup.`
                       : "Reserve medicines online and collect with official 80mm receipt."}
                   </p>
-                  <div className="flex items-center gap-3 pt-1">
+                  <div className="flex flex-wrap items-center gap-3 pt-0.5">
                     <button
                       type="button"
                       onClick={() => onSelectView("track")}
-                      className="inline-flex items-center gap-1 text-xs font-bold text-emerald-300 hover:text-emerald-200 transition"
+                      className="inline-flex items-center gap-1 py-1 text-xs font-bold text-emerald-300 hover:text-emerald-200 transition"
                     >
-                      <PackageTrackIcon className="w-3.5 h-3.5" />
+                      <PackageTrackIcon className="w-3.5 h-3.5 shrink-0" />
                       <span>Track Order</span>
                     </button>
                     <button
                       type="button"
                       onClick={() => onSelectView("delivery")}
-                      className="inline-flex items-center gap-0.5 text-xs font-semibold text-slate-300 hover:text-white transition"
+                      className="inline-flex items-center gap-0.5 py-1 text-xs font-semibold text-slate-300 hover:text-white transition"
                     >
                       <span>Delivery Info</span>
-                      <ChevronRightIcon className="w-3.5 h-3.5" />
+                      <ChevronRightIcon className="w-3.5 h-3.5 shrink-0" />
                     </button>
                   </div>
                 </div>
-                <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-lg overflow-hidden border border-white/15 bg-slate-900 shrink-0">
+                <div className="w-[72px] h-[72px] sm:w-24 sm:h-24 rounded-lg overflow-hidden border border-white/15 bg-slate-900 shrink-0">
                   <img
                     src={EDITORIAL_MEDIA.careParcelWebp}
                     alt="Express local pharmacy delivery"
@@ -355,42 +357,46 @@ export function HomeView({
 
         {/* Hairline Commercial Trust Strip */}
         <div className="border-t border-[#F3F4F6] bg-[#FAFAFB]">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 text-xs">
-              <div className="flex items-center gap-2.5">
+          <div className="max-w-7xl mx-auto px-3.5 sm:px-6 lg:px-8 py-2.5 sm:py-3">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4 text-xs">
+              <div className="flex items-center gap-2 min-w-0">
                 <ShieldCheckIcon className="w-4 h-4 sf-text-brand shrink-0" />
                 <div className="min-w-0">
                   <span className="font-bold text-[#111827] block truncate">100% Genuine Stock</span>
-                  <span className="text-[11px] text-[#6B7280] block truncate">Batch &amp; expiry verified</span>
+                  <span className="text-[10.5px] sm:text-[11px] text-[#6B7280] block truncate">
+                    Batch &amp; expiry verified
+                  </span>
                 </div>
               </div>
-              <div className="flex items-center gap-2.5">
+              <div className="flex items-center gap-2 min-w-0">
                 <TruckIcon className="w-4 h-4 sf-text-brand shrink-0" />
                 <div className="min-w-0">
                   <span className="font-bold text-[#111827] block truncate">
                     {deliveryEnabled ? `Express Delivery` : `Digital Receipt`}
                   </span>
-                  <span className="text-[11px] text-[#6B7280] block truncate">
+                  <span className="text-[10.5px] sm:text-[11px] text-[#6B7280] block truncate">
                     {deliveryEnabled ? `~${estimatedMinutes} min in ${sf.city}` : `Official 80mm PDF bill`}
                   </span>
                 </div>
               </div>
-              <div className="flex items-center gap-2.5">
+              <div className="flex items-center gap-2 min-w-0">
                 <StoreIcon className="w-4 h-4 sf-text-brand shrink-0" />
                 <div className="min-w-0">
                   <span className="font-bold text-[#111827] block truncate">
                     {pickupEnabled ? "Free Counter Pickup" : "Flexible Pack Units"}
                   </span>
-                  <span className="text-[11px] text-[#6B7280] block truncate">
+                  <span className="text-[10.5px] sm:text-[11px] text-[#6B7280] block truncate">
                     {pickupEnabled ? "Rs. 0 fee · Ready fast" : "Box, strip, or single unit"}
                   </span>
                 </div>
               </div>
-              <div className="flex items-center gap-2.5">
+              <div className="flex items-center gap-2 min-w-0">
                 <PrescriptionIcon className="w-4 h-4 sf-text-brand shrink-0" />
                 <div className="min-w-0">
                   <span className="font-bold text-[#111827] block truncate">Generic Salt Match</span>
-                  <span className="text-[11px] text-[#6B7280] block truncate">Smart in-stock substitutes</span>
+                  <span className="text-[10.5px] sm:text-[11px] text-[#6B7280] block truncate">
+                    Smart in-stock substitutes
+                  </span>
                 </div>
               </div>
             </div>
@@ -399,12 +405,12 @@ export function HomeView({
       </section>
 
       {/* =================================================================== */}
-      {/* 2. SHOP BY DEPARTMENT (CRISP RETAIL CATEGORY TILES)                 */}
+      {/* 2. SHOP BY DEPARTMENT (ONE-THUMB HORIZONTAL SWIPE ON MOBILE)        */}
       {/* =================================================================== */}
       {validCategories.length > 0 && (
-        <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 pb-4">
-          <div className="flex items-end justify-between gap-4 mb-4">
-            <h2 className="sf-heading text-lg sm:text-xl font-extrabold text-[#111827]">
+        <section className="max-w-7xl mx-auto px-3.5 sm:px-6 lg:px-8 pt-6 sm:pt-8 pb-3 sm:pb-4">
+          <div className="flex items-center justify-between gap-3 mb-3 sm:mb-4">
+            <h2 className="sf-heading text-[17px] sm:text-xl font-extrabold text-[#111827]">
               Shop by Department
             </h2>
             <button
@@ -413,15 +419,15 @@ export function HomeView({
                 onSelectCategory("all");
                 onSelectView("shop");
               }}
-              className="text-xs font-bold sf-text-brand hover:underline inline-flex items-center gap-0.5 shrink-0"
+              className="min-h-[36px] text-xs font-bold sf-text-brand hover:underline inline-flex items-center gap-0.5 shrink-0"
             >
               <span>All Departments</span>
               <ChevronRightIcon className="w-3.5 h-3.5" />
             </button>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-            {validCategories.slice(0, 6).map((cat) => {
+          <div className="flex sm:grid overflow-x-auto sm:overflow-visible snap-x snap-mandatory no-scrollbar gap-2.5 sm:gap-3 -mx-3.5 px-3.5 sm:mx-0 sm:px-0 pb-1 sm:pb-0 sm:grid-cols-3 lg:grid-cols-6">
+            {validCategories.slice(0, 8).map((cat, idx) => {
               const count = Number(cat.published_product_count || 0);
               const iconUrl = cat.image_url || resolveCategory3dIconUrl(cat.name);
               return (
@@ -432,9 +438,11 @@ export function HomeView({
                     onSelectCategory(cat.name);
                     onSelectView("shop");
                   }}
-                  className="bg-white rounded-xl border border-[#E5E7EB] hover:border-[var(--sf-primary)] p-3.5 text-left flex items-center lg:flex-col lg:items-start gap-3 transition group"
+                  className={`${
+                    idx >= 6 ? "sm:hidden" : ""
+                  } snap-start shrink-0 w-[124px] sm:w-auto bg-white rounded-xl border border-[#E5E7EB] hover:border-[var(--sf-primary)] p-3 sm:p-3.5 text-left flex flex-col sm:flex-row lg:flex-col items-start sm:items-center lg:items-start gap-2.5 sm:gap-3 transition active:scale-[0.97] group`}
                 >
-                  <div className="w-12 h-12 lg:w-14 lg:h-14 rounded-lg bg-[#F6F7F9] p-1.5 flex items-center justify-center shrink-0">
+                  <div className="w-11 h-11 sm:w-12 sm:h-12 lg:w-14 lg:h-14 rounded-lg bg-[#F6F7F9] p-1.5 flex items-center justify-center shrink-0">
                     <img
                       src={iconUrl}
                       alt={cat.name}
@@ -443,7 +451,7 @@ export function HomeView({
                       className="w-full h-full object-contain group-hover:scale-105 transition-transform"
                     />
                   </div>
-                  <div className="min-w-0">
+                  <div className="min-w-0 w-full">
                     <p className="sf-heading text-xs sm:text-[13px] font-bold text-[#111827] group-hover:text-[var(--sf-primary-ink)] line-clamp-2 leading-snug transition-colors">
                       {cat.name}
                     </p>
@@ -461,10 +469,10 @@ export function HomeView({
       {/* =================================================================== */}
       {/* 3. POPULAR MEDICINES (DENSE 2-COL MOBILE / 5-COL DESKTOP COMMERCE)  */}
       {/* =================================================================== */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+      <section className="max-w-7xl mx-auto px-3.5 sm:px-6 lg:px-8 py-5 sm:py-8 space-y-3.5 sm:space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3">
           <div>
-            <h2 className="sf-heading text-lg sm:text-xl font-extrabold text-[#111827]">
+            <h2 className="sf-heading text-[17px] sm:text-xl font-extrabold text-[#111827]">
               Popular Medicines &amp; Essentials
             </h2>
             <p className="text-xs text-[#6B7280] mt-0.5">
@@ -472,11 +480,11 @@ export function HomeView({
             </p>
           </div>
 
-          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar max-w-full">
+          <div className="flex items-center gap-2 overflow-x-auto snap-x no-scrollbar -mx-3.5 px-3.5 sm:mx-0 sm:px-0">
             <button
               type="button"
               onClick={() => setFeaturedTab("all")}
-              className={`h-8 px-3 rounded-lg text-xs font-bold whitespace-nowrap transition ${
+              className={`snap-start min-h-[38px] sm:min-h-0 sm:h-8 px-3.5 sm:px-3 rounded-lg text-xs font-bold whitespace-nowrap transition active:scale-[0.97] shrink-0 ${
                 featuredTab === "all"
                   ? "bg-[#111827] text-white"
                   : "bg-white text-[#4B5563] border border-[#E5E7EB] hover:border-[#D1D5DB]"
@@ -489,7 +497,7 @@ export function HomeView({
                 key={cat.id}
                 type="button"
                 onClick={() => setFeaturedTab(cat.name)}
-                className={`h-8 px-3 rounded-lg text-xs font-semibold whitespace-nowrap transition ${
+                className={`snap-start min-h-[38px] sm:min-h-0 sm:h-8 px-3.5 sm:px-3 rounded-lg text-xs font-semibold whitespace-nowrap transition active:scale-[0.97] shrink-0 ${
                   featuredTab === cat.name
                     ? "bg-[#111827] text-white font-bold"
                     : "bg-white text-[#4B5563] border border-[#E5E7EB] hover:border-[#D1D5DB]"
@@ -504,7 +512,7 @@ export function HomeView({
                 onSelectCategory("all");
                 onSelectView("shop");
               }}
-              className="h-8 px-3 rounded-lg sf-btn-soft text-xs font-bold whitespace-nowrap inline-flex items-center gap-1"
+              className="snap-start min-h-[38px] sm:min-h-0 sm:h-8 px-3.5 sm:px-3 rounded-lg sf-btn-soft text-xs font-bold whitespace-nowrap inline-flex items-center gap-1 shrink-0"
             >
               <span>View All</span>
               <ArrowRightIcon className="w-3 h-3" />
@@ -513,23 +521,23 @@ export function HomeView({
         </div>
 
         {loadingProducts && displayedHomeProducts.length === 0 ? (
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 sm:gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2.5 sm:gap-4">
             {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
               <div
                 key={n}
                 className="rounded-xl bg-white border border-[#E5E7EB] overflow-hidden animate-pulse"
               >
-                <div className="h-[175px] bg-[#F3F4F6]" />
-                <div className="p-3.5 space-y-2">
+                <div className="aspect-square sm:aspect-auto sm:h-[175px] bg-[#F3F4F6]" />
+                <div className="p-2.5 sm:p-3.5 space-y-2">
                   <div className="h-2.5 w-16 bg-[#E5E7EB] rounded" />
                   <div className="h-4 w-4/5 bg-[#E5E7EB] rounded" />
-                  <div className="h-9 w-full bg-[#E5E7EB] rounded-lg mt-2" />
+                  <div className="h-10 sm:h-9 w-full bg-[#E5E7EB] rounded-lg mt-2" />
                 </div>
               </div>
             ))}
           </div>
         ) : displayedHomeProducts.length === 0 ? (
-          <div className="sf-card rounded-xl p-10 text-center space-y-2">
+          <div className="sf-card rounded-xl p-8 sm:p-10 text-center space-y-2">
             <p className="sf-heading text-base font-bold text-[#111827]">
               Catalog Products Are Syncing
             </p>
@@ -539,7 +547,7 @@ export function HomeView({
           </div>
         ) : (
           <div
-            className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 sm:gap-4"
+            className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2.5 sm:gap-4"
             data-testid="public-product-grid"
           >
             {displayedHomeProducts.map((prod) => renderProductCard(prod))}
@@ -548,13 +556,13 @@ export function HomeView({
       </section>
 
       {/* =================================================================== */}
-      {/* 4. SHOP BY HEALTH CONCERN (CLEAN CLINICAL SVG VECTOR TILES)         */}
+      {/* 4. SHOP BY HEALTH CONCERN (ONE-THUMB HORIZONTAL SWIPE ON MOBILE)    */}
       {/* =================================================================== */}
       <section className="bg-white border-y border-[#E5E7EB]">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-10 space-y-4">
+        <div className="max-w-7xl mx-auto px-3.5 sm:px-6 lg:px-8 py-6 sm:py-10 space-y-3.5 sm:space-y-4">
           <div className="flex items-end justify-between gap-4">
             <div>
-              <h2 className="sf-heading text-lg sm:text-xl font-extrabold text-[#111827]">
+              <h2 className="sf-heading text-[17px] sm:text-xl font-extrabold text-[#111827]">
                 Shop by Health Concern
               </h2>
               <p className="text-xs text-[#6B7280] mt-0.5">
@@ -563,7 +571,7 @@ export function HomeView({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2.5 sm:gap-3">
+          <div className="flex sm:grid overflow-x-auto sm:overflow-visible snap-x snap-mandatory no-scrollbar gap-2.5 sm:gap-3 -mx-3.5 px-3.5 sm:mx-0 sm:px-0 pb-1 sm:pb-0 sm:grid-cols-4 lg:grid-cols-8">
             {HEALTH_CONCERNS.map((item) => (
               <button
                 key={item.label}
@@ -572,10 +580,10 @@ export function HomeView({
                   onSearchChange(item.query);
                   onSubmitSearch(item.query);
                 }}
-                className="rounded-xl bg-[#FAFAFB] hover:bg-white border border-[#E5E7EB] hover:border-[var(--sf-primary)] p-3.5 text-left flex flex-col items-start gap-2.5 transition group"
+                className="snap-start shrink-0 w-[132px] sm:w-auto rounded-xl bg-[#FAFAFB] hover:bg-white border border-[#E5E7EB] hover:border-[var(--sf-primary)] p-3 sm:p-3.5 text-left flex flex-col items-start gap-2 sm:gap-2.5 transition active:scale-[0.97] group"
               >
                 <div className="w-9 h-9 rounded-lg sf-badge-brand flex items-center justify-center group-hover:scale-105 transition-transform">
-                  <HealthConcernIcon kind={item.kind} className="w-4.5 h-4.5" />
+                  <HealthConcernIcon kind={item.kind} className="w-4 h-4" />
                 </div>
                 <div className="min-w-0 w-full">
                   <p className="sf-heading text-xs font-bold text-[#111827] group-hover:text-[var(--sf-primary-ink)] truncate">
@@ -593,11 +601,11 @@ export function HomeView({
       {/* 5. ACTIVE PHARMACY OFFERS (SHOWN ONLY IF PROMOS / BANNERS EXIST)    */}
       {/* =================================================================== */}
       {(promotions.length > 0 || secondaryBanners.length > 0) && (
-        <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-4">
-          <h2 className="sf-heading text-lg sm:text-xl font-extrabold text-[#111827]">
+        <section className="max-w-7xl mx-auto px-3.5 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-3.5 sm:space-y-4">
+          <h2 className="sf-heading text-[17px] sm:text-xl font-extrabold text-[#111827]">
             Pharmacy Offers &amp; Savings
           </h2>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5 sm:gap-4">
             {promotions.slice(0, 2).map((promo) => {
               const discountNum = Number(promo.discount_value || 0);
               const minOrder = Number(promo.min_order_pkr || 0);
@@ -612,7 +620,7 @@ export function HomeView({
               return (
                 <div
                   key={promo.id}
-                  className="bg-white rounded-xl border border-[#E5E7EB] p-5 flex flex-col justify-between gap-4"
+                  className="bg-white rounded-xl border border-[#E5E7EB] p-4 sm:p-5 flex flex-col justify-between gap-3.5 sm:gap-4"
                 >
                   <div className="space-y-1.5">
                     <div className="flex flex-wrap items-center gap-2">
@@ -635,7 +643,7 @@ export function HomeView({
                     </p>
                   </div>
 
-                  <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-[#F3F4F6]">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3 pt-3 border-t border-[#F3F4F6]">
                     {promo.code ? (
                       <div className="inline-flex items-center gap-2 text-xs">
                         <span className="text-[#6B7280] font-semibold">Code:</span>
@@ -655,7 +663,7 @@ export function HomeView({
                         if (promo.code) onApplyPromoCode(promo.code);
                         onSelectView("shop");
                       }}
-                      className="h-9 px-4 rounded-lg sf-btn-primary text-xs font-bold inline-flex items-center gap-1.5"
+                      className="w-full sm:w-auto min-h-[42px] sm:min-h-0 sm:h-9 px-4 rounded-lg sf-btn-primary text-xs font-bold inline-flex items-center justify-center gap-1.5"
                     >
                       <span>{promo.code ? `Apply ${promo.code}` : "Shop Offer"}</span>
                       <ArrowRightIcon className="w-3.5 h-3.5" />
@@ -668,7 +676,7 @@ export function HomeView({
             {secondaryBanners.slice(0, 2).map((ban) => (
               <div
                 key={ban.id}
-                className="bg-white rounded-xl border border-[#E5E7EB] p-5 flex items-center justify-between gap-4"
+                className="bg-white rounded-xl border border-[#E5E7EB] p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3.5 sm:gap-4"
               >
                 <div className="space-y-1 min-w-0">
                   {ban.badge_text && (
@@ -682,7 +690,7 @@ export function HomeView({
                 <button
                   type="button"
                   onClick={() => onSelectView("shop")}
-                  className="h-9 px-4 rounded-lg sf-btn-primary text-xs font-bold shrink-0"
+                  className="w-full sm:w-auto min-h-[42px] sm:min-h-0 sm:h-9 px-4 rounded-lg sf-btn-primary text-xs font-bold shrink-0"
                 >
                   {ban.cta_label || "Shop Now"}
                 </button>
@@ -696,10 +704,10 @@ export function HomeView({
       {/* 6. OPTIONAL IN-HOUSE DOCTORS (HIDDEN IF 0 DOCTORS!)                 */}
       {/* =================================================================== */}
       {doctors.length > 0 && (
-        <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-4">
-          <div className="flex items-end justify-between gap-4">
-            <div>
-              <h2 className="sf-heading text-lg sm:text-xl font-extrabold text-[#111827]">
+        <section className="max-w-7xl mx-auto px-3.5 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-3.5 sm:space-y-4">
+          <div className="flex items-end justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="sf-heading text-[17px] sm:text-xl font-extrabold text-[#111827]">
                 Available Doctors at {displayName}
               </h2>
               <p className="text-xs text-[#6B7280] mt-0.5">
@@ -709,14 +717,14 @@ export function HomeView({
             <button
               type="button"
               onClick={() => onSelectView("doctors")}
-              className="text-xs font-bold sf-text-brand hover:underline inline-flex items-center gap-0.5 shrink-0"
+              className="min-h-[36px] text-xs font-bold sf-text-brand hover:underline inline-flex items-center gap-0.5 shrink-0"
             >
-              <span>All Doctors ({doctors.length})</span>
+              <span>All ({doctors.length})</span>
               <ChevronRightIcon className="w-3.5 h-3.5" />
             </button>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="flex md:grid overflow-x-auto md:overflow-visible snap-x snap-mandatory no-scrollbar gap-3 sm:gap-4 -mx-3.5 px-3.5 md:mx-0 md:px-0 pb-1 md:pb-0 md:grid-cols-2 lg:grid-cols-3">
             {doctors.slice(0, 3).map((doc) => {
               const phoneDigits = (doc.booking_phone || whatsappDigits).replace(/[^0-9]/g, "");
               const fee = Number(doc.consultation_fee_pkr || 0);
@@ -728,7 +736,11 @@ export function HomeView({
               return (
                 <div
                   key={doc.id}
-                  className="bg-white rounded-xl border border-[#E5E7EB] p-4 flex flex-col justify-between gap-3.5"
+                  className={`snap-start shrink-0 ${
+                    doctors.length > 1
+                      ? "w-[84vw] max-w-[320px] md:w-auto md:max-w-none"
+                      : "w-full"
+                  } bg-white rounded-xl border border-[#E5E7EB] p-4 flex flex-col justify-between gap-3.5`}
                 >
                   <div className="flex items-start gap-3">
                     {doc.photo_url ? (
@@ -788,7 +800,7 @@ export function HomeView({
                       href={`https://wa.me/${phoneDigits}?text=${waText}`}
                       target="_blank"
                       rel="noreferrer"
-                      className="h-9 px-3 rounded-lg sf-btn-primary text-xs font-bold inline-flex items-center justify-center gap-1.5"
+                      className="min-h-[42px] sm:min-h-0 sm:h-9 px-3 rounded-lg sf-btn-primary text-xs font-bold inline-flex items-center justify-center gap-1.5"
                     >
                       <WhatsAppIcon className="w-3.5 h-3.5" />
                       <span>Book Appointment</span>
@@ -806,10 +818,10 @@ export function HomeView({
       {/* =================================================================== */}
       {customServices.length > 0 && (
         <section className="bg-white border-y border-[#E5E7EB]">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-4">
-            <div className="flex items-end justify-between gap-4">
-              <div>
-                <h2 className="sf-heading text-lg sm:text-xl font-extrabold text-[#111827]">
+          <div className="max-w-7xl mx-auto px-3.5 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-3.5 sm:space-y-4">
+            <div className="flex items-end justify-between gap-3">
+              <div className="min-w-0">
+                <h2 className="sf-heading text-[17px] sm:text-xl font-extrabold text-[#111827]">
                   Lab Tests &amp; Healthcare Services
                 </h2>
                 <p className="text-xs text-[#6B7280] mt-0.5">
@@ -819,18 +831,22 @@ export function HomeView({
               <button
                 type="button"
                 onClick={() => onSelectView("services")}
-                className="text-xs font-bold sf-text-brand hover:underline inline-flex items-center gap-0.5 shrink-0"
+                className="min-h-[36px] text-xs font-bold sf-text-brand hover:underline inline-flex items-center gap-0.5 shrink-0"
               >
-                <span>All Tests &amp; Rates</span>
+                <span>All Tests</span>
                 <ChevronRightIcon className="w-3.5 h-3.5" />
               </button>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="flex md:grid overflow-x-auto md:overflow-visible snap-x snap-mandatory no-scrollbar gap-3 sm:gap-4 -mx-3.5 px-3.5 md:mx-0 md:px-0 pb-1 md:pb-0 md:grid-cols-2 lg:grid-cols-3">
               {customServices.slice(0, 3).map((svc) => (
                 <div
                   key={svc.id}
-                  className="bg-white rounded-xl border border-[#E5E7EB] overflow-hidden flex flex-col justify-between"
+                  className={`snap-start shrink-0 ${
+                    customServices.length > 1
+                      ? "w-[84vw] max-w-[320px] md:w-auto md:max-w-none"
+                      : "w-full"
+                  } bg-white rounded-xl border border-[#E5E7EB] overflow-hidden flex flex-col justify-between`}
                 >
                   <div>
                     {svc.image_url && (
@@ -884,7 +900,7 @@ export function HomeView({
                     <button
                       type="button"
                       onClick={() => onSelectView("services")}
-                      className="w-full h-9 rounded-lg sf-btn-soft text-xs font-bold inline-flex items-center justify-center gap-1"
+                      className="w-full min-h-[42px] sm:min-h-0 sm:h-9 rounded-lg sf-btn-soft text-xs font-bold inline-flex items-center justify-center gap-1"
                     >
                       <span>
                         {svc.items && svc.items.length > 3
@@ -905,10 +921,10 @@ export function HomeView({
       {/* 8. VERIFIED CUSTOMER REVIEWS (HIDDEN IF 0 PUBLISHED REVIEWS!)       */}
       {/* =================================================================== */}
       {reviews.length > 0 && (
-        <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-4">
-          <div className="flex flex-wrap items-end justify-between gap-3">
+        <section className="max-w-7xl mx-auto px-3.5 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-3.5 sm:space-y-4">
+          <div className="flex flex-wrap items-end justify-between gap-2.5">
             <div>
-              <h2 className="sf-heading text-lg sm:text-xl font-extrabold text-[#111827]">
+              <h2 className="sf-heading text-[17px] sm:text-xl font-extrabold text-[#111827]">
                 Verified Customer Reviews
               </h2>
               <p className="text-xs text-[#6B7280] mt-0.5">
@@ -924,11 +940,15 @@ export function HomeView({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="flex md:grid overflow-x-auto md:overflow-visible snap-x snap-mandatory no-scrollbar gap-3 sm:gap-4 -mx-3.5 px-3.5 md:mx-0 md:px-0 pb-1 md:pb-0 md:grid-cols-2 lg:grid-cols-3">
             {reviews.slice(0, 6).map((rev) => (
               <article
                 key={rev.id}
-                className="bg-white rounded-xl border border-[#E5E7EB] p-4 flex flex-col justify-between gap-3"
+                className={`snap-start shrink-0 ${
+                  reviews.length > 1
+                    ? "w-[84vw] max-w-[320px] md:w-auto md:max-w-none"
+                    : "w-full"
+                } bg-white rounded-xl border border-[#E5E7EB] p-4 flex flex-col justify-between gap-3`}
               >
                 <div className="space-y-2">
                   <div className="flex items-center justify-between gap-2">
@@ -951,8 +971,8 @@ export function HomeView({
                   )}
                 </div>
                 <div className="pt-2 border-t border-[#F3F4F6] flex items-center justify-between text-[11.5px] text-[#6B7280]">
-                  <span className="font-bold text-[#111827]">{rev.customer_name}</span>
-                  <span>
+                  <span className="font-bold text-[#111827] truncate">{rev.customer_name}</span>
+                  <span className="shrink-0">
                     {rev.created_at
                       ? new Date(rev.created_at).toLocaleDateString("en-PK", {
                           day: "numeric",
@@ -971,8 +991,8 @@ export function HomeView({
       {/* =================================================================== */}
       {/* 9. COMPACT RETAIL PHARMACY COUNTER & DIRECT ASSISTANCE BAR          */}
       {/* =================================================================== */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-2 pb-10">
-        <div className="bg-white rounded-xl border border-[#E5E7EB] p-5 sm:p-6 flex flex-col md:flex-row md:items-center justify-between gap-5">
+      <section className="max-w-7xl mx-auto px-3.5 sm:px-6 lg:px-8 pt-2 pb-8 sm:pb-10">
+        <div className="bg-white rounded-xl border border-[#E5E7EB] p-4 sm:p-6 flex flex-col md:flex-row md:items-center justify-between gap-4 sm:gap-5">
           <div className="space-y-1.5 max-w-2xl">
             <h2 className="sf-heading text-base sm:text-lg font-extrabold text-[#111827]">
               Visit {displayName} Counter
@@ -1002,18 +1022,18 @@ export function HomeView({
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 shrink-0 w-full md:w-auto">
             <button
               type="button"
               onClick={() => onSelectView("branches")}
-              className="h-9 px-3.5 rounded-lg sf-btn-secondary text-xs font-bold"
+              className="min-h-[42px] sm:min-h-0 sm:h-9 px-3 sm:px-3.5 rounded-lg sf-btn-secondary text-xs font-bold"
             >
               Directions &amp; Hours
             </button>
             <button
               type="button"
               onClick={() => onSelectView("contact")}
-              className="h-9 px-4 rounded-lg sf-btn-primary text-xs font-bold"
+              className="min-h-[42px] sm:min-h-0 sm:h-9 px-3 sm:px-4 rounded-lg sf-btn-primary text-xs font-bold"
             >
               Contact Pharmacy
             </button>

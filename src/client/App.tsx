@@ -26,6 +26,7 @@ import {
   trackPublicOrder,
 } from "./api";
 import { CartDrawer } from "./components/CartDrawer";
+import { MobileBottomNav } from "./components/MobileBottomNav";
 import {
   AlertCircleIcon,
   CheckCircleIcon,
@@ -1296,6 +1297,7 @@ export function App() {
   // Checkout Submission Handler
   async function handleCheckoutSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (checkoutSubmitting) return;
     setCheckoutError(null);
 
     if (cart.length === 0) {
@@ -1684,10 +1686,27 @@ export function App() {
       ? formatConvertedUnitStock(quickModalProduct, activeModalUnit)
       : null;
 
+  const handleFocusMobileSearch = () => {
+    setCartDrawerOpen(false);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    window.setTimeout(() => {
+      const mobileInput =
+        document.getElementById("mobile-global-search") ||
+        document.querySelector<HTMLInputElement>('[data-testid="catalog-search-input"]');
+      if (mobileInput instanceof HTMLInputElement) {
+        mobileInput.focus();
+      }
+    }, 120);
+  };
+
+  const hasDedicatedMobileActionBar =
+    (activeView === "product" && Boolean(selectedProduct && activeDetailUnit)) ||
+    ((activeView === "cart" || activeView === "checkout") && !completedOrder && cart.length > 0);
+
   return (
     <div
       style={themeVars}
-      className="min-h-screen flex flex-col bg-[#F5F7F9] text-[#0F172A] antialiased"
+      className="min-h-screen flex flex-col bg-[#F5F7F9] text-[#0F172A] antialiased max-w-full overflow-x-clip pb-20 md:pb-0"
       data-testid="storefront-active"
     >
       {/* Global Header */}
@@ -1729,10 +1748,10 @@ export function App() {
         <div
           role="status"
           aria-live="polite"
-          className="fixed bottom-5 right-4 sm:right-6 z-50 max-w-sm bg-[#08352E] text-white px-4 py-3 rounded-2xl shadow-xl border border-white/15 text-xs font-semibold flex items-center gap-2.5"
+          className="fixed bottom-[76px] md:bottom-5 left-3.5 right-3.5 sm:left-auto sm:right-6 z-50 sm:max-w-sm bg-[#08352E] text-white px-4 py-3 rounded-2xl shadow-xl border border-white/15 text-xs font-semibold flex items-center gap-2.5"
         >
           <CheckCircleIcon className="w-4 h-4 text-[#E6A65B] shrink-0" />
-          <span>{cartToast}</span>
+          <span className="leading-snug">{cartToast}</span>
         </div>
       )}
 
@@ -2061,6 +2080,30 @@ export function App() {
         openingHours={openingHours}
         onSelectView={handleSelectView}
       />
+
+      {/* Sticky Mobile Bottom Navigation Bar (5 Thumb-Reachable Tabs) */}
+      {!hasDedicatedMobileActionBar && (
+        <MobileBottomNav
+          activeView={activeView}
+          cartTotalItems={cartCalculations.totalItems}
+          cartDrawerOpen={cartDrawerOpen}
+          onSelectHome={() => {
+            setCartDrawerOpen(false);
+            handleSelectView("home");
+          }}
+          onSelectShop={() => {
+            setCartDrawerOpen(false);
+            setSelectedCategory("all");
+            handleSelectView("shop");
+          }}
+          onFocusSearch={handleFocusMobileSearch}
+          onSelectTrack={() => {
+            setCartDrawerOpen(false);
+            handleSelectView("track");
+          }}
+          onOpenCart={() => setCartDrawerOpen(true)}
+        />
+      )}
     </div>
   );
 }

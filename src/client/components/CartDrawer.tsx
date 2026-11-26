@@ -44,7 +44,7 @@ function CartItemThumb({
       type="button"
       onClick={onClick}
       aria-label={`Inspect ${product.name}`}
-      className="w-20 h-20 rounded-xl border border-[#DCE7E2] bg-white overflow-hidden flex items-center justify-center shrink-0 p-0.5 hover:border-[var(--sf-primary)] hover:shadow-xs transition group/thumb"
+      className="w-16 h-16 sm:w-20 sm:h-20 rounded-xl border border-[#DCE7E2] bg-white overflow-hidden flex items-center justify-center shrink-0 p-0.5 hover:border-[var(--sf-primary)] hover:shadow-xs transition group/thumb"
     >
       {product.primary_image_url && !imgFailed ? (
         <img
@@ -102,11 +102,11 @@ export function CartDrawer({
       aria-label="Shopping Cart"
     >
       <aside
-        className="sf-drawer-enter bg-white w-full max-w-md h-full shadow-2xl border-l border-[#E5E7EB] flex flex-col justify-between"
+        className="sf-drawer-enter bg-white w-full sm:max-w-md h-[100dvh] sm:h-full shadow-2xl border-l border-[#E5E7EB] flex flex-col justify-between"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Crisp Branded Cart Header */}
-        <div className="px-5 py-4 bg-[#0B1220] text-white flex items-center justify-between gap-3">
+        <div className="px-4 sm:px-5 py-3.5 sm:py-4 bg-[#0B1220] text-white flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
             <div
               className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 text-white"
@@ -131,7 +131,7 @@ export function CartDrawer({
                   onShowToast("Shopping cart cleared");
                 }}
                 title="Clear entire cart"
-                className="h-8 px-2.5 rounded-lg bg-white/12 hover:bg-white/20 text-white border border-white/20 text-xs font-medium inline-flex items-center gap-1 transition"
+                className="min-h-[40px] sm:h-8 px-2.5 rounded-lg bg-white/12 hover:bg-white/20 text-white border border-white/20 text-xs font-medium inline-flex items-center gap-1 transition active:scale-95"
               >
                 <TrashIcon className="w-3.5 h-3.5" />
                 <span>Clear</span>
@@ -141,7 +141,7 @@ export function CartDrawer({
               type="button"
               onClick={onClose}
               aria-label="Close cart drawer"
-              className="w-8 h-8 rounded-lg bg-white/12 hover:bg-white/20 text-white flex items-center justify-center transition"
+              className="min-w-[40px] min-h-[40px] sm:w-8 sm:h-8 rounded-lg bg-white/12 hover:bg-white/20 text-white flex items-center justify-center transition active:scale-95"
             >
               <CloseIcon className="w-4 h-4" />
             </button>
@@ -150,12 +150,12 @@ export function CartDrawer({
 
         {/* Free Delivery Progress Strip */}
         {cart.length > 0 && deliveryEnabled && freeThreshold > 0 && (
-          <div className="px-5 py-3 bg-[#F9FAFB] border-b border-[#E5E7EB] space-y-1.5">
-            <div className="flex items-center justify-between text-xs text-[#111827]">
-              <span className="inline-flex items-center gap-1.5 font-medium">
-                <TruckIcon className="w-3.5 h-3.5 sf-text-brand" />
+          <div className="px-4 sm:px-5 py-2.5 sm:py-3 bg-[#F9FAFB] border-b border-[#E5E7EB] space-y-1.5">
+            <div className="flex items-center justify-between gap-2 text-xs text-[#111827]">
+              <span className="inline-flex items-center gap-1.5 font-medium min-w-0">
+                <TruckIcon className="w-3.5 h-3.5 sf-text-brand shrink-0" />
                 {remainingForFreeDelivery > 0 ? (
-                  <span>
+                  <span className="truncate">
                     Add{" "}
                     <strong className="font-bold tabular-nums">
                       Rs. {remainingForFreeDelivery.toLocaleString()}
@@ -163,10 +163,10 @@ export function CartDrawer({
                     for free delivery
                   </span>
                 ) : (
-                  <span className="font-bold sf-text-brand">Unlocked Free Home Delivery</span>
+                  <span className="font-bold sf-text-brand truncate">Unlocked Free Home Delivery</span>
                 )}
               </span>
-              <span className="text-[11px] font-bold sf-text-brand tabular-nums">
+              <span className="text-[11px] font-bold sf-text-brand tabular-nums shrink-0">
                 {progressPct}%
               </span>
             </div>
@@ -182,10 +182,10 @@ export function CartDrawer({
           </div>
         )}
 
-        {/* Items List with Large Full-Preview Product Images */}
-        <div className="flex-1 overflow-y-auto px-5 divide-y divide-[#F3F4F6]">
+        {/* Items List with Large Full-Preview Product Images & 40x40 Touch Steppers */}
+        <div className="flex-1 overflow-y-auto px-4 sm:px-5 divide-y divide-[#F3F4F6]">
           {cart.length === 0 ? (
-            <div className="py-20 text-center space-y-3.5">
+            <div className="py-16 sm:py-20 text-center space-y-3.5">
               <div className="w-14 h-14 rounded-2xl bg-[#EEF7F4] border border-[#CDE3DB] flex items-center justify-center mx-auto sf-text-brand">
                 <ShoppingBagIcon className="w-6 h-6" />
               </div>
@@ -201,7 +201,7 @@ export function CartDrawer({
                   onClose();
                   onBrowseMedicines();
                 }}
-                className="mt-2 h-10 px-5 rounded-xl sf-btn-primary text-xs font-semibold"
+                className="mt-2 min-h-[44px] px-5 rounded-xl sf-btn-primary text-xs font-semibold"
               >
                 Browse Medicines
               </button>
@@ -214,14 +214,14 @@ export function CartDrawer({
               const itemCap = getCartItemMaxCap(cartItem, cart);
 
               return (
-                <div key={cartKey} className="py-4 flex items-start gap-3.5">
+                <div key={cartKey} className="py-3.5 sm:py-4 flex items-start gap-3">
                   <CartItemThumb
                     product={product}
                     onClick={onOpenProductDetail ? () => onOpenProductDetail(product) : undefined}
                   />
 
                   {/* Item Details & Controls */}
-                  <div className="flex-1 min-w-0 space-y-2">
+                  <div className="flex-1 min-w-0 space-y-2.5">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <button
@@ -249,24 +249,24 @@ export function CartDrawer({
                         title="Remove item from cart"
                         aria-label={`Remove ${product.name} from cart`}
                         data-testid="drawer-remove-item-btn"
-                        className="w-7 h-7 rounded-lg flex items-center justify-center text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition shrink-0"
+                        className="w-10 h-10 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition active:scale-95 shrink-0"
                       >
-                        <TrashIcon className="w-3.5 h-3.5" />
+                        <TrashIcon className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
                       </button>
                     </div>
 
-                    <div className="flex items-center justify-between gap-2 pt-0.5">
+                    <div className="flex items-center justify-between gap-2">
                       <QuantityStepperInput
                         value={qty}
                         min={1}
                         max={itemCap}
-                        size="sm"
+                        size="touch"
                         onChange={(q) => onUpdateCartQty(cartKey, q)}
                         onCapReached={(cap) =>
                           onShowToast(`Maximum ${cap} ${selectedUnit.unit_name} available.`)
                         }
                       />
-                      <span className="sf-heading text-sm font-extrabold text-[#0F232C] tabular-nums">
+                      <span className="sf-heading text-sm font-extrabold text-[#0F232C] tabular-nums whitespace-nowrap">
                         PKR {lineTotal.toLocaleString()}
                       </span>
                     </div>
@@ -277,9 +277,9 @@ export function CartDrawer({
           )}
         </div>
 
-        {/* Clean Summary Footer */}
+        {/* Clean Safe-Area Sticky Summary Footer */}
         {cart.length > 0 && (
-          <div className="p-5 border-t border-[#E2EAE6] bg-[#F8FAF9] space-y-3.5">
+          <div className="px-4 sm:px-5 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom))] border-t border-[#E2EAE6] bg-[#F8FAF9] space-y-3">
             <div className="space-y-1 text-xs text-[#546A76]">
               <div className="flex items-center justify-between text-sm">
                 <span className="font-semibold text-[#0F232C]">Items Subtotal</span>
@@ -296,7 +296,7 @@ export function CartDrawer({
               type="button"
               onClick={onProceedToCheckout}
               data-testid="drawer-proceed-checkout-btn"
-              className="w-full h-12 rounded-xl sf-btn-primary text-sm font-bold shadow-xs"
+              className="w-full min-h-[48px] rounded-xl sf-btn-primary text-sm font-bold shadow-xs"
             >
               Proceed to Checkout
             </button>

@@ -15,7 +15,6 @@ import {
   PackageTrackIcon,
   PharmacyCrossIcon,
   PhoneIcon,
-  SearchIcon,
   ShieldCheckIcon,
   ShoppingBagIcon,
   WhatsAppIcon,
@@ -73,7 +72,6 @@ export function SiteHeader({
   hasCustomServices = false,
 }: SiteHeaderProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const [logoFailed, setLogoFailed] = useState(false);
 
   useEffect(() => {
@@ -102,17 +100,26 @@ export function SiteHeader({
 
   return (
     <>
-      {/* Tier 1: Slim Commercial Utility Strip */}
+      {/* Tier 1: Slim Commercial Utility Strip (Condensed 1-Line Strip on Mobile) */}
       {announcementEnabled && (
-        <div className="bg-[#0B1220] text-[#D1D5DB] text-[11.5px] border-b border-white/10">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-8 flex items-center justify-between gap-4">
-            <div className="flex items-center gap-2 min-w-0">
+        <div className="bg-[#0B1220] text-[#D1D5DB] text-[11px] sm:text-[11.5px] border-b border-white/10">
+          <div className="max-w-7xl mx-auto px-3.5 sm:px-6 lg:px-8 h-7 sm:h-8 flex items-center justify-between gap-2.5 sm:gap-4">
+            <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
               <span
                 className="w-1.5 h-1.5 rounded-full shrink-0"
                 style={{ backgroundColor: "var(--sf-primary)" }}
               />
               <p className="truncate font-medium">{announcementText}</p>
             </div>
+            {sf.contact_phone && (
+              <a
+                href={`tel:${sf.contact_phone}`}
+                className="sm:hidden inline-flex items-center gap-1 text-emerald-300 font-semibold shrink-0 tabular-nums"
+              >
+                <PhoneIcon className="w-3 h-3" />
+                <span>{sf.contact_phone}</span>
+              </a>
+            )}
             <div className="hidden sm:flex items-center gap-4 shrink-0">
               {hasVerifiedLicense && (
                 <span className="inline-flex items-center gap-1 font-mono text-[11px] text-emerald-300">
@@ -155,15 +162,15 @@ export function SiteHeader({
 
       {/* Tier 2: Flagship Pure-White Sticky E-Commerce Header */}
       <header className="sticky top-0 z-30 bg-white border-b border-[#E5E7EB] shadow-[0_1px_3px_rgba(17,24,39,0.04)]">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 sm:h-[68px] flex items-center justify-between gap-3 lg:gap-6">
+        <div className="max-w-7xl mx-auto px-3.5 sm:px-6 lg:px-8 h-14 sm:h-[68px] flex items-center justify-between gap-2.5 sm:gap-4 lg:gap-6">
           {/* Brand Identity */}
           <button
             type="button"
             onClick={() => onSelectView("home")}
-            className="flex items-center gap-2.5 min-w-0 text-left shrink-0 group"
+            className="flex items-center gap-2.5 min-w-0 flex-1 md:flex-none text-left group active:scale-[0.99] transition-transform"
           >
             {branding?.logo_url && !logoFailed ? (
-              <div className="w-10 h-10 rounded-lg border border-[#E5E7EB] bg-white p-1 flex items-center justify-center shrink-0">
+              <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg border border-[#E5E7EB] bg-white p-1 flex items-center justify-center shrink-0">
                 <img
                   src={branding.logo_url}
                   alt={displayName}
@@ -174,10 +181,10 @@ export function SiteHeader({
               </div>
             ) : (
               <div
-                className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0 relative text-white"
+                className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center shrink-0 relative text-white"
                 style={{ backgroundColor: "var(--sf-primary)" }}
               >
-                <span className="text-sm font-extrabold tracking-tight sf-heading">
+                <span className="text-xs sm:text-sm font-extrabold tracking-tight sf-heading">
                   {getPharmacyMonogram(displayName)}
                 </span>
                 <span className="absolute -bottom-1 -right-1 w-4 h-4 rounded bg-[#111827] text-white flex items-center justify-center border border-white">
@@ -188,18 +195,18 @@ export function SiteHeader({
 
             <div className="min-w-0">
               <span
-                className="sf-heading block text-[16px] sm:text-[18px] font-extrabold text-[#111827] tracking-tight leading-tight truncate max-w-[155px] sm:max-w-[200px]"
+                className="sf-heading block text-[15px] sm:text-[18px] font-extrabold text-[#111827] tracking-tight leading-tight truncate sm:max-w-[200px]"
                 data-testid="pharmacy-display-name"
               >
                 {displayName}
               </span>
-              <span className="hidden sm:block text-[11px] font-medium text-[#6B7280] truncate max-w-[200px]">
+              <span className="block text-[10.5px] sm:text-[11px] font-medium text-[#6B7280] truncate sm:max-w-[200px]">
                 {sf.city} • Licensed Pharmacy
               </span>
             </div>
           </button>
 
-          {/* Authoritative Wide E-Commerce Search Bar (Single Primary Search Input) */}
+          {/* Authoritative Wide E-Commerce Search Bar (Desktop) */}
           <div className="hidden md:block flex-1 max-w-2xl">
             <SmartSearchBar
               value={searchQuery}
@@ -216,15 +223,29 @@ export function SiteHeader({
           </div>
 
           {/* Right Commerce Actions */}
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={() => setMobileSearchOpen((v) => !v)}
-              aria-label="Toggle medicine search"
-              className="md:hidden w-10 h-10 rounded-lg sf-btn-secondary flex items-center justify-center"
-            >
-              <SearchIcon className="w-4 h-4 text-[#111827]" />
-            </button>
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            {/* Quick Mobile WhatsApp / Call Action */}
+            {whatsappDigits ? (
+              <a
+                href={`https://wa.me/${whatsappDigits}`}
+                target="_blank"
+                rel="noreferrer"
+                aria-label="WhatsApp Pharmacy Counter"
+                className="md:hidden min-h-[42px] px-2.5 rounded-lg bg-[#ECFDF5] text-[#065F46] border border-[#A7F3D0] inline-flex items-center justify-center gap-1 text-xs font-bold active:scale-[0.97] transition"
+              >
+                <WhatsAppIcon className="w-4 h-4 shrink-0" />
+                <span className="hidden min-[390px]:inline">WhatsApp</span>
+              </a>
+            ) : sf.contact_phone ? (
+              <a
+                href={`tel:${sf.contact_phone}`}
+                aria-label="Call Pharmacy Counter"
+                className="md:hidden min-h-[42px] px-2.5 rounded-lg bg-[#ECFDF5] text-[#065F46] border border-[#A7F3D0] inline-flex items-center justify-center gap-1 text-xs font-bold active:scale-[0.97] transition"
+              >
+                <PhoneIcon className="w-4 h-4 shrink-0" />
+                <span className="hidden min-[390px]:inline">Call</span>
+              </a>
+            ) : null}
 
             <button
               type="button"
@@ -240,10 +261,10 @@ export function SiteHeader({
               type="button"
               onClick={onOpenCartDrawer}
               data-testid="header-cart-button"
-              className="inline-flex items-center gap-2 h-10 sm:h-11 px-3 sm:px-4 rounded-lg sf-btn-primary text-xs font-bold whitespace-nowrap"
+              className="hidden md:inline-flex items-center gap-2 h-11 px-4 rounded-lg sf-btn-primary text-xs font-bold whitespace-nowrap"
             >
               <ShoppingBagIcon className="w-4 h-4 shrink-0" />
-              <span className="hidden sm:inline">Cart</span>
+              <span>Cart</span>
               <span className="min-w-[20px] h-5 px-1.5 rounded-full bg-white text-[#111827] text-[11px] font-extrabold inline-flex items-center justify-center tabular-nums">
                 {cartTotalItems}
               </span>
@@ -258,7 +279,7 @@ export function SiteHeader({
               type="button"
               onClick={() => setMobileMenuOpen(true)}
               aria-label="Open navigation menu"
-              className="lg:hidden w-10 h-10 rounded-lg sf-btn-secondary flex items-center justify-center"
+              className="lg:hidden min-w-[42px] min-h-[42px] rounded-lg sf-btn-secondary flex items-center justify-center"
             >
               <MenuIcon className="w-5 h-5 text-[#111827]" />
             </button>
@@ -380,27 +401,20 @@ export function SiteHeader({
           </div>
         </nav>
 
-        {/* Mobile Always-Accessible Search Row */}
-        <div className="md:hidden border-t border-[#F3F4F6] bg-white px-4 py-2.5">
+        {/* Mobile Always-Accessible Full-Width Search Row */}
+        <div className="md:hidden border-t border-[#F3F4F6] bg-white px-3.5 py-2">
           <SmartSearchBar
             value={searchQuery}
             onChange={onSearchChange}
-            onSubmit={(q) => {
-              setMobileSearchOpen(false);
-              onSubmitSearch(q);
-            }}
-            onSelectProduct={(prod) => {
-              setMobileSearchOpen(false);
-              onOpenProductDetail(prod);
-            }}
+            onSubmit={(q) => onSubmitSearch(q)}
+            onSelectProduct={(prod) => onOpenProductDetail(prod)}
             onQuickAdd={onQuickAddToCart}
             size="header"
-            placeholder={`Search medicines or salts…`}
+            inputId="mobile-global-search"
+            testId="mobile-header-search-input"
+            placeholder={`Search medicines, generic salts (e.g. Panadol)…`}
           />
         </div>
-
-        {/* Keep mobileSearchOpen clean if toggled */}
-        {mobileSearchOpen && null}
       </header>
 
       {/* Mobile Slide-Over Navigation Drawer */}
@@ -410,7 +424,7 @@ export function SiteHeader({
           onClick={() => setMobileMenuOpen(false)}
         >
           <div
-            className="sf-drawer-enter w-full max-w-[310px] bg-white h-full shadow-2xl border-l border-[#E5E7EB] flex flex-col justify-between"
+            className="sf-drawer-enter w-full max-w-[320px] bg-white h-[100dvh] sm:h-full shadow-2xl border-l border-[#E5E7EB] flex flex-col justify-between"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="overflow-y-auto">
@@ -423,13 +437,13 @@ export function SiteHeader({
                   type="button"
                   onClick={() => setMobileMenuOpen(false)}
                   aria-label="Close menu"
-                  className="w-8 h-8 rounded-lg bg-white/15 hover:bg-white/25 text-white flex items-center justify-center transition"
+                  className="min-w-[42px] min-h-[42px] rounded-lg bg-white/15 hover:bg-white/25 text-white flex items-center justify-center transition active:scale-95"
                 >
                   <CloseIcon className="w-4 h-4" />
                 </button>
               </div>
 
-              <nav className="p-3 space-y-0.5" aria-label="Mobile Navigation">
+              <nav className="p-3 space-y-1" aria-label="Mobile Navigation">
                 {[
                   { id: "home" as StorefrontView, label: "Home" },
                   { id: "shop" as StorefrontView, label: "All Medicines Catalog" },
@@ -449,7 +463,7 @@ export function SiteHeader({
                         onSelectView(item.id);
                         setMobileMenuOpen(false);
                       }}
-                      className={`w-full px-3 h-10 rounded-lg text-sm text-left flex items-center justify-between transition ${
+                      className={`w-full px-3 min-h-[44px] rounded-lg text-sm text-left flex items-center justify-between transition active:scale-[0.98] ${
                         active
                           ? "bg-[var(--sf-primary-soft)] sf-text-brand font-bold"
                           : "text-[#111827] font-medium hover:bg-[#F3F4F6]"
@@ -462,7 +476,7 @@ export function SiteHeader({
                 })}
 
                 {topCategories.length > 0 && (
-                  <div className="pt-3 mt-3 border-t border-[#E5E7EB] space-y-0.5">
+                  <div className="pt-3 mt-3 border-t border-[#E5E7EB] space-y-1">
                     <span className="px-3 text-[11px] font-bold uppercase tracking-wider text-[#6B7280] block pb-1">
                       Departments
                     </span>
@@ -475,7 +489,7 @@ export function SiteHeader({
                           onSelectView("shop");
                           setMobileMenuOpen(false);
                         }}
-                        className="w-full px-3 h-9 rounded-lg text-xs font-semibold text-[#374151] hover:bg-[#F3F4F6] text-left flex items-center justify-between"
+                        className="w-full px-3 min-h-[42px] rounded-lg text-xs font-semibold text-[#374151] hover:bg-[#F3F4F6] text-left flex items-center justify-between active:scale-[0.98]"
                       >
                         <span className="truncate">{cat.name}</span>
                         {Number(cat.published_product_count || 0) > 0 && (
@@ -490,7 +504,7 @@ export function SiteHeader({
               </nav>
             </div>
 
-            <div className="p-4 border-t border-[#E5E7EB] bg-[#F9FAFB] space-y-3 text-xs">
+            <div className="p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] border-t border-[#E5E7EB] bg-[#F9FAFB] space-y-3 text-xs">
               {sf.address_line && (
                 <div className="flex items-start gap-2 text-[#4B5563]">
                   <MapPinIcon className="w-4 h-4 shrink-0 mt-0.5 sf-text-brand" />
@@ -503,7 +517,7 @@ export function SiteHeader({
                 {sf.contact_phone && (
                   <a
                     href={`tel:${sf.contact_phone}`}
-                    className="h-9 rounded-lg sf-btn-secondary inline-flex items-center justify-center gap-1.5 font-bold text-xs"
+                    className="min-h-[44px] rounded-lg sf-btn-secondary inline-flex items-center justify-center gap-1.5 font-bold text-xs"
                   >
                     <PhoneIcon className="w-3.5 h-3.5 sf-text-brand" />
                     <span>Call</span>
@@ -514,7 +528,7 @@ export function SiteHeader({
                     href={`https://wa.me/${whatsappDigits}`}
                     target="_blank"
                     rel="noreferrer"
-                    className="h-9 rounded-lg sf-btn-primary inline-flex items-center justify-center gap-1.5 font-bold text-xs"
+                    className="min-h-[44px] rounded-lg sf-btn-primary inline-flex items-center justify-center gap-1.5 font-bold text-xs"
                   >
                     <WhatsAppIcon className="w-3.5 h-3.5" />
                     <span>WhatsApp</span>

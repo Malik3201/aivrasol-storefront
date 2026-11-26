@@ -29,7 +29,7 @@ export function DoctorsView({ sf, displayName, doctors, onSelectView }: DoctorsV
   return (
     <main className="flex-1 bg-[#F6F7F9] sf-fade-up">
       <section className="bg-white border-b border-[#E2E8F0]">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-2">
+        <div className="max-w-7xl mx-auto px-3.5 sm:px-6 lg:px-8 py-5 sm:py-8 space-y-1.5 sm:space-y-2">
           <nav className="flex items-center gap-1.5 text-xs text-[#64748B]">
             <button type="button" onClick={() => onSelectView("home")} className="hover:text-[#0F172A]">
               Home
@@ -37,29 +37,29 @@ export function DoctorsView({ sf, displayName, doctors, onSelectView }: DoctorsV
             <ChevronRightIcon className="w-3.5 h-3.5" />
             <span className="font-semibold text-[#0F172A]">Clinic &amp; Doctors</span>
           </nav>
-          <h1 className="sf-heading text-2xl sm:text-3xl font-extrabold text-[#0F172A]">
+          <h1 className="sf-heading text-xl sm:text-3xl font-extrabold text-[#0F172A] leading-tight">
             Available Doctors at {displayName}
           </h1>
-          <p className="text-sm text-[#475569] max-w-2xl">
+          <p className="text-xs sm:text-sm text-[#475569] max-w-2xl">
             Check consultation timings, fees, and book your appointment directly with our clinic counter in {sf.city}.
           </p>
         </div>
       </section>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div className="max-w-7xl mx-auto px-3.5 sm:px-6 lg:px-8 py-5 sm:py-8">
         {doctors.length === 0 ? (
-          <div className="sf-card rounded-2xl p-10 text-center space-y-3 max-w-lg mx-auto">
+          <div className="sf-card rounded-2xl p-8 sm:p-10 text-center space-y-3 max-w-lg mx-auto">
             <p className="sf-heading text-base font-bold text-[#0F172A]">No Doctors Listed Currently</p>
             <button
               type="button"
               onClick={() => onSelectView("shop")}
-              className="h-10 px-5 rounded-xl sf-btn-primary text-xs font-bold"
+              className="min-h-[44px] px-5 rounded-xl sf-btn-primary text-xs font-bold"
             >
               Browse Medicines Catalog
             </button>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
             {doctors.map((doc) => {
               const phoneDigits = (doc.booking_phone || defaultWhatsapp).replace(/[^0-9]/g, "");
               const fee = Number(doc.consultation_fee_pkr || 0);
@@ -72,21 +72,21 @@ export function DoctorsView({ sf, displayName, doctors, onSelectView }: DoctorsV
               return (
                 <article
                   key={doc.id}
-                  className="sf-card rounded-2xl overflow-hidden flex flex-col justify-between"
+                  className="sf-card rounded-xl sm:rounded-2xl overflow-hidden flex flex-col justify-between"
                 >
-                  <div className="p-5 space-y-4">
-                    <div className="flex items-start gap-4">
+                  <div className="p-4 sm:p-5 space-y-3.5 sm:space-y-4">
+                    <div className="flex items-start gap-3.5 sm:gap-4">
                       {doc.photo_url ? (
                         <img
                           src={doc.photo_url}
                           alt={doc.name}
                           loading="lazy"
                           decoding="async"
-                          className="w-20 h-20 rounded-2xl object-cover border border-[#E2E8F0] shrink-0 bg-[#F8FAFC]"
+                          className="w-16 h-16 sm:w-20 sm:h-20 rounded-xl sm:rounded-2xl object-cover border border-[#E2E8F0] shrink-0 bg-[#F8FAFC]"
                         />
                       ) : (
                         <div
-                          className="w-20 h-20 rounded-2xl text-white font-extrabold text-xl flex items-center justify-center shrink-0"
+                          className="w-16 h-16 sm:w-20 sm:h-20 rounded-xl sm:rounded-2xl text-white font-extrabold text-lg sm:text-xl flex items-center justify-center shrink-0"
                           style={{ backgroundColor: "var(--sf-primary)" }}
                         >
                           {doc.name
@@ -122,7 +122,7 @@ export function DoctorsView({ sf, displayName, doctors, onSelectView }: DoctorsV
                       </p>
                     )}
 
-                    <div className="rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] p-3.5 space-y-2 text-xs">
+                    <div className="rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] p-3 sm:p-3.5 space-y-2 text-xs">
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-[#64748B] font-semibold">Consultation Fee</span>
                         <span className="sf-heading font-extrabold text-sm text-[#0F172A] tabular-nums">
@@ -155,22 +155,22 @@ export function DoctorsView({ sf, displayName, doctors, onSelectView }: DoctorsV
                     </div>
                   </div>
 
-                  <div className="px-5 pb-5 flex items-center gap-2">
+                  <div className="px-4 sm:px-5 pb-4 sm:pb-5 flex items-center gap-2">
                     {phoneDigits && (
                       <a
                         href={`https://wa.me/${phoneDigits}?text=${waText}`}
                         target="_blank"
                         rel="noreferrer"
-                        className="flex-1 h-10 px-3 rounded-xl sf-btn-primary text-xs font-bold inline-flex items-center justify-center gap-1.5"
+                        className="flex-1 min-h-[44px] sm:h-10 px-3 rounded-xl sf-btn-primary text-xs font-bold inline-flex items-center justify-center gap-1.5"
                       >
-                        <WhatsAppIcon className="w-4 h-4" />
+                        <WhatsAppIcon className="w-4 h-4 shrink-0" />
                         <span>Book Appointment</span>
                       </a>
                     )}
                     {(doc.booking_phone || sf.contact_phone) && (
                       <a
                         href={`tel:${doc.booking_phone || sf.contact_phone}`}
-                        className="h-10 px-3.5 rounded-xl sf-btn-secondary text-xs font-bold inline-flex items-center gap-1.5"
+                        className="min-h-[44px] sm:h-10 px-3.5 rounded-xl sf-btn-secondary text-xs font-bold inline-flex items-center gap-1.5 shrink-0"
                       >
                         <PhoneIcon className="w-3.5 h-3.5 sf-text-brand" />
                         <span>Call</span>
@@ -236,7 +236,7 @@ export function CustomServicesView({
   return (
     <main className="flex-1 bg-[#F6F7F9] sf-fade-up">
       <section className="bg-white border-b border-[#E2E8F0]">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 flex flex-col md:flex-row md:items-end justify-between gap-4">
+        <div className="max-w-7xl mx-auto px-3.5 sm:px-6 lg:px-8 py-5 sm:py-8 flex flex-col md:flex-row md:items-end justify-between gap-3.5 sm:gap-4">
           <div className="space-y-1.5">
             <nav className="flex items-center gap-1.5 text-xs text-[#64748B]">
               <button type="button" onClick={() => onSelectView("home")} className="hover:text-[#0F172A]">
@@ -245,10 +245,10 @@ export function CustomServicesView({
               <ChevronRightIcon className="w-3.5 h-3.5" />
               <span className="font-semibold text-[#0F172A]">Lab Tests &amp; Services</span>
             </nav>
-            <h1 className="sf-heading text-2xl sm:text-3xl font-extrabold text-[#0F172A]">
+            <h1 className="sf-heading text-xl sm:text-3xl font-extrabold text-[#0F172A] leading-tight">
               Lab Tests &amp; Healthcare Services — {displayName}
             </h1>
-            <p className="text-sm text-[#475569] max-w-2xl">
+            <p className="text-xs sm:text-sm text-[#475569] max-w-2xl">
               View transparent test rates, reporting times, home sample collection availability, and book directly with {displayName}.
             </p>
           </div>
@@ -260,15 +260,15 @@ export function CustomServicesView({
               value={testSearch}
               onChange={(e) => setTestSearch(e.target.value)}
               placeholder="Search lab test (e.g. CBC, HbA1c, Sugar)…"
-              className="w-full h-11 pl-10 pr-4 rounded-xl sf-input text-sm"
+              className="w-full min-h-[46px] sm:h-11 pl-10 pr-4 rounded-xl sf-input text-base sm:text-sm"
             />
           </div>
         </div>
       </section>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+      <div className="max-w-7xl mx-auto px-3.5 sm:px-6 lg:px-8 py-5 sm:py-8 space-y-5 sm:space-y-6">
         {filteredServices.length === 0 ? (
-          <div className="sf-card rounded-2xl p-10 text-center space-y-3 max-w-lg mx-auto">
+          <div className="sf-card rounded-2xl p-8 sm:p-10 text-center space-y-3 max-w-lg mx-auto">
             <p className="sf-heading text-base font-bold text-[#0F172A]">
               {testSearch ? `No tests or services matching "${testSearch}"` : "No Custom Services Listed"}
             </p>
@@ -276,7 +276,7 @@ export function CustomServicesView({
               <button
                 type="button"
                 onClick={() => setTestSearch("")}
-                className="h-9 px-4 rounded-xl sf-btn-primary text-xs font-bold"
+                className="min-h-[42px] px-4 rounded-xl sf-btn-primary text-xs font-bold"
               >
                 Show All Services
               </button>
@@ -291,7 +291,7 @@ export function CustomServicesView({
             );
 
             return (
-              <section key={svc.id} className="sf-card rounded-2xl overflow-hidden">
+              <section key={svc.id} className="sf-card rounded-xl sm:rounded-2xl overflow-hidden">
                 <div className="grid grid-cols-1 lg:grid-cols-12 border-b border-[#E2E8F0]">
                   {svc.image_url && (
                     <div className="lg:col-span-4 bg-[#F8FAFC] border-b lg:border-b-0 lg:border-r border-[#E2E8F0]">
@@ -300,23 +300,23 @@ export function CustomServicesView({
                         alt={svc.title}
                         loading="lazy"
                         decoding="async"
-                        className="w-full h-full min-h-[200px] max-h-[260px] object-cover"
+                        className="w-full aspect-[16/9] lg:aspect-auto lg:h-full lg:min-h-[200px] lg:max-h-[260px] object-cover"
                       />
                     </div>
                   )}
 
                   <div
-                    className={`${svc.image_url ? "lg:col-span-8" : "lg:col-span-12"} p-5 sm:p-6 flex flex-col justify-between gap-4`}
+                    className={`${svc.image_url ? "lg:col-span-8" : "lg:col-span-12"} p-4 sm:p-6 flex flex-col justify-between gap-4`}
                   >
                     <div className="space-y-2">
-                      <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
                         <span className="px-2.5 py-0.5 rounded-md sf-badge-brand text-[11px] font-bold">
                           {SERVICE_TYPE_LABELS[svc.service_type] || svc.service_type}
                         </span>
                         {Boolean(svc.home_service_available) && (
                           <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 text-[11px] font-bold">
                             <CheckCircleIcon className="w-3.5 h-3.5" />
-                            <span>Home Collection / Visit Available</span>
+                            <span>Home Collection</span>
                           </span>
                         )}
                         {svc.timings && (
@@ -327,11 +327,11 @@ export function CustomServicesView({
                         )}
                       </div>
 
-                      <h2 className="sf-heading text-xl sm:text-2xl font-extrabold text-[#0F172A]">
+                      <h2 className="sf-heading text-lg sm:text-2xl font-extrabold text-[#0F172A]">
                         {svc.title}
                       </h2>
                       {svc.subtitle && (
-                        <p className="text-sm font-semibold text-[#334155]">{svc.subtitle}</p>
+                        <p className="text-xs sm:text-sm font-semibold text-[#334155]">{svc.subtitle}</p>
                       )}
                       {svc.description && (
                         <p className="text-xs sm:text-sm text-[#475569] leading-relaxed">
@@ -340,7 +340,7 @@ export function CustomServicesView({
                       )}
                     </div>
 
-                    <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-[#F1F5F9]">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2.5 border-t border-[#F1F5F9]">
                       <div className="text-xs text-[#64748B]">
                         {svc.starting_price_pkr !== null && svc.starting_price_pkr !== undefined && (
                           <span>
@@ -352,24 +352,24 @@ export function CustomServicesView({
                         )}
                       </div>
 
-                      <div className="flex items-center gap-2">
+                      <div className="grid grid-cols-2 sm:flex items-center gap-2">
                         {phoneDigits && (
                           <a
                             href={`https://wa.me/${phoneDigits}?text=${genericWa}`}
                             target="_blank"
                             rel="noreferrer"
-                            className="h-9 px-4 rounded-xl sf-btn-primary text-xs font-bold inline-flex items-center gap-1.5"
+                            className="min-h-[42px] sm:min-h-0 sm:h-9 px-3.5 sm:px-4 rounded-xl sf-btn-primary text-xs font-bold inline-flex items-center justify-center gap-1.5"
                           >
-                            <WhatsAppIcon className="w-3.5 h-3.5" />
-                            <span>Book on WhatsApp</span>
+                            <WhatsAppIcon className="w-3.5 h-3.5 shrink-0" />
+                            <span>WhatsApp</span>
                           </a>
                         )}
                         {(svc.booking_phone || sf.contact_phone) && (
                           <a
                             href={`tel:${svc.booking_phone || sf.contact_phone}`}
-                            className="h-9 px-3.5 rounded-xl sf-btn-secondary text-xs font-bold inline-flex items-center gap-1.5"
+                            className="min-h-[42px] sm:min-h-0 sm:h-9 px-3.5 rounded-xl sf-btn-secondary text-xs font-bold inline-flex items-center justify-center gap-1.5"
                           >
-                            <PhoneIcon className="w-3.5 h-3.5 sf-text-brand" />
+                            <PhoneIcon className="w-3.5 h-3.5 sf-text-brand shrink-0" />
                             <span>Call Desk</span>
                           </a>
                         )}
@@ -378,12 +378,12 @@ export function CustomServicesView({
                   </div>
                 </div>
 
-                {/* Structured Tests / Price List Table */}
+                {/* Structured Tests / Price List */}
                 {items.length > 0 && (
-                  <div className="p-5 sm:p-6 bg-[#FAFBFD] space-y-3">
+                  <div className="p-4 sm:p-6 bg-[#FAFBFD] space-y-3">
                     <div className="flex items-center justify-between">
                       <h3 className="text-xs font-extrabold uppercase tracking-wider text-[#475569] flex items-center gap-1.5">
-                        <ShieldCheckIcon className="w-4 h-4 sf-text-brand" />
+                        <ShieldCheckIcon className="w-4 h-4 sf-text-brand shrink-0" />
                         <span>Available Tests, Packages &amp; Charges ({items.length})</span>
                       </h3>
                     </div>
@@ -398,19 +398,21 @@ export function CustomServicesView({
                         return (
                           <div
                             key={`${item.name}-${idx}`}
-                            className="rounded-xl bg-white border border-[#E2E8F0] px-4 py-3 flex items-center justify-between gap-3"
+                            className="rounded-xl bg-white border border-[#E2E8F0] px-3.5 py-3 flex items-center justify-between gap-2.5"
                           >
-                            <div className="min-w-0">
-                              <p className="text-sm font-bold text-[#0F172A]">{item.name}</p>
-                              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11.5px] text-[#64748B] mt-0.5">
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs sm:text-sm font-bold text-[#0F172A] break-words">
+                                {item.name}
+                              </p>
+                              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] sm:text-[11.5px] text-[#64748B] mt-0.5">
                                 {item.sample_type && <span>Sample: {item.sample_type}</span>}
                                 {item.report_time && <span>• Report: {item.report_time}</span>}
                                 {item.note && <span>• {item.note}</span>}
                               </div>
                             </div>
 
-                            <div className="flex items-center gap-2.5 shrink-0">
-                              <span className="sf-heading text-sm font-extrabold text-[#0F172A] tabular-nums">
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className="sf-heading text-xs sm:text-sm font-extrabold text-[#0F172A] tabular-nums whitespace-nowrap">
                                 {Number(item.price_pkr || 0) > 0
                                   ? `Rs. ${Number(item.price_pkr).toLocaleString()}`
                                   : "Free"}
@@ -420,7 +422,7 @@ export function CustomServicesView({
                                   href={`https://wa.me/${phoneDigits}?text=${itemWa}`}
                                   target="_blank"
                                   rel="noreferrer"
-                                  className="h-8 px-2.5 rounded-lg sf-btn-soft text-[11px] font-bold inline-flex items-center gap-1"
+                                  className="min-h-[38px] sm:h-8 px-3 sm:px-2.5 rounded-lg sf-btn-soft text-[11px] font-bold inline-flex items-center justify-center gap-1"
                                 >
                                   <span>Book</span>
                                 </a>

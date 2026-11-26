@@ -164,64 +164,68 @@ export function ProductDetailView({
     <main className="flex-1 bg-[#F6F7F9] sf-fade-up">
       {/* Crisp White Breadcrumb Bar */}
       <div className="bg-white border-b border-[#E5E7EB]">
-        <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-3 flex flex-wrap items-center justify-between gap-3 text-xs text-[#6B7280]">
-          <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 flex-wrap">
+        <div className="max-w-7xl mx-auto w-full px-3.5 sm:px-6 lg:px-8 py-2.5 sm:py-3 flex items-center justify-between gap-2.5 text-xs text-[#6B7280]">
+          <button
+            type="button"
+            onClick={handleBack}
+            data-testid="product-back-to-catalog"
+            className="inline-flex items-center gap-1.5 min-h-[36px] font-bold sf-text-brand hover:underline shrink-0"
+          >
+            <ArrowLeftIcon className="w-3.5 h-3.5" />
+            <span>Back</span>
+            <span className="hidden sm:inline">to Catalog</span>
+          </button>
+
+          <nav
+            aria-label="Breadcrumb"
+            className="flex items-center gap-1.5 overflow-x-auto no-scrollbar min-w-0"
+          >
             <button
               type="button"
               onClick={() => onSelectView("home")}
-              className="hover:text-[#111827] transition font-medium"
+              className="hover:text-[#111827] transition font-medium whitespace-nowrap shrink-0"
             >
               Home
             </button>
-            <ChevronRightIcon className="w-3.5 h-3.5 text-[#9CA3AF]" />
+            <ChevronRightIcon className="w-3.5 h-3.5 text-[#9CA3AF] shrink-0" />
             <button
               type="button"
               onClick={handleBack}
-              className="hover:text-[#111827] transition font-medium"
+              className="hover:text-[#111827] transition font-medium whitespace-nowrap shrink-0"
             >
               Medicines
             </button>
             {cleanProductText(product.category_name) && (
               <>
-                <ChevronRightIcon className="w-3.5 h-3.5 text-[#9CA3AF]" />
+                <ChevronRightIcon className="w-3.5 h-3.5 text-[#9CA3AF] shrink-0 hidden sm:block" />
                 <button
                   type="button"
                   onClick={() => {
                     onSelectCategory(cleanCategory);
                     onSelectView("shop");
                   }}
-                  className="hover:text-[#111827] transition font-medium"
+                  className="hover:text-[#111827] transition font-medium whitespace-nowrap shrink-0 hidden sm:inline"
                 >
                   {cleanCategory}
                 </button>
               </>
             )}
-            <ChevronRightIcon className="w-3.5 h-3.5 text-[#9CA3AF]" />
-            <span className="text-[#111827] font-semibold truncate max-w-[190px] sm:max-w-xs">
+            <ChevronRightIcon className="w-3.5 h-3.5 text-[#9CA3AF] shrink-0" />
+            <span className="text-[#111827] font-semibold truncate max-w-[150px] sm:max-w-xs">
               {product.name}
             </span>
           </nav>
-
-          <button
-            type="button"
-            onClick={handleBack}
-            data-testid="product-back-to-catalog"
-            className="inline-flex items-center gap-1.5 font-bold sf-text-brand hover:underline"
-          >
-            <ArrowLeftIcon className="w-3.5 h-3.5" />
-            <span>Back to Catalog</span>
-          </button>
         </div>
       </div>
 
       {/* Main Product Showcase */}
-      <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-8">
-        <div className="bg-white rounded-xl border border-[#E5E7EB] p-4 sm:p-6 lg:p-8 grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-9">
+      <div className="max-w-7xl mx-auto w-full px-3.5 sm:px-6 lg:px-8 py-4 sm:py-8 space-y-6 sm:space-y-8">
+        <div className="bg-white rounded-xl border border-[#E5E7EB] p-3.5 sm:p-6 lg:p-8 grid grid-cols-1 lg:grid-cols-12 gap-5 lg:gap-9">
           {/* Left Column: Unobstructed Pure-White Full-Preview Media Stage + Click-to-Zoom Lightbox */}
-          <div className="lg:col-span-5 space-y-4">
-            <div className="rounded-2xl bg-white border border-[#E2E8F0] overflow-hidden">
+          <div className="lg:col-span-5 space-y-3 sm:space-y-4">
+            <div className="rounded-xl sm:rounded-2xl bg-white border border-[#E2E8F0] overflow-hidden">
               {/* Clean Status Strip Above Photo — Zero Overlays Covering Medicine Packaging */}
-              <div className="px-4 py-2.5 bg-[#F8FAFC] border-b border-[#EDF2F7] flex items-center justify-between gap-2 text-xs">
+              <div className="px-3.5 sm:px-4 py-2 sm:py-2.5 bg-[#F8FAFC] border-b border-[#EDF2F7] flex items-center justify-between gap-2 text-xs">
                 <span
                   className={`inline-flex items-center gap-1.5 font-bold ${
                     isUnitOut
@@ -264,7 +268,7 @@ export function ProductDetailView({
                       onClick={() => setLightboxOpen(true)}
                       className="text-[11px] font-bold sf-text-brand hover:underline"
                     >
-                      Zoom Image
+                      Zoom
                     </button>
                   )}
                 </div>
@@ -283,7 +287,7 @@ export function ProductDetailView({
                 role={selectedImageUrl ? "button" : undefined}
                 tabIndex={selectedImageUrl ? 0 : undefined}
                 aria-label={selectedImageUrl ? `Zoom image of ${product.name}` : undefined}
-                className={`w-full aspect-[4/3] sm:aspect-square max-h-[420px] bg-white flex items-center justify-center p-3 sm:p-4 ${
+                className={`w-full aspect-square max-h-[300px] sm:max-h-[420px] bg-white flex items-center justify-center p-2.5 sm:p-4 ${
                   selectedImageUrl ? "cursor-zoom-in" : ""
                 }`}
               >
@@ -308,7 +312,7 @@ export function ProductDetailView({
             </div>
 
             {galleryImages.length > 1 && (
-              <div className="flex items-center gap-2.5 overflow-x-auto no-scrollbar">
+              <div className="flex items-center gap-2 overflow-x-auto snap-x no-scrollbar">
                 {galleryImages.map((img: { id: string; url: string; alt: string }) => {
                   const active = img.url === selectedImageUrl;
                   return (
@@ -316,7 +320,7 @@ export function ProductDetailView({
                       key={img.id}
                       type="button"
                       onClick={() => setSelectedImageUrl(img.url)}
-                      className={`w-16 h-16 rounded-xl border bg-white p-1.5 flex items-center justify-center shrink-0 transition ${
+                      className={`snap-start w-14 h-14 sm:w-16 sm:h-16 rounded-xl border bg-white p-1.5 flex items-center justify-center shrink-0 transition active:scale-95 ${
                         active
                           ? "border-[var(--sf-primary)] ring-2 ring-[var(--sf-primary-soft)]"
                           : "border-[#DBE5E0] hover:border-[var(--sf-primary)]"
@@ -334,29 +338,33 @@ export function ProductDetailView({
             )}
 
             {/* Pharmacy Fulfillment Card */}
-            <div className="rounded-xl bg-[#F9FAFB] border border-[#E5E7EB] p-3.5 grid grid-cols-2 gap-3 text-xs">
-              <div className="flex items-start gap-2">
+            <div className="rounded-xl bg-[#F9FAFB] border border-[#E5E7EB] p-3 sm:p-3.5 grid grid-cols-2 gap-2.5 sm:gap-3 text-xs">
+              <div className="flex items-start gap-2 min-w-0">
                 <TruckIcon className="w-4 h-4 sf-text-brand shrink-0 mt-0.5" />
-                <div>
-                  <span className="font-bold text-[#111827] block">Home Delivery</span>
-                  <span className="text-[#6B7280]">Local dispatch in {sf.city}</span>
+                <div className="min-w-0">
+                  <span className="font-bold text-[#111827] block truncate">Home Delivery</span>
+                  <span className="text-[11px] sm:text-xs text-[#6B7280] block truncate">
+                    Local dispatch in {sf.city}
+                  </span>
                 </div>
               </div>
-              <div className="flex items-start gap-2">
+              <div className="flex items-start gap-2 min-w-0">
                 <StoreIcon className="w-4 h-4 sf-text-brand shrink-0 mt-0.5" />
-                <div>
-                  <span className="font-bold text-[#111827] block">Counter Pickup</span>
-                  <span className="text-[#6B7280]">Collect at {displayName}</span>
+                <div className="min-w-0">
+                  <span className="font-bold text-[#111827] block truncate">Counter Pickup</span>
+                  <span className="text-[11px] sm:text-xs text-[#6B7280] block truncate">
+                    Collect at {displayName}
+                  </span>
                 </div>
               </div>
             </div>
           </div>
 
           {/* Right Column: Identity, Selling-Unit Selector, Purchase Controls & Specs */}
-          <div className="lg:col-span-7 space-y-5">
+          <div className="lg:col-span-7 space-y-4 sm:space-y-5">
             {/* Product Identity */}
             <div className="space-y-2">
-              <div className="flex flex-wrap items-center gap-2 text-xs">
+              <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 text-xs">
                 <span className="px-2.5 py-0.5 rounded-md font-bold sf-badge-brand">
                   {cleanCategory}
                 </span>
@@ -370,33 +378,36 @@ export function ProductDetailView({
                 )}
               </div>
 
-              <h1 className="sf-heading text-2xl sm:text-3xl font-extrabold text-[#111827] tracking-tight leading-tight">
+              <h1 className="sf-heading text-xl sm:text-3xl font-extrabold text-[#111827] tracking-tight leading-snug">
                 {product.name}
               </h1>
 
               {(cleanGeneric || cleanForm || cleanPacking) && (
-                <p className="text-sm text-[#4B5563]">
-                  {[
-                    cleanGeneric ? `Formula: ${cleanGeneric}` : null,
-                    cleanForm,
-                    cleanPacking,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")}
-                </p>
+                <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                  {cleanGeneric && (
+                    <span className="inline-flex items-center px-2.5 py-1 rounded-lg bg-[#ECFDF5] border border-[#A7F3D0] text-xs font-bold text-[#065F46]">
+                      Generic Salt: {cleanGeneric}
+                    </span>
+                  )}
+                  {(cleanForm || cleanPacking) && (
+                    <span className="text-xs sm:text-sm text-[#4B5563] font-medium">
+                      {[cleanForm, cleanPacking].filter(Boolean).join(" · ")}
+                    </span>
+                  )}
+                </div>
               )}
             </div>
 
             {/* Structured Purchase Surface */}
-            <div className="p-4 sm:p-5 rounded-xl bg-[#F9FAFB] border border-[#E5E7EB] space-y-4">
-              <div className="flex flex-wrap items-baseline justify-between gap-3">
-                <div className="flex items-baseline gap-2.5">
+            <div className="p-3.5 sm:p-5 rounded-xl bg-[#F9FAFB] border border-[#E5E7EB] space-y-4">
+              <div className="flex flex-wrap items-baseline justify-between gap-2.5">
+                <div className="flex flex-wrap items-baseline gap-2">
                   <span className="sf-heading sf-price text-2xl sm:text-3xl font-extrabold text-[#111827] tracking-tight">
-                    Rs. {effectivePrice.toLocaleString()}
+                    PKR {effectivePrice.toLocaleString()}
                   </span>
                   {hasDiscount && (
                     <span className="text-sm text-[#9CA3AF] line-through tabular-nums">
-                      Rs. {comparePrice.toLocaleString()}
+                      PKR {comparePrice.toLocaleString()}
                     </span>
                   )}
                   <span className="text-xs font-semibold text-[#6B7280]">
@@ -419,12 +430,12 @@ export function ProductDetailView({
 
               {/* Selling Unit Selector */}
               {units.length > 1 ? (
-                <div className="space-y-2.5">
+                <div className="space-y-2">
                   <label className="text-xs font-bold uppercase tracking-wider text-[#4D616E] block">
-                    Choose Selling Unit
+                    Choose Selling Unit / Packing
                   </label>
                   <div
-                    className="grid grid-cols-2 sm:grid-cols-3 gap-2.5"
+                    className="flex flex-wrap gap-2"
                     data-testid="detail-unit-selector"
                   >
                     {units.map((u) => {
@@ -441,7 +452,7 @@ export function ProductDetailView({
                             onSelectUnit(product.id, u.unit_id);
                             onChangeDetailQty(1);
                           }}
-                          className={`p-3.5 rounded-xl border text-left transition ${
+                          className={`min-h-[48px] flex-1 min-w-[125px] sm:flex-none sm:min-w-[140px] px-3.5 py-2.5 rounded-xl border text-left transition active:scale-[0.97] ${
                             selected
                               ? "sf-pill-active shadow-xs"
                               : uOut
@@ -478,50 +489,52 @@ export function ProductDetailView({
                 )
               )}
 
-              {/* Quantity & Primary Actions */}
-              <div className="pt-1 flex flex-wrap items-center gap-3">
-                <QuantityStepperInput
-                  value={detailQty}
-                  min={1}
-                  max={detailUnitCap}
-                  disabled={isUnitOut}
-                  size="md"
-                  onChange={onChangeDetailQty}
-                  onCapReached={(cap) =>
-                    onShowToast(`Maximum ${cap} ${activeUnit.unit_name} available.`)
-                  }
-                />
+              {/* Quantity & Primary Actions (Full on Desktop, Express Order Now on Mobile alongside Sticky Bottom Buy Bar) */}
+              <div className="pt-1 flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2.5 sm:gap-3">
+                <div className="hidden md:flex items-center gap-3 flex-1 flex-wrap">
+                  <QuantityStepperInput
+                    value={detailQty}
+                    min={1}
+                    max={detailUnitCap}
+                    disabled={isUnitOut}
+                    size="md"
+                    onChange={onChangeDetailQty}
+                    onCapReached={(cap) =>
+                      onShowToast(`Maximum ${cap} ${activeUnit.unit_name} available.`)
+                    }
+                  />
 
-                <button
-                  type="button"
-                  disabled={isUnitOut}
-                  onClick={() => onAddToCart(product, detailQty, true, activeUnit)}
-                  className="flex-1 min-w-[200px] h-12 px-5 rounded-xl sf-btn-primary text-sm font-semibold shadow-xs inline-flex items-center justify-center gap-2 tabular-nums"
-                >
-                  <ShoppingBagIcon className="w-4 h-4" />
-                  <span>
-                    {isUnitOut
-                      ? "Currently Out of Stock"
-                      : `Add ${detailQty} ${activeUnit.unit_name} • PKR ${Number(
-                          effectivePrice * detailQty
-                        ).toLocaleString()}`}
-                  </span>
-                </button>
+                  <button
+                    type="button"
+                    disabled={isUnitOut}
+                    onClick={() => onAddToCart(product, detailQty, true, activeUnit)}
+                    className="flex-1 min-w-[200px] h-12 px-5 rounded-xl sf-btn-primary text-sm font-semibold shadow-xs inline-flex items-center justify-center gap-2 tabular-nums"
+                  >
+                    <ShoppingBagIcon className="w-4 h-4" />
+                    <span>
+                      {isUnitOut
+                        ? "Currently Out of Stock"
+                        : `Add ${detailQty} ${activeUnit.unit_name} • PKR ${Number(
+                            effectivePrice * detailQty
+                          ).toLocaleString()}`}
+                    </span>
+                  </button>
+                </div>
 
                 {!isUnitOut && (
                   <button
                     type="button"
                     onClick={() => onBuyNow(product, detailQty, activeUnit)}
-                    className="h-12 px-5 rounded-xl sf-btn-warm text-sm font-bold"
+                    className="w-full md:w-auto min-h-[46px] sm:h-12 px-5 rounded-xl sf-btn-warm text-sm font-bold"
                   >
-                    Order Now
+                    Express Order Now • PKR {Number(effectivePrice * detailQty).toLocaleString()}
                   </button>
                 )}
               </div>
 
               {/* Active Cart Line Indicator */}
               {inCartItem && (
-                <div className="pt-3 border-t border-[#E2E8E4] flex flex-wrap items-center justify-between gap-2 text-xs">
+                <div className="pt-3 border-t border-[#E2E8E4] flex flex-wrap items-center justify-between gap-2.5 text-xs">
                   <span className="font-medium text-[#4D616E]">
                     In your cart:{" "}
                     <strong className="text-[#172B36] tabular-nums">
@@ -540,7 +553,7 @@ export function ProductDetailView({
                     <button
                       type="button"
                       onClick={() => onRemoveFromCart(activeCartKey)}
-                      className="h-8 px-2.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 font-medium inline-flex items-center gap-1 transition"
+                      className="min-h-[40px] sm:min-h-0 sm:h-8 px-2.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 font-medium inline-flex items-center gap-1 transition active:scale-[0.97]"
                     >
                       <TrashIcon className="w-3.5 h-3.5" />
                       <span>Remove</span>
@@ -551,18 +564,20 @@ export function ProductDetailView({
             </div>
 
             {/* Product Details Ledger */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
-              <div className="p-3.5 rounded-xl bg-white border border-[#DBE5E0] space-y-0.5">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 sm:gap-3 text-xs">
+              <div className="p-3 sm:p-3.5 rounded-xl bg-white border border-[#DBE5E0] space-y-0.5 min-w-0">
                 <span className="text-[#607481] block">Supplier / Category</span>
-                <span className="font-bold text-[#172B36]">{cleanBrand || cleanCategory}</span>
+                <span className="font-bold text-[#172B36] truncate block">
+                  {cleanBrand || cleanCategory}
+                </span>
               </div>
-              <div className="p-3.5 rounded-xl bg-white border border-[#DBE5E0] space-y-0.5">
+              <div className="p-3 sm:p-3.5 rounded-xl bg-white border border-[#DBE5E0] space-y-0.5 min-w-0">
                 <span className="text-[#607481] block">Pack Configuration</span>
-                <span className="font-bold text-[#172B36]">
+                <span className="font-bold text-[#172B36] truncate block">
                   {cleanPacking || activeUnit.unit_name}
                 </span>
               </div>
-              <div className="p-3.5 rounded-xl bg-white border border-[#DBE5E0] space-y-0.5 col-span-2 sm:col-span-1">
+              <div className="p-3 sm:p-3.5 rounded-xl bg-white border border-[#DBE5E0] space-y-0.5 col-span-2 sm:col-span-1 min-w-0">
                 <span className="text-[#607481] block">Dispensed By</span>
                 <span className="font-bold text-[#172B36] truncate block">{displayName}</span>
               </div>
@@ -578,7 +593,7 @@ export function ProductDetailView({
             )}
 
             {product.requires_prescription && (
-              <div className="rounded-2xl bg-rose-50/75 border border-rose-200 p-4 flex items-start gap-3 text-xs text-rose-900">
+              <div className="rounded-xl sm:rounded-2xl bg-rose-50/75 border border-rose-200 p-3.5 sm:p-4 flex items-start gap-3 text-xs text-rose-900">
                 <PrescriptionIcon className="w-4 h-4 text-rose-700 shrink-0 mt-0.5" />
                 <div className="space-y-1">
                   <p className="font-bold">Prescription Verification Required</p>
@@ -615,30 +630,31 @@ export function ProductDetailView({
         {/* Same-Formula / Generic Salt Alternatives (Automatically Highlighted When Out of Stock!) */}
         {genericAlternatives.length > 0 && (
           <section
-            className={`rounded-2xl p-5 sm:p-6 space-y-5 border ${
+            id="generic-alternatives"
+            className={`rounded-xl sm:rounded-2xl p-3.5 sm:p-6 space-y-4 border ${
               isUnitOut
                 ? "bg-[#ECFDF5] border-emerald-300"
                 : "bg-white border-[#E2E8F0]"
             }`}
           >
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <span className="text-[11px] font-extrabold uppercase tracking-wider sf-text-brand block">
+            <div className="flex flex-wrap items-center justify-between gap-2.5">
+              <div className="min-w-0">
+                <span className="text-[10.5px] sm:text-[11px] font-extrabold uppercase tracking-wider sf-text-brand block">
                   {isUnitOut
                     ? "Currently Out of Stock — In-Stock Substitute Available"
                     : "Same Generic Composition"}
                 </span>
-                <h2 className="sf-heading text-lg sm:text-xl font-extrabold text-[#0F172A]">
+                <h2 className="sf-heading text-base sm:text-xl font-extrabold text-[#0F172A]">
                   {cleanGeneric
                     ? `Same-Formula Alternatives (${cleanGeneric})`
                     : "Available Generic Alternatives"}
                 </h2>
               </div>
-              <span className="px-3 py-1 rounded-lg bg-white border border-[#CBD5E1] text-xs font-bold text-[#0F172A]">
+              <span className="px-2.5 py-1 rounded-lg bg-white border border-[#CBD5E1] text-xs font-bold text-[#0F172A] shrink-0">
                 {genericAlternatives.length} available now
               </span>
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5 sm:gap-4">
               {genericAlternatives.slice(0, 4).map((alt) => renderProductCard(alt))}
             </div>
           </section>
@@ -646,9 +662,9 @@ export function ProductDetailView({
 
         {/* Related Products */}
         {relatedProducts.length > 0 && (
-          <section className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="sf-heading text-lg sm:text-xl font-extrabold text-[#111827]">
+          <section className="space-y-3.5 sm:space-y-4">
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="sf-heading text-base sm:text-xl font-extrabold text-[#111827]">
                 More Items from {displayName}
               </h2>
               <button
@@ -657,16 +673,97 @@ export function ProductDetailView({
                   onSelectCategory("all");
                   onSelectView("shop");
                 }}
-                className="text-xs font-bold sf-text-brand hover:underline"
+                className="min-h-[36px] text-xs font-bold sf-text-brand hover:underline shrink-0"
               >
                 View Full Catalog
               </button>
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5 sm:gap-4">
               {relatedProducts.slice(0, 4).map((rel) => renderProductCard(rel))}
             </div>
           </section>
         )}
+      </div>
+
+      {/* Sticky Mobile Bottom Buy Bar (Live Total + Stepper + Big Solid Add to Cart CTA) */}
+      <div
+        data-testid="mobile-product-buy-bar"
+        className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white border-t border-slate-200 shadow-[0_-4px_16px_rgba(15,23,42,0.08)] px-3.5 pt-2.5 pb-[calc(0.625rem+env(safe-area-inset-bottom))]"
+      >
+        <div className="flex items-center gap-2.5 max-w-lg mx-auto">
+          <div className="min-w-0 shrink-0">
+            <span className="block text-[10px] font-bold uppercase tracking-wider text-[#6B7280] leading-none">
+              Total ({detailQty} {activeUnit.unit_name})
+            </span>
+            <span className="sf-heading text-base font-extrabold text-[#111827] tabular-nums leading-tight block mt-0.5">
+              PKR {Number(effectivePrice * detailQty).toLocaleString()}
+            </span>
+          </div>
+
+          {!isUnitOut && (
+            <div className="inline-flex items-center rounded-xl sf-glass-stepper p-0.5 gap-0.5 h-[44px] shrink-0">
+              <button
+                type="button"
+                disabled={detailQty <= 1}
+                onClick={() => onChangeDetailQty(Math.max(1, detailQty - 1))}
+                aria-label="Decrease quantity"
+                className="w-8 h-9 rounded-lg font-extrabold text-base text-[#111827] hover:bg-white disabled:opacity-35 flex items-center justify-center active:scale-95 transition"
+              >
+                −
+              </button>
+              <span className="w-7 text-center text-xs font-extrabold text-[#111827] tabular-nums">
+                {detailQty}
+              </span>
+              <button
+                type="button"
+                disabled={detailUnitCap > 0 && detailQty >= detailUnitCap}
+                onClick={() => {
+                  if (detailUnitCap > 0 && detailQty >= detailUnitCap) {
+                    onShowToast(`Maximum ${detailUnitCap} ${activeUnit.unit_name} available.`);
+                    return;
+                  }
+                  onChangeDetailQty(detailQty + 1);
+                }}
+                aria-label="Increase quantity"
+                className="w-8 h-9 rounded-lg font-extrabold text-base text-[#111827] hover:bg-white disabled:opacity-35 flex items-center justify-center active:scale-95 transition"
+              >
+                +
+              </button>
+            </div>
+          )}
+
+          {isUnitOut ? (
+            genericAlternatives.length > 0 ? (
+              <button
+                type="button"
+                onClick={() => {
+                  document.getElementById("generic-alternatives")?.scrollIntoView({ behavior: "smooth" });
+                }}
+                className="flex-1 min-h-[44px] px-4 rounded-xl sf-btn-soft text-xs font-extrabold inline-flex items-center justify-center gap-1.5"
+              >
+                <span>View Alternatives ({genericAlternatives.length})</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled
+                className="flex-1 min-h-[44px] px-4 rounded-xl bg-[#F3F4F6] text-[#6B7280] border border-[#E5E7EB] text-xs font-bold"
+              >
+                Currently Out of Stock
+              </button>
+            )
+          ) : (
+            <button
+              type="button"
+              onClick={() => onAddToCart(product, detailQty, true, activeUnit)}
+              data-testid="mobile-buy-bar-add-btn"
+              className="flex-1 min-h-[44px] px-3.5 rounded-xl sf-btn-primary text-xs font-extrabold shadow-xs inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
+            >
+              <ShoppingBagIcon className="w-4 h-4 shrink-0" />
+              <span>Add to Cart</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Full-Screen High-Clarity Image Zoom Lightbox */}
@@ -676,11 +773,11 @@ export function ProductDetailView({
           aria-modal="true"
           aria-label={`Full preview of ${product.name}`}
           onClick={() => setLightboxOpen(false)}
-          className="fixed inset-0 z-50 bg-[#08171D]/85 flex items-center justify-center p-4 sm:p-8"
+          className="fixed inset-0 z-50 bg-[#08171D]/85 flex items-center justify-center p-3.5 sm:p-8"
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="sf-zoom-in relative bg-white rounded-3xl max-w-3xl w-full max-h-[88vh] p-4 sm:p-6 shadow-2xl flex flex-col gap-3"
+            className="sf-zoom-in relative bg-white rounded-2xl sm:rounded-3xl max-w-3xl w-full max-h-[88dvh] p-3.5 sm:p-6 shadow-2xl flex flex-col gap-3"
           >
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
@@ -695,16 +792,16 @@ export function ProductDetailView({
                 type="button"
                 onClick={() => setLightboxOpen(false)}
                 aria-label="Close full image preview"
-                className="w-9 h-9 rounded-xl sf-btn-secondary flex items-center justify-center shrink-0"
+                className="min-w-[42px] min-h-[42px] rounded-xl sf-btn-secondary flex items-center justify-center shrink-0"
               >
                 <CloseIcon className="w-4 h-4" />
               </button>
             </div>
-            <div className="flex-1 min-h-0 flex items-center justify-center bg-white rounded-2xl border border-[#E6EEEA] p-3 overflow-hidden">
+            <div className="flex-1 min-h-0 flex items-center justify-center bg-white rounded-xl sm:rounded-2xl border border-[#E6EEEA] p-2.5 sm:p-3 overflow-hidden">
               <img
                 src={selectedImageUrl}
                 alt={product.name}
-                className="max-h-[70vh] max-w-full object-contain"
+                className="max-h-[68dvh] max-w-full object-contain"
               />
             </div>
           </div>
@@ -762,19 +859,19 @@ export function QuickProductModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-[#0F2028]/55 backdrop-blur-xs flex items-center justify-center p-4"
+      className="fixed inset-0 z-50 bg-[#0F2028]/55 flex items-end sm:items-center justify-center sm:p-4"
       onClick={onClose}
     >
       <div
-        className="sf-fade-up bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-[#DBE5E0] space-y-4"
+        className="sf-sheet-enter sm:sf-fade-up bg-white rounded-t-2xl sm:rounded-3xl max-w-lg w-full p-4 sm:p-6 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:pb-6 shadow-2xl border border-[#DBE5E0] space-y-4"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-3">
-          <div>
+          <div className="min-w-0">
             <span className="text-xs font-bold uppercase tracking-wider sf-text-brand">
               {cleanCategory}
             </span>
-            <h3 className="sf-heading text-lg font-extrabold text-[#172B36] mt-0.5">
+            <h3 className="sf-heading text-lg font-extrabold text-[#172B36] mt-0.5 leading-snug">
               {product.name}
             </h3>
             {cleanGeneric && (
@@ -785,7 +882,7 @@ export function QuickProductModal({
             type="button"
             onClick={onClose}
             aria-label="Close preview"
-            className="w-8 h-8 rounded-lg sf-btn-secondary flex items-center justify-center"
+            className="min-w-[42px] min-h-[42px] sm:w-8 sm:h-8 rounded-lg sf-btn-secondary flex items-center justify-center shrink-0"
           >
             <CloseIcon className="w-4 h-4" />
           </button>
@@ -800,7 +897,7 @@ export function QuickProductModal({
                   key={u.unit_id}
                   type="button"
                   onClick={() => onSelectUnit(product.id, u.unit_id)}
-                  className={`px-3 py-1.5 rounded-xl border text-xs font-semibold transition tabular-nums ${
+                  className={`min-h-[40px] px-3 py-1.5 rounded-xl border text-xs font-semibold transition active:scale-[0.97] tabular-nums ${
                     selected
                       ? "sf-pill-active"
                       : "bg-[#FAF8F4] text-[#4D616E] border-[#DBE5E0]"
@@ -813,7 +910,7 @@ export function QuickProductModal({
           </div>
         )}
 
-        <div className="pt-3 border-t border-[#E8EFEA] flex flex-wrap items-center justify-between gap-3">
+        <div className="pt-3 border-t border-[#E8EFEA] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <span className="sf-heading text-xl font-extrabold text-[#172B36] tabular-nums">
               PKR {Number(activeUnit.price_pkr).toLocaleString()}
@@ -846,7 +943,7 @@ export function QuickProductModal({
                 onClose();
                 onOpenFullDetails(product);
               }}
-              className="h-9 px-3.5 rounded-xl sf-btn-secondary text-xs font-semibold"
+              className="min-h-[42px] sm:min-h-0 sm:h-9 px-3.5 rounded-xl sf-btn-secondary text-xs font-semibold"
             >
               Details
             </button>
@@ -857,7 +954,7 @@ export function QuickProductModal({
                 onAddToCart(product, modalQty, true, activeUnit);
                 onClose();
               }}
-              className="h-9 px-4 rounded-xl sf-btn-primary text-xs font-semibold"
+              className="flex-1 sm:flex-none min-h-[42px] sm:min-h-0 sm:h-9 px-4 rounded-xl sf-btn-primary text-xs font-semibold"
             >
               Add
             </button>

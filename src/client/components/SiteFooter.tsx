@@ -53,10 +53,10 @@ export function SiteFooter({
 
   return (
     <footer className="bg-[#0B1220] text-[#D1D5DB] border-t border-white/10">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-8 lg:gap-10">
+      <div className="max-w-7xl mx-auto px-3.5 sm:px-6 lg:px-8 py-9 sm:py-12">
+        <div className="grid grid-cols-2 lg:grid-cols-12 gap-7 sm:gap-8 lg:gap-10">
           {/* Column 1: Pharmacy Identity */}
-          <div className="lg:col-span-4 space-y-4">
+          <div className="col-span-2 lg:col-span-4 space-y-3.5">
             <div className="flex items-center gap-3">
               {branding?.logo_url && !logoFailed ? (
                 <div className="w-10 h-10 rounded-lg bg-white p-1.5 flex items-center justify-center shrink-0">
@@ -80,8 +80,8 @@ export function SiteFooter({
                   </span>
                 </div>
               )}
-              <div>
-                <p className="sf-heading text-base font-extrabold text-white leading-tight">
+              <div className="min-w-0">
+                <p className="sf-heading text-base font-extrabold text-white leading-tight truncate">
                   {displayName}
                 </p>
                 <p className="text-xs text-[#9CA3AF]">{sf.city}, Pakistan</p>
@@ -116,28 +116,28 @@ export function SiteFooter({
           </div>
 
           {/* Column 2: Shop & Ordering */}
-          <div className="lg:col-span-2 space-y-3">
+          <div className="col-span-1 lg:col-span-2 space-y-2.5">
             <h3 className="text-[11px] font-bold uppercase tracking-widest text-white">
               Shop &amp; Orders
             </h3>
-            <ul className="space-y-2 text-xs sm:text-sm text-[#9CA3AF]">
+            <ul className="space-y-1 text-xs sm:text-sm text-[#9CA3AF]">
               <li>
-                <button type="button" onClick={() => onSelectView("home")} className="hover:text-white transition">
+                <button type="button" onClick={() => onSelectView("home")} className="py-1.5 hover:text-white transition text-left">
                   Home
                 </button>
               </li>
               <li>
-                <button type="button" onClick={() => onSelectView("shop")} className="hover:text-white transition">
+                <button type="button" onClick={() => onSelectView("shop")} className="py-1.5 hover:text-white transition text-left">
                   Medicines Catalog
                 </button>
               </li>
               <li>
-                <button type="button" onClick={() => onSelectView("delivery")} className="hover:text-white transition">
+                <button type="button" onClick={() => onSelectView("delivery")} className="py-1.5 hover:text-white transition text-left">
                   Delivery &amp; Pickup
                 </button>
               </li>
               <li>
-                <button type="button" onClick={() => onSelectView("track")} className="text-emerald-400 hover:text-emerald-300 font-semibold transition">
+                <button type="button" onClick={() => onSelectView("track")} className="py-1.5 text-emerald-400 hover:text-emerald-300 font-semibold transition text-left">
                   Track Order
                 </button>
               </li>
@@ -145,28 +145,28 @@ export function SiteFooter({
           </div>
 
           {/* Column 3: Pharmacy Info */}
-          <div className="lg:col-span-2 space-y-3">
+          <div className="col-span-1 lg:col-span-2 space-y-2.5">
             <h3 className="text-[11px] font-bold uppercase tracking-widest text-white">
               Pharmacy
             </h3>
-            <ul className="space-y-2 text-xs sm:text-sm text-[#9CA3AF]">
+            <ul className="space-y-1 text-xs sm:text-sm text-[#9CA3AF]">
               <li>
-                <button type="button" onClick={() => onSelectView("about")} className="hover:text-white transition">
+                <button type="button" onClick={() => onSelectView("about")} className="py-1.5 hover:text-white transition text-left">
                   About Us
                 </button>
               </li>
               <li>
-                <button type="button" onClick={() => onSelectView("branches")} className="hover:text-white transition">
+                <button type="button" onClick={() => onSelectView("branches")} className="py-1.5 hover:text-white transition text-left">
                   Store Locations
                 </button>
               </li>
               <li>
-                <button type="button" onClick={() => onSelectView("contact")} className="hover:text-white transition">
+                <button type="button" onClick={() => onSelectView("contact")} className="py-1.5 hover:text-white transition text-left">
                   Contact Us
                 </button>
               </li>
               <li>
-                <button type="button" onClick={() => onSelectView("hours")} className="hover:text-white transition">
+                <button type="button" onClick={() => onSelectView("hours")} className="py-1.5 hover:text-white transition text-left">
                   Business Hours
                 </button>
               </li>
@@ -174,7 +174,7 @@ export function SiteFooter({
           </div>
 
           {/* Column 4: Counter Assistance */}
-          <div className="lg:col-span-4 space-y-3">
+          <div className="col-span-2 lg:col-span-4 space-y-3">
             <h3 className="text-[11px] font-bold uppercase tracking-widest text-white">
               Counter &amp; Support
             </h3>
@@ -194,7 +194,7 @@ export function SiteFooter({
               </div>
 
               {sf.contact_email && (
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 min-w-0">
                   <MailIcon className="w-4 h-4 shrink-0 text-emerald-400" />
                   <a href={`mailto:${sf.contact_email}`} className="hover:text-white transition truncate">
                     {sf.contact_email}
@@ -202,14 +202,14 @@ export function SiteFooter({
                 </div>
               )}
 
-              <div className="flex flex-wrap items-center gap-2 pt-1">
+              <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 pt-1.5">
                 {sf.contact_phone && (
                   <a
                     href={`tel:${sf.contact_phone}`}
-                    className="h-9 px-3 rounded-lg bg-white/10 hover:bg-white/15 border border-white/15 text-white text-xs font-semibold inline-flex items-center gap-1.5 transition tabular-nums"
+                    className="min-h-[42px] sm:h-9 px-3 rounded-lg bg-white/10 hover:bg-white/15 border border-white/15 text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition active:scale-[0.97] tabular-nums"
                   >
-                    <PhoneIcon className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>{sf.contact_phone}</span>
+                    <PhoneIcon className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                    <span className="truncate">{sf.contact_phone}</span>
                   </a>
                 )}
 
@@ -218,9 +218,9 @@ export function SiteFooter({
                     href={`https://wa.me/${whatsappDigits}`}
                     target="_blank"
                     rel="noreferrer"
-                    className="h-9 px-3 rounded-lg sf-btn-primary text-xs font-bold inline-flex items-center gap-1.5"
+                    className="min-h-[42px] sm:h-9 px-3 rounded-lg sf-btn-primary text-xs font-bold inline-flex items-center justify-center gap-1.5"
                   >
-                    <WhatsAppIcon className="w-3.5 h-3.5" />
+                    <WhatsAppIcon className="w-3.5 h-3.5 shrink-0" />
                     <span>WhatsApp</span>
                   </a>
                 )}
@@ -230,7 +230,7 @@ export function SiteFooter({
         </div>
 
         {/* Bottom Legal Bar */}
-        <div className="mt-10 pt-5 border-t border-white/10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-[#9CA3AF]">
+        <div className="mt-8 sm:mt-10 pt-5 border-t border-white/10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-[#9CA3AF]">
           <div className="space-y-1">
             <p>
               © {year} <strong className="font-semibold text-white">{displayName}</strong>. All rights reserved.
@@ -242,10 +242,10 @@ export function SiteFooter({
             )}
           </div>
           <div className="flex items-center gap-5 shrink-0 font-medium">
-            <button type="button" onClick={() => onSelectView("privacy")} className="hover:text-white transition">
+            <button type="button" onClick={() => onSelectView("privacy")} className="py-1.5 hover:text-white transition">
               Privacy Policy
             </button>
-            <button type="button" onClick={() => onSelectView("terms")} className="hover:text-white transition">
+            <button type="button" onClick={() => onSelectView("terms")} className="py-1.5 hover:text-white transition">
               Terms &amp; Conditions
             </button>
           </div>

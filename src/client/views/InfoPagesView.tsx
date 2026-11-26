@@ -95,30 +95,30 @@ export function OrderTrackingView({
   ];
 
   return (
-    <main className="flex-1 pb-12 sm:pb-16 sf-fade-up space-y-10">
-      {/* Photo-Led Aurora Forest Masthead */}
+    <main className="flex-1 pb-10 sm:pb-16 sf-fade-up space-y-6 sm:space-y-10">
+      {/* Photo-Led Forest Masthead */}
       <section className="sf-hero-aurora relative overflow-hidden border-b border-white/12">
         <div
           aria-hidden="true"
           className="pointer-events-none absolute inset-0 sf-hero-grid-pattern opacity-55"
         />
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-10 sm:py-14 relative z-10 grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
-          <div className="lg:col-span-7 space-y-3.5">
-            <span className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full sf-hero-glass-mini text-xs font-semibold text-white">
-              <PackageTrackIcon className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Single-Reference Live Tracking • {displayName}</span>
+        <div className="max-w-6xl mx-auto px-3.5 sm:px-6 lg:px-8 py-6 sm:py-12 lg:py-14 relative z-10 grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-8 items-center">
+          <div className="lg:col-span-7 space-y-2.5 sm:space-y-3.5">
+            <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full sf-hero-glass-mini text-[11px] sm:text-xs font-semibold text-white">
+              <PackageTrackIcon className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              <span className="truncate">Single-Reference Live Tracking • {displayName}</span>
             </span>
-            <h1 className="sf-display text-3xl sm:text-4xl lg:text-[42px] font-extrabold text-white tracking-tight leading-tight">
+            <h1 className="sf-display text-2xl sm:text-4xl lg:text-[42px] font-extrabold text-white tracking-tight leading-tight">
               Track Your Online Order &amp; Download Receipt
             </h1>
-            <p className="text-sm sm:text-base text-slate-300 leading-relaxed max-w-xl">
+            <p className="text-xs sm:text-base text-slate-300 leading-relaxed max-w-xl">
               Enter your order reference number (for example, <code className="font-mono text-emerald-300">ORD-...</code>)
               to view live counter confirmation, packing status, itemized billing, and your official
               80mm PDF receipt — no account login required.
             </p>
           </div>
 
-          <div className="lg:col-span-5">
+          <div className="hidden sm:block lg:col-span-5">
             <div className="sf-hero-glass-frame rounded-xl p-2.5">
               <img
                 src={EDITORIAL_MEDIA.careParcelWebp}
@@ -132,15 +132,15 @@ export function OrderTrackingView({
         </div>
       </section>
 
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10">
+      <div className="max-w-6xl mx-auto px-3.5 sm:px-6 lg:px-8 space-y-6 sm:space-y-10">
         {/* Main Lookup & Result Card */}
-        <div className="sf-card-elevated rounded-xl p-5 sm:p-8 space-y-6">
+        <div className="sf-card-elevated rounded-xl p-4 sm:p-8 space-y-5 sm:space-y-6">
           <form
             onSubmit={onSubmitTrack}
-            className="grid grid-cols-1 sm:grid-cols-12 gap-3.5 items-end"
+            className="grid grid-cols-1 sm:grid-cols-12 gap-3 sm:gap-3.5 items-end"
           >
             <div className="sm:col-span-8">
-              <label className="block text-xs font-bold uppercase tracking-wider text-[#4B5563] mb-2">
+              <label className="block text-xs font-bold uppercase tracking-wider text-[#4B5563] mb-1.5 sm:mb-2">
                 Order Reference / Tracking Number
               </label>
               <input
@@ -150,7 +150,7 @@ export function OrderTrackingView({
                 onChange={(e) => onChangeTrackOrderNumber(e.target.value.toUpperCase())}
                 placeholder="e.g. ORD-261111-3017"
                 data-testid="track-order-number-input"
-                className="w-full h-12 rounded-xl sf-input px-4 text-sm font-mono font-semibold uppercase placeholder:normal-case placeholder:font-sans"
+                className="w-full min-h-[48px] rounded-xl sf-input px-3.5 sm:px-4 text-base sm:text-sm font-mono font-semibold uppercase placeholder:normal-case placeholder:font-sans"
               />
             </div>
 
@@ -159,7 +159,7 @@ export function OrderTrackingView({
                 type="submit"
                 disabled={trackingLoading}
                 data-testid="track-order-submit-btn"
-                className="w-full h-12 px-5 rounded-xl sf-glass-cta text-sm font-bold inline-flex items-center justify-center gap-2"
+                className="w-full min-h-[48px] px-5 rounded-xl sf-glass-cta text-sm font-bold inline-flex items-center justify-center gap-2"
               >
                 <PackageTrackIcon className="w-4 h-4" />
                 <span>{trackingLoading ? "Checking Status…" : "Check Order Status"}</span>
@@ -168,7 +168,7 @@ export function OrderTrackingView({
           </form>
 
           {trackingError && (
-            <div className="rounded-2xl bg-rose-50 border border-rose-200 p-4 flex items-start gap-3 text-xs sm:text-sm font-medium text-rose-800">
+            <div className="rounded-xl sm:rounded-2xl bg-rose-50 border border-rose-200 p-3.5 sm:p-4 flex items-start gap-2.5 sm:gap-3 text-xs sm:text-sm font-medium text-rose-800">
               <AlertCircleIcon className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
               <span>{trackingError}</span>
             </div>
@@ -176,26 +176,26 @@ export function OrderTrackingView({
 
           {trackedOrder && (
             <div
-              className="space-y-6 pt-6 border-t border-[#E2ECE7]"
+              className="space-y-5 sm:space-y-6 pt-5 sm:pt-6 border-t border-[#E2ECE7]"
               data-testid="tracked-order-result"
             >
               {/* Warm Ivory Status & Invoice Header */}
-              <div className="sf-surface-ivory rounded-2xl p-4 sm:p-5 flex flex-wrap items-center justify-between gap-4 border border-[#E5E7EB]">
-                <div className="space-y-1">
+              <div className="sf-surface-ivory rounded-xl sm:rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row sm:flex-wrap sm:items-center justify-between gap-3.5 sm:gap-4 border border-[#E5E7EB]">
+                <div className="space-y-1 min-w-0">
                   <span className="text-[11px] font-bold uppercase tracking-wider text-[#7A5B2B] block">
                     Order Reference
                   </span>
-                  <span className="text-lg sm:text-xl font-mono font-bold text-[#111827] block">
+                  <span className="text-lg sm:text-xl font-mono font-bold text-[#111827] block break-all">
                     {trackedOrder.order_number}
                   </span>
                   {trackedOrder.pos_invoice_number && (
-                    <span className="text-xs font-mono text-[#6B7280] block">
+                    <span className="text-xs font-mono text-[#6B7280] block break-all">
                       POS Invoice Ref: {trackedOrder.pos_invoice_number}
                     </span>
                   )}
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2.5">
+                <div className="flex flex-wrap items-center gap-2">
                   {trackedOrder.payment_status && (
                     <span
                       className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${trackedOrder.payment_status === "paid"
@@ -242,7 +242,7 @@ export function OrderTrackingView({
                         setDownloadingPdf(false);
                       }
                     }}
-                    className="h-9 px-3.5 rounded-xl sf-btn-secondary text-xs font-semibold inline-flex items-center gap-1.5"
+                    className="w-full sm:w-auto min-h-[42px] sm:min-h-0 sm:h-9 px-3.5 rounded-xl sf-btn-secondary text-xs font-semibold inline-flex items-center justify-center gap-1.5"
                   >
                     <ReceiptDownloadIcon className="w-3.5 h-3.5 sf-text-brand" />
                     <span>{downloadingPdf ? "Preparing…" : "80mm Invoice (PDF)"}</span>
@@ -283,14 +283,14 @@ export function OrderTrackingView({
                   rawSt === "cancelled" || rawSt === "rejected" || rawSt === "returned";
 
                 return (
-                  <div className="grid grid-cols-1 sm:grid-cols-5 gap-2.5">
+                  <div className="grid grid-cols-1 sm:grid-cols-5 gap-2">
                     {steps.map((step, idx) => {
                       const done = !isTerminalCancel && currentIdx >= idx;
                       const isCurrent = !isTerminalCancel && currentIdx === idx;
                       return (
                         <div
                           key={step.key}
-                          className={`p-3.5 rounded-2xl border flex sm:flex-col items-center sm:justify-center gap-2 text-xs font-semibold transition-colors ${done
+                          className={`px-3.5 py-3 rounded-xl sm:rounded-2xl border flex sm:flex-col items-center sm:justify-center gap-2.5 sm:gap-2 text-xs font-semibold transition-colors ${done
                             ? isCurrent
                               ? "sf-pill-active shadow-sm"
                               : "bg-[#E9F5F1] border-[#CBE4DC] text-[#0E5146]"
@@ -298,7 +298,7 @@ export function OrderTrackingView({
                             }`}
                         >
                           <CheckCircleIcon className="w-4 h-4 shrink-0" />
-                          <span className="text-center leading-tight">{step.label}</span>
+                          <span className="sm:text-center leading-tight">{step.label}</span>
                         </div>
                       );
                     })}
@@ -308,20 +308,20 @@ export function OrderTrackingView({
 
               {/* Ordered Items Summary */}
               {trackedOrder.items && trackedOrder.items.length > 0 && (
-                <div className="border border-[#D8E5DF] rounded-2xl divide-y divide-[#E8F0EC] overflow-hidden text-xs sm:text-sm bg-white">
-                  <div className="px-5 py-3 bg-[#E9F5F1]/65 font-bold text-xs uppercase tracking-wider text-[#0E5146]">
+                <div className="border border-[#D8E5DF] rounded-xl sm:rounded-2xl divide-y divide-[#E8F0EC] overflow-hidden text-xs sm:text-sm bg-white">
+                  <div className="px-4 sm:px-5 py-3 bg-[#E9F5F1]/65 font-bold text-xs uppercase tracking-wider text-[#0E5146]">
                     Ordered Medicines &amp; Bill Summary
                   </div>
                   {trackedOrder.items.map((it: any, i: number) => (
-                    <div key={i} className="px-5 py-3.5 flex justify-between items-center gap-3">
-                      <div>
-                        <strong className="text-[#111827] font-semibold">
+                    <div key={i} className="px-4 sm:px-5 py-3 flex justify-between items-start sm:items-center gap-3">
+                      <div className="min-w-0">
+                        <strong className="text-[#111827] font-semibold break-words">
                           {it.product_name_snapshot ||
                             it.product_name ||
                             it.name ||
                             "Medicine Item"}
                         </strong>
-                        <span className="text-[#6B7280] ml-2">
+                        <span className="text-[#6B7280] ml-1.5 whitespace-nowrap">
                           × {it.qty}{" "}
                           {it.selling_unit_name ||
                             it.unit_label_snapshot ||
@@ -329,7 +329,7 @@ export function OrderTrackingView({
                             ""}
                         </span>
                       </div>
-                      <span className="sf-num font-bold text-[#111827] shrink-0">
+                      <span className="sf-num font-bold text-[#111827] shrink-0 whitespace-nowrap">
                         PKR {Number(it.line_total_pkr).toLocaleString()}
                       </span>
                     </div>
@@ -337,7 +337,7 @@ export function OrderTrackingView({
 
                   {trackedOrder.subtotal_pkr !== undefined &&
                     trackedOrder.subtotal_pkr !== null && (
-                      <div className="px-5 py-2.5 bg-[#F9FAFB] flex justify-between text-[#4B5563] text-xs sm:text-sm">
+                      <div className="px-4 sm:px-5 py-2.5 bg-[#F9FAFB] flex justify-between text-[#4B5563] text-xs sm:text-sm">
                         <span>Items Subtotal</span>
                         <span className="sf-num font-semibold text-[#111827]">
                           PKR {Number(trackedOrder.subtotal_pkr).toLocaleString()}
@@ -346,7 +346,7 @@ export function OrderTrackingView({
                     )}
 
                   {Number(trackedOrder.discount_pkr || 0) > 0 && (
-                    <div className="px-5 py-2.5 bg-[#E9F5F1]/75 flex justify-between text-[#0E5146] font-semibold text-xs sm:text-sm">
+                    <div className="px-4 sm:px-5 py-2.5 bg-[#E9F5F1]/75 flex justify-between text-[#0E5146] font-semibold text-xs sm:text-sm">
                       <span>Promotional Discount</span>
                       <span className="sf-num">
                         − PKR {Number(trackedOrder.discount_pkr).toLocaleString()}
@@ -355,7 +355,7 @@ export function OrderTrackingView({
                   )}
 
                   {Number(trackedOrder.delivery_fee_pkr || 0) > 0 && (
-                    <div className="px-5 py-2.5 bg-[#F9FAFB] flex justify-between text-[#4B5563] text-xs sm:text-sm">
+                    <div className="px-4 sm:px-5 py-2.5 bg-[#F9FAFB] flex justify-between text-[#4B5563] text-xs sm:text-sm">
                       <span>Delivery Fee</span>
                       <span className="sf-num">
                         PKR {Number(trackedOrder.delivery_fee_pkr).toLocaleString()}
@@ -363,7 +363,7 @@ export function OrderTrackingView({
                     </div>
                   )}
 
-                  <div className="px-5 py-3.5 bg-[#FFF8ED] flex justify-between font-bold text-sm sm:text-base text-[#111827]">
+                  <div className="px-4 sm:px-5 py-3.5 bg-[#FFF8ED] flex justify-between font-bold text-sm sm:text-base text-[#111827]">
                     <span>Order Total</span>
                     <span className="sf-num">
                       PKR {Number(trackedOrder.total_pkr).toLocaleString()}
@@ -373,7 +373,7 @@ export function OrderTrackingView({
               )}
 
               {/* Verified Customer Order Feedback & Review Box */}
-              <div className="rounded-2xl border border-[#CBD5E1] bg-[#F8FAFC] p-5 space-y-4">
+              <div className="rounded-xl sm:rounded-2xl border border-[#CBD5E1] bg-[#F8FAFC] p-4 sm:p-5 space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <span className="text-[11px] font-extrabold uppercase tracking-wider sf-text-brand block">
@@ -455,16 +455,16 @@ export function OrderTrackingView({
                     }}
                     className="space-y-3"
                   >
-                    <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex flex-wrap items-center gap-2">
                       <span className="text-xs font-bold text-[#334155]">Your Rating:</span>
-                      <div className="inline-flex items-center gap-1">
+                      <div className="inline-flex items-center gap-0.5">
                         {[1, 2, 3, 4, 5].map((star) => (
                           <button
                             key={star}
                             type="button"
                             onClick={() => setReviewRating(star)}
                             aria-label={`Rate ${star} stars`}
-                            className={`text-2xl leading-none transition-transform hover:scale-110 ${
+                            className={`w-10 h-10 rounded-lg flex items-center justify-center text-2xl leading-none transition-transform active:scale-95 ${
                               star <= reviewRating ? "text-amber-500" : "text-slate-300"
                             }`}
                           >
@@ -477,13 +477,13 @@ export function OrderTrackingView({
                       </span>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 sm:gap-3">
                       <input
                         type="text"
                         value={reviewName}
                         onChange={(e) => setReviewName(e.target.value)}
                         placeholder={trackedOrder.customer_name || "Your name (optional)"}
-                        className="h-10 rounded-xl sf-input px-3 text-xs sm:text-sm"
+                        className="min-h-[44px] sm:h-10 rounded-xl sf-input px-3 text-base sm:text-sm"
                       />
                       <input
                         type="text"
@@ -491,11 +491,11 @@ export function OrderTrackingView({
                         value={reviewComment}
                         onChange={(e) => setReviewComment(e.target.value)}
                         placeholder="How was delivery speed, packaging & medicine quality?"
-                        className="sm:col-span-2 h-10 rounded-xl sf-input px-3 text-xs sm:text-sm"
+                        className="sm:col-span-2 min-h-[44px] sm:h-10 rounded-xl sf-input px-3 text-base sm:text-sm"
                       />
                     </div>
 
-                    <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
                       {reviewFeedbackMsg ? (
                         <p className="text-xs font-semibold text-rose-600">{reviewFeedbackMsg}</p>
                       ) : (
@@ -507,7 +507,7 @@ export function OrderTrackingView({
                         type="submit"
                         disabled={reviewSubmitting}
                         data-testid="submit-order-review-btn"
-                        className="h-10 px-5 rounded-xl sf-btn-primary text-xs font-bold shrink-0"
+                        className="w-full sm:w-auto min-h-[44px] sm:min-h-0 sm:h-10 px-5 rounded-xl sf-btn-primary text-xs font-bold shrink-0"
                       >
                         {reviewSubmitting ? "Submitting…" : "Submit Verified Review"}
                       </button>
@@ -520,27 +520,27 @@ export function OrderTrackingView({
         </div>
 
         {/* 5-Stage Fulfillment Guide + Digital Receipt Info */}
-        <section className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
-          <div className="lg:col-span-7 sf-card rounded-xl p-6 sm:p-7 space-y-5">
+        <section className="grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-6 items-stretch">
+          <div className="lg:col-span-7 sf-card rounded-xl p-4 sm:p-7 space-y-4 sm:space-y-5">
             <div className="space-y-1">
               <span className="text-xs font-bold uppercase tracking-wider text-[#0E5146]">
                 Understanding Order Statuses
               </span>
-              <h2 className="sf-display text-xl font-extrabold text-[#111827]">
+              <h2 className="sf-display text-lg sm:text-xl font-extrabold text-[#111827]">
                 How Your Order Progresses at {displayName}
               </h2>
             </div>
 
-            <div className="space-y-3">
+            <div className="space-y-2.5 sm:space-y-3">
               {stageGuide.map((st) => (
                 <div
                   key={st.code}
-                  className="p-3.5 rounded-2xl bg-[#F9FAFB] border border-[#E3ECE7] flex items-start gap-3.5"
+                  className="p-3 sm:p-3.5 rounded-xl sm:rounded-2xl bg-[#F9FAFB] border border-[#E3ECE7] flex items-start gap-3"
                 >
                   <span className="w-8 h-8 rounded-xl bg-[#0E5146] text-white font-mono text-xs font-bold flex items-center justify-center shrink-0">
                     {st.code}
                   </span>
-                  <div className="space-y-0.5">
+                  <div className="space-y-0.5 min-w-0">
                     <h3 className="text-sm font-bold text-[#111827]">{st.title}</h3>
                     <p className="text-xs text-[#5A6F7B] leading-relaxed">{st.desc}</p>
                   </div>
@@ -549,9 +549,9 @@ export function OrderTrackingView({
             </div>
           </div>
 
-          <div className="lg:col-span-5 bg-[#F9FAFB] rounded-xl border border-[#E5E7EB] p-6 flex flex-col justify-between gap-5">
-            <div className="space-y-4">
-              <div className="rounded-2xl overflow-hidden border border-white/80 shadow-sm aspect-[16/9]">
+          <div className="lg:col-span-5 bg-[#F9FAFB] rounded-xl border border-[#E5E7EB] p-4 sm:p-6 flex flex-col justify-between gap-4 sm:gap-5">
+            <div className="space-y-3.5 sm:space-y-4">
+              <div className="rounded-xl sm:rounded-2xl overflow-hidden border border-white/80 shadow-sm aspect-[16/9]">
                 <img
                   src={EDITORIAL_MEDIA.conciergeSupportWebp}
                   alt={`${displayName} concierge counter`}
@@ -577,11 +577,11 @@ export function OrderTrackingView({
               </div>
             </div>
 
-            <div className="pt-3 border-t border-[#C9E0D8] flex flex-wrap items-center gap-2.5">
+            <div className="pt-3 border-t border-[#C9E0D8] grid grid-cols-1 sm:flex sm:flex-wrap items-center gap-2.5">
               {sf.contact_phone && (
                 <a
                   href={`tel:${sf.contact_phone}`}
-                  className="h-10 px-4 rounded-xl sf-btn-secondary text-xs font-bold inline-flex items-center gap-1.5"
+                  className="min-h-[42px] sm:min-h-0 sm:h-10 px-4 rounded-xl sf-btn-secondary text-xs font-bold inline-flex items-center justify-center gap-1.5"
                 >
                   <PhoneIcon className="w-3.5 h-3.5 sf-text-brand" />
                   <span>{sf.contact_phone}</span>
@@ -592,7 +592,7 @@ export function OrderTrackingView({
                   href={`https://wa.me/${whatsappDigits}`}
                   target="_blank"
                   rel="noreferrer"
-                  className="h-10 px-4 rounded-xl sf-btn-primary text-xs font-bold inline-flex items-center gap-1.5"
+                  className="min-h-[42px] sm:min-h-0 sm:h-10 px-4 rounded-xl sf-btn-primary text-xs font-bold inline-flex items-center justify-center gap-1.5"
                 >
                   <WhatsAppIcon className="w-3.5 h-3.5" />
                   <span>WhatsApp Counter</span>
@@ -601,7 +601,7 @@ export function OrderTrackingView({
               <button
                 type="button"
                 onClick={() => onSelectView("shop")}
-                className="h-10 px-4 rounded-xl sf-btn-soft text-xs font-bold inline-flex items-center gap-1.5"
+                className="min-h-[42px] sm:min-h-0 sm:h-10 px-4 rounded-xl sf-btn-soft text-xs font-bold inline-flex items-center justify-center gap-1.5"
               >
                 <span>Browse Catalog</span>
                 <ArrowRightIcon className="w-3.5 h-3.5" />
@@ -719,82 +719,82 @@ export function InfoPagesView({
     ];
 
     return (
-      <main className="flex-1 pb-12 sm:pb-16 sf-fade-up space-y-12 sm:space-y-16">
-        {/* Section A: Flagship Aurora Hero */}
+      <main className="flex-1 pb-10 sm:pb-16 sf-fade-up space-y-8 sm:space-y-14">
+        {/* Section A: Flagship Hero */}
         <section className="sf-hero-aurora relative overflow-hidden border-b border-white/12">
           <div
             aria-hidden="true"
             className="pointer-events-none absolute inset-0 sf-hero-grid-pattern opacity-55"
           />
-          <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-11 sm:py-16 relative z-10 grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-10 items-center">
-            <div className="lg:col-span-7 space-y-4">
-              <span className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full sf-hero-glass-mini text-xs font-semibold text-white">
+          <div className="max-w-6xl mx-auto px-3.5 sm:px-6 lg:px-8 py-6 sm:py-14 relative z-10 grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-10 items-center">
+            <div className="lg:col-span-7 space-y-3 sm:space-y-4">
+              <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full sf-hero-glass-mini text-[11px] sm:text-xs font-semibold text-white">
                 <StoreIcon className="w-3.5 h-3.5 text-emerald-400" />
                 <span>Neighbourhood Pharmacy • {sf.city}</span>
               </span>
-              <h1 className="sf-display text-3xl sm:text-4xl lg:text-[42px] font-extrabold text-white tracking-tight leading-[1.12]">
+              <h1 className="sf-display text-2xl sm:text-4xl lg:text-[42px] font-extrabold text-white tracking-tight leading-[1.15]">
                 {aboutHeading}
               </h1>
-              <p className="text-sm sm:text-base text-slate-300 leading-relaxed max-w-2xl">
+              <p className="text-xs sm:text-base text-slate-300 leading-relaxed max-w-2xl">
                 {aboutParagraph}
               </p>
-              <div className="pt-2 flex flex-wrap items-center gap-3">
+              <div className="pt-1.5 grid grid-cols-1 min-[370px]:grid-cols-2 sm:flex sm:flex-wrap items-center gap-2.5 sm:gap-3">
                 <button
                   type="button"
                   onClick={() => onSelectView("shop")}
-                  className="h-11 px-6 rounded-xl sf-btn-warm text-xs sm:text-sm font-extrabold inline-flex items-center gap-2 shadow-md"
+                  className="min-h-[44px] px-5 sm:px-6 rounded-xl sf-btn-warm text-xs sm:text-sm font-extrabold inline-flex items-center justify-center gap-2 shadow-md"
                 >
-                  <span>Explore Medicines Catalog</span>
-                  <ArrowRightIcon className="w-4 h-4" />
+                  <span>Explore Catalog</span>
+                  <ArrowRightIcon className="w-4 h-4 shrink-0" />
                 </button>
                 <button
                   type="button"
                   onClick={() => onSelectView("branches")}
-                  className="h-11 px-5 rounded-xl sf-btn-ghost-light text-xs sm:text-sm font-semibold inline-flex items-center gap-2"
+                  className="min-h-[44px] px-4 sm:px-5 rounded-xl sf-btn-ghost-light text-xs sm:text-sm font-semibold inline-flex items-center justify-center gap-2"
                 >
-                  <MapPinIcon className="w-4 h-4 text-[#9AF0DF]" />
+                  <MapPinIcon className="w-4 h-4 text-[#9AF0DF] shrink-0" />
                   <span>Counter Location</span>
                 </button>
               </div>
             </div>
 
             <div className="lg:col-span-5">
-              <div className="sf-hero-glass-frame rounded-[28px] p-2.5">
+              <div className="sf-hero-glass-frame rounded-xl sm:rounded-[28px] p-2 sm:p-2.5">
                 <img
                   src={EDITORIAL_MEDIA.heroFlagshipDesktopWebp}
                   alt={`${displayName} sunlit apothecary interior`}
                   loading="eager"
                   decoding="async"
-                  className="w-full aspect-[4/3] object-cover rounded-[20px]"
+                  className="w-full aspect-[16/10] sm:aspect-[4/3] object-cover rounded-lg sm:rounded-[20px]"
                 />
               </div>
             </div>
           </div>
         </section>
 
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-12 sm:space-y-16">
+        <div className="max-w-6xl mx-auto px-3.5 sm:px-6 lg:px-8 space-y-8 sm:space-y-14">
           {/* Section B: Verified Pharmacy Identity Matrix */}
-          <section className="sf-surface-ivory rounded-xl p-6 sm:p-8 border border-[#E5E7EB] space-y-5">
-            <div className="flex flex-wrap items-end justify-between gap-4">
+          <section className="sf-surface-ivory rounded-xl p-4 sm:p-8 border border-[#E5E7EB] space-y-4 sm:space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3 sm:gap-4">
               <div className="space-y-1">
                 <span className="text-[11px] font-extrabold uppercase tracking-wider text-[#7A5B2B]">
                   Official Pharmacy Profile
                 </span>
-                <h2 className="sf-display text-xl sm:text-2xl font-extrabold text-[#111827]">
+                <h2 className="sf-display text-lg sm:text-2xl font-extrabold text-[#111827]">
                   Verified Counter Identity — {displayName}
                 </h2>
               </div>
               <button
                 type="button"
                 onClick={() => onSelectView("contact")}
-                className="h-9 px-4 rounded-xl bg-white border border-[#DECBAE] text-xs font-bold text-[#111827] hover:bg-[#FAF3E8] transition inline-flex items-center gap-1.5"
+                className="w-full sm:w-auto min-h-[42px] sm:min-h-0 sm:h-9 px-4 rounded-xl bg-white border border-[#DECBAE] text-xs font-bold text-[#111827] hover:bg-[#FAF3E8] transition inline-flex items-center justify-center gap-1.5"
               >
                 <PhoneIcon className="w-3.5 h-3.5 sf-text-brand" />
                 <span>Contact Pharmacy Desk</span>
               </button>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 text-xs">
               <div className="p-4 rounded-2xl bg-white border border-[#E5E7EB] space-y-1">
                 <span className="text-[#6B7280] font-medium block">Operating Pharmacy</span>
                 <span className="text-sm font-extrabold text-[#111827] block">{displayName}</span>
@@ -909,25 +909,25 @@ export function InfoPagesView({
           </section>
         </div>
 
-        {/* Section D: 4 Core Healthcare Pillars (Glassmorphic Band + 3D Icons) */}
-        <section className="bg-[#F9FAFB] border-y border-[#CDE2DA] py-12 sm:py-16">
-          <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8">
+        {/* Section D: 4 Core Healthcare Pillars */}
+        <section className="bg-[#F9FAFB] border-y border-[#CDE2DA] py-8 sm:py-16">
+          <div className="max-w-6xl mx-auto px-3.5 sm:px-6 lg:px-8 space-y-5 sm:space-y-8">
             <div className="space-y-1.5 max-w-2xl">
               <span className="text-xs font-bold uppercase tracking-[0.14em] text-[#0E5146] block">
                 Why Families Choose {displayName}
               </span>
-              <h2 className="sf-display text-2xl sm:text-3xl font-extrabold text-[#11242D]">
+              <h2 className="sf-display text-xl sm:text-3xl font-extrabold text-[#11242D]">
                 Four Standards Behind Every Online Order
               </h2>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 sm:gap-5">
               {qualityPillars.map((p) => (
                 <div
                   key={p.title}
-                  className="sf-glass-surface-card rounded-xl p-6 flex items-start gap-4"
+                  className="sf-glass-surface-card rounded-xl p-4 sm:p-6 flex items-start gap-3.5 sm:gap-4"
                 >
-                  <div className="w-16 h-16 rounded-2xl bg-white/90 border border-[#D8E8E2] p-2 flex items-center justify-center shrink-0 shadow-2xs">
+                  <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-xl sm:rounded-2xl bg-white/90 border border-[#D8E8E2] p-2 flex items-center justify-center shrink-0 shadow-2xs">
                     <img
                       src={p.icon}
                       alt=""
@@ -937,8 +937,8 @@ export function InfoPagesView({
                       className="w-full h-full object-contain mix-blend-multiply"
                     />
                   </div>
-                  <div className="space-y-1.5">
-                    <h3 className="sf-display text-base sm:text-lg font-extrabold text-[#11242D]">
+                  <div className="space-y-1 min-w-0">
+                    <h3 className="sf-display text-sm sm:text-lg font-extrabold text-[#11242D]">
                       {p.title}
                     </h3>
                     <p className="text-xs sm:text-sm text-[#516673] leading-relaxed">{p.desc}</p>
@@ -950,20 +950,20 @@ export function InfoPagesView({
         </section>
 
         {/* Section E: 4-Step Counter Quality Protocol + Concierge CTA */}
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-12">
-          <section className="space-y-6">
+        <div className="max-w-6xl mx-auto px-3.5 sm:px-6 lg:px-8 space-y-8 sm:space-y-12">
+          <section className="space-y-4 sm:space-y-6">
             <div className="space-y-1.5 max-w-2xl">
               <span className="text-xs font-bold uppercase tracking-[0.14em] text-[#0E5146] block">
                 Inside Our Workflow
               </span>
-              <h2 className="sf-display text-2xl sm:text-3xl font-extrabold text-[#111827]">
+              <h2 className="sf-display text-xl sm:text-3xl font-extrabold text-[#111827]">
                 From Digital Cart to Sealed Handover
               </h2>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
               {dispensingWorkflow.map((w) => (
-                <div key={w.step} className="sf-card rounded-2xl p-5 space-y-3">
+                <div key={w.step} className="sf-card rounded-xl sm:rounded-2xl p-4 sm:p-5 space-y-2.5 sm:space-y-3">
                   <span className="inline-flex items-center justify-center px-3 py-1 rounded-full bg-[#E9F5F1] border border-[#C6E2D9] text-xs font-mono font-extrabold text-[#0E5146]">
                     Stage {w.step}
                   </span>
@@ -977,39 +977,39 @@ export function InfoPagesView({
           </section>
 
           <section className="sf-surface-forest rounded-xl overflow-hidden grid grid-cols-1 lg:grid-cols-12 shadow-xl">
-            <div className="lg:col-span-7 p-6 sm:p-9 flex flex-col justify-between gap-5">
-              <div className="space-y-2.5">
+            <div className="lg:col-span-7 p-5 sm:p-9 flex flex-col justify-between gap-4 sm:gap-5">
+              <div className="space-y-2">
                 <span className="text-xs font-bold uppercase tracking-widest text-emerald-400">
                   Ready to Order or Visit?
                 </span>
-                <h2 className="sf-display text-2xl sm:text-3xl font-extrabold text-white leading-tight">
+                <h2 className="sf-display text-xl sm:text-3xl font-extrabold text-white leading-tight">
                   Browse Live Stock or Speak Directly with {displayName}
                 </h2>
-                <p className="text-sm text-[#D4EAE3] leading-relaxed max-w-xl">
+                <p className="text-xs sm:text-sm text-[#D4EAE3] leading-relaxed max-w-xl">
                   Explore available medicines by department, track an existing order, or reach our
                   counter team in {sf.city} for personalized assistance.
                 </p>
               </div>
-              <div className="flex flex-wrap items-center gap-3">
+              <div className="grid grid-cols-1 min-[370px]:grid-cols-2 sm:flex sm:flex-wrap items-center gap-2.5 sm:gap-3">
                 <button
                   type="button"
                   onClick={() => onSelectView("shop")}
-                  className="h-11 px-5 rounded-xl sf-btn-warm text-xs sm:text-sm font-extrabold inline-flex items-center gap-2"
+                  className="min-h-[44px] px-5 rounded-xl sf-btn-warm text-xs sm:text-sm font-extrabold inline-flex items-center justify-center gap-2"
                 >
                   <span>Browse Medicines</span>
-                  <ArrowRightIcon className="w-4 h-4" />
+                  <ArrowRightIcon className="w-4 h-4 shrink-0" />
                 </button>
                 <button
                   type="button"
                   onClick={() => onSelectView("contact")}
-                  className="h-11 px-5 rounded-xl sf-btn-ghost-light text-xs sm:text-sm font-semibold inline-flex items-center gap-2"
+                  className="min-h-[44px] px-5 rounded-xl sf-btn-ghost-light text-xs sm:text-sm font-semibold inline-flex items-center justify-center gap-2"
                 >
-                  <PhoneIcon className="w-4 h-4 text-emerald-400" />
+                  <PhoneIcon className="w-4 h-4 text-emerald-400 shrink-0" />
                   <span>Contact Counter</span>
                 </button>
               </div>
             </div>
-            <div className="lg:col-span-5 min-h-[240px] bg-[#08352E] relative overflow-hidden">
+            <div className="lg:col-span-5 min-h-[200px] sm:min-h-[240px] bg-[#08352E] relative overflow-hidden">
               <img
                 src={EDITORIAL_MEDIA.counterInteriorWebp}
                 alt={`${displayName} pharmacy shelves`}
@@ -1065,30 +1065,30 @@ export function InfoPagesView({
     ];
 
     return (
-      <main className="flex-1 pb-12 sm:pb-16 sf-fade-up space-y-12">
+      <main className="flex-1 pb-10 sm:pb-16 sf-fade-up space-y-8 sm:space-y-12">
         {/* Section A: Photo-Led Locations Hero */}
         <section className="sf-hero-aurora relative overflow-hidden border-b border-white/12">
           <div
             aria-hidden="true"
             className="pointer-events-none absolute inset-0 sf-hero-grid-pattern opacity-55"
           />
-          <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-10 sm:py-14 relative z-10 grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
-            <div className="lg:col-span-7 space-y-3.5">
-              <span className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full sf-hero-glass-mini text-xs font-semibold text-white">
+          <div className="max-w-6xl mx-auto px-3.5 sm:px-6 lg:px-8 py-6 sm:py-12 lg:py-14 relative z-10 grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-8 items-center">
+            <div className="lg:col-span-7 space-y-2.5 sm:space-y-3.5">
+              <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full sf-hero-glass-mini text-[11px] sm:text-xs font-semibold text-white">
                 <MapPinIcon className="w-3.5 h-3.5 text-emerald-400" />
                 <span>Verified Retail Counter • {sf.city}</span>
               </span>
-              <h1 className="sf-display text-3xl sm:text-4xl lg:text-[42px] font-extrabold text-white tracking-tight leading-tight">
+              <h1 className="sf-display text-2xl sm:text-4xl lg:text-[42px] font-extrabold text-white tracking-tight leading-tight">
                 {displayName} Locations &amp; Pickup Desk
               </h1>
-              <p className="text-sm sm:text-base text-slate-300 leading-relaxed max-w-xl">
+              <p className="text-xs sm:text-base text-slate-300 leading-relaxed max-w-xl">
                 Find our verified pharmacy street address, operating schedule, direct telephone
                 lines, and express counter collection details in {sf.city}.
               </p>
             </div>
 
             <div className="lg:col-span-5">
-              <div className="sf-hero-glass-frame rounded-xl p-2.5">
+              <div className="sf-hero-glass-frame rounded-xl p-2 sm:p-2.5">
                 <img
                   src={EDITORIAL_MEDIA.counterInteriorWebp}
                   alt={`${displayName} retail branch interior`}
@@ -1101,7 +1101,7 @@ export function InfoPagesView({
           </div>
         </section>
 
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-12">
+        <div className="max-w-6xl mx-auto px-3.5 sm:px-6 lg:px-8 space-y-8 sm:space-y-12">
           {/* Section B: Detailed Architectural Branch Cards */}
           <section className="space-y-5">
             <div className="space-y-1">
@@ -1230,13 +1230,13 @@ export function InfoPagesView({
                       </div>
                     </div>
 
-                    <div className="pt-3 border-t border-[#E6EFEA] flex flex-wrap items-center gap-2.5">
+                    <div className="pt-3 border-t border-[#E6EFEA] grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 sm:gap-2.5">
                       {branchPhone && (
                         <a
                           href={`tel:${branchPhone}`}
-                          className="h-10 px-4 rounded-xl sf-btn-secondary text-xs font-bold inline-flex items-center gap-1.5"
+                          className="min-h-[42px] sm:min-h-0 sm:h-10 px-3 sm:px-4 rounded-xl sf-btn-secondary text-xs font-bold inline-flex items-center justify-center gap-1.5"
                         >
-                          <PhoneIcon className="w-3.5 h-3.5 sf-text-brand" />
+                          <PhoneIcon className="w-3.5 h-3.5 sf-text-brand shrink-0" />
                           <span>Call Counter</span>
                         </a>
                       )}
@@ -1246,9 +1246,9 @@ export function InfoPagesView({
                           href={`https://wa.me/${branchWhatsApp}`}
                           target="_blank"
                           rel="noreferrer"
-                          className="h-10 px-4 rounded-xl sf-btn-primary text-xs font-bold inline-flex items-center gap-1.5"
+                          className="min-h-[42px] sm:min-h-0 sm:h-10 px-3 sm:px-4 rounded-xl sf-btn-primary text-xs font-bold inline-flex items-center justify-center gap-1.5"
                         >
-                          <WhatsAppIcon className="w-3.5 h-3.5" />
+                          <WhatsAppIcon className="w-3.5 h-3.5 shrink-0" />
                           <span>WhatsApp</span>
                         </a>
                       )}
@@ -1258,10 +1258,10 @@ export function InfoPagesView({
                           href={mapsHref}
                           target="_blank"
                           rel="noreferrer"
-                          className="h-10 px-4 rounded-xl sf-btn-soft text-xs font-bold inline-flex items-center gap-1.5"
+                          className="col-span-2 sm:col-span-1 min-h-[42px] sm:min-h-0 sm:h-10 px-3 sm:px-4 rounded-xl sf-btn-soft text-xs font-bold inline-flex items-center justify-center gap-1.5"
                         >
                           <span>Open in Maps</span>
-                          <ExternalLinkIcon className="w-3.5 h-3.5" />
+                          <ExternalLinkIcon className="w-3.5 h-3.5 shrink-0" />
                         </a>
                       )}
                     </div>
@@ -1415,30 +1415,30 @@ export function InfoPagesView({
     ];
 
     return (
-      <main className="flex-1 pb-12 sm:pb-16 sf-fade-up space-y-12">
+      <main className="flex-1 pb-10 sm:pb-16 sf-fade-up space-y-8 sm:space-y-12">
         {/* Section A: Photo-Led Fulfillment Hero */}
         <section className="sf-hero-aurora relative overflow-hidden border-b border-white/12">
           <div
             aria-hidden="true"
             className="pointer-events-none absolute inset-0 sf-hero-grid-pattern opacity-55"
           />
-          <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-10 sm:py-14 relative z-10 grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
-            <div className="lg:col-span-7 space-y-3.5">
-              <span className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full sf-hero-glass-mini text-xs font-semibold text-white">
+          <div className="max-w-6xl mx-auto px-3.5 sm:px-6 lg:px-8 py-6 sm:py-12 lg:py-14 relative z-10 grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-8 items-center">
+            <div className="lg:col-span-7 space-y-2.5 sm:space-y-3.5">
+              <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full sf-hero-glass-mini text-[11px] sm:text-xs font-semibold text-white">
                 <TruckIcon className="w-3.5 h-3.5 text-emerald-400" />
                 <span>Local Healthcare Fulfillment • {sf.city}</span>
               </span>
-              <h1 className="sf-display text-3xl sm:text-4xl lg:text-[42px] font-extrabold text-white tracking-tight leading-tight">
+              <h1 className="sf-display text-2xl sm:text-4xl lg:text-[42px] font-extrabold text-white tracking-tight leading-tight">
                 Delivery &amp; Counter Pickup Information
               </h1>
-              <p className="text-sm sm:text-base text-slate-300 leading-relaxed max-w-xl">
+              <p className="text-xs sm:text-base text-slate-300 leading-relaxed max-w-xl">
                 Transparent delivery rates, automatic free-delivery eligibility, protective medicine
                 packaging standards, and free in-store counter collection at {displayName}.
               </p>
             </div>
 
             <div className="lg:col-span-5">
-              <div className="sf-hero-glass-frame rounded-xl p-2.5">
+              <div className="sf-hero-glass-frame rounded-xl p-2 sm:p-2.5">
                 <img
                   src={EDITORIAL_MEDIA.careParcelWebp}
                   alt="Carefully packed pharmacy delivery parcel"
@@ -1451,54 +1451,54 @@ export function InfoPagesView({
           </div>
         </section>
 
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-12">
-          {/* Section B: 4 Fulfillment Metric Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="sf-card-elevated rounded-2xl p-5 space-y-1.5">
-              <span className="text-xs font-bold uppercase tracking-wider text-[#6B7280] block">
-                Standard Delivery Fee
+        <div className="max-w-6xl mx-auto px-3.5 sm:px-6 lg:px-8 space-y-8 sm:space-y-12">
+          {/* Section B: 4 Fulfillment Metric Cards (Crisp 2x2 on Mobile) */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4">
+            <div className="sf-card-elevated rounded-xl sm:rounded-2xl p-3.5 sm:p-5 space-y-1 sm:space-y-1.5">
+              <span className="text-[10.5px] sm:text-xs font-bold uppercase tracking-wider text-[#6B7280] block">
+                Standard Delivery
               </span>
-              <span className="sf-display sf-num text-2xl font-extrabold text-[#111827] block">
+              <span className="sf-display sf-num text-lg sm:text-2xl font-extrabold text-[#111827] block">
                 {deliveryEnabled ? `PKR ${standardFeePkr.toLocaleString()}` : "Not Enabled"}
               </span>
-              <span className="text-xs text-[#6B7280] block">Local rider coverage ({sf.city})</span>
+              <span className="text-[11px] sm:text-xs text-[#6B7280] block">Local rider ({sf.city})</span>
             </div>
 
-            <div className="sf-surface-ivory rounded-2xl border border-[#E5E7EB] p-5 space-y-1.5">
-              <span className="text-xs font-bold uppercase tracking-wider text-[#7A5B2B] block">
-                Free Delivery Threshold
+            <div className="sf-surface-ivory rounded-xl sm:rounded-2xl border border-[#E5E7EB] p-3.5 sm:p-5 space-y-1 sm:space-y-1.5">
+              <span className="text-[10.5px] sm:text-xs font-bold uppercase tracking-wider text-[#7A5B2B] block">
+                Free Delivery Above
               </span>
-              <span className="sf-display sf-num text-2xl font-extrabold text-[#0E5146] block">
+              <span className="sf-display sf-num text-lg sm:text-2xl font-extrabold text-[#0E5146] block">
                 {freeThresholdPkr > 0 ? `PKR ${freeThresholdPkr.toLocaleString()}` : "Standard Rates"}
               </span>
-              <span className="text-xs text-[#6B7280] block">
-                Waived automatically in checkout
+              <span className="text-[11px] sm:text-xs text-[#6B7280] block">
+                Waived at checkout
               </span>
             </div>
 
-            <div className="sf-card-elevated rounded-2xl p-5 space-y-1.5">
-              <span className="text-xs font-bold uppercase tracking-wider text-[#6B7280] block">
-                Minimum Delivery Order
+            <div className="sf-card-elevated rounded-xl sm:rounded-2xl p-3.5 sm:p-5 space-y-1 sm:space-y-1.5">
+              <span className="text-[10.5px] sm:text-xs font-bold uppercase tracking-wider text-[#6B7280] block">
+                Minimum Order
               </span>
-              <span className="sf-display sf-num text-2xl font-extrabold text-[#111827] block">
+              <span className="sf-display sf-num text-lg sm:text-2xl font-extrabold text-[#111827] block">
                 {minOrderPkr > 0 ? `PKR ${minOrderPkr.toLocaleString()}` : "No Minimum"}
               </span>
-              <span className="text-xs text-[#6B7280] block">
+              <span className="text-[11px] sm:text-xs text-[#6B7280] block">
                 {estimatedMinutes > 0
-                  ? `Typical dispatch ~${estimatedMinutes} mins`
-                  : "Dispatched promptly after check"}
+                  ? `Dispatch ~${estimatedMinutes} mins`
+                  : "Prompt counter check"}
               </span>
             </div>
 
-            <div className="sf-surface-mint rounded-2xl border border-[#C6E2D9] p-5 space-y-1.5">
-              <span className="text-xs font-bold uppercase tracking-wider text-[#0E5146] block">
-                In-Store Counter Pickup
+            <div className="sf-surface-mint rounded-xl sm:rounded-2xl border border-[#C6E2D9] p-3.5 sm:p-5 space-y-1 sm:space-y-1.5">
+              <span className="text-[10.5px] sm:text-xs font-bold uppercase tracking-wider text-[#0E5146] block">
+                Counter Pickup
               </span>
-              <span className="sf-display text-2xl font-extrabold text-[#0E5146] block">
+              <span className="sf-display text-lg sm:text-2xl font-extrabold text-[#0E5146] block">
                 {pickupEnabled ? "PKR 0 (Free)" : "Unavailable"}
               </span>
-              <span className="text-xs text-[#4B5563] block">
-                Reserve online, collect at {displayName}
+              <span className="text-[11px] sm:text-xs text-[#4B5563] block">
+                Collect at {displayName}
               </span>
             </div>
           </div>
@@ -1506,27 +1506,27 @@ export function InfoPagesView({
           {/* Section C: Active Delivery Zones Table (If Configured) */}
           {deliveryZones.length > 0 && (
             <div className="sf-card-elevated rounded-xl overflow-hidden">
-              <div className="px-6 py-4 bg-[#F9FAFB] border-b border-[#E2ECE7] flex items-center justify-between">
-                <h2 className="sf-display text-base sm:text-lg font-extrabold text-[#111827]">
-                  Configured Local Delivery Zones ({sf.city})
+              <div className="px-4 sm:px-6 py-3.5 sm:py-4 bg-[#F9FAFB] border-b border-[#E2ECE7] flex items-center justify-between gap-2">
+                <h2 className="sf-display text-sm sm:text-lg font-extrabold text-[#111827]">
+                  Local Delivery Zones ({sf.city})
                 </h2>
-                <span className="text-xs font-semibold text-[#0E5146]">Live Rates</span>
+                <span className="text-xs font-semibold text-[#0E5146] shrink-0">Live Rates</span>
               </div>
-              <div className="divide-y divide-[#E8F0EC] text-sm">
+              <div className="divide-y divide-[#E8F0EC] text-xs sm:text-sm">
                 {deliveryZones.map((z) => (
                   <div
                     key={z.id}
-                    className="px-6 py-4 flex flex-wrap items-center justify-between gap-3"
+                    className="px-4 sm:px-6 py-3.5 sm:py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-3"
                   >
                     <span className="font-bold text-[#111827]">{z.zone_name || z.name}</span>
-                    <div className="text-xs text-[#6B7280] flex items-center gap-4">
+                    <div className="text-xs text-[#6B7280] flex flex-wrap items-center gap-x-4 gap-y-1">
                       <span>
-                        Delivery Fee:{" "}
+                        Fee:{" "}
                         <strong className="sf-num text-[#111827]">
                           PKR {Number(z.fee_pkr ?? z.delivery_fee_pkr ?? 0).toLocaleString()}
                         </strong>
                       </span>
-                      {z.estimated_minutes && <span>Est. Time: ~{z.estimated_minutes} mins</span>}
+                      {z.estimated_minutes && <span>Est: ~{z.estimated_minutes} mins</span>}
                     </div>
                   </div>
                 ))}
@@ -1658,37 +1658,37 @@ export function InfoPagesView({
     ];
 
     return (
-      <main className="flex-1 pb-12 sm:pb-16 sf-fade-up space-y-12">
+      <main className="flex-1 pb-10 sm:pb-16 sf-fade-up space-y-8 sm:space-y-12">
         {/* Section A: Photo-Led Concierge Hero */}
         <section className="sf-hero-aurora relative overflow-hidden border-b border-white/12">
           <div
             aria-hidden="true"
             className="pointer-events-none absolute inset-0 sf-hero-grid-pattern opacity-55"
           />
-          <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-10 sm:py-14 relative z-10 grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
-            <div className="lg:col-span-7 space-y-4">
-              <span className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full sf-hero-glass-mini text-xs font-semibold text-white">
+          <div className="max-w-6xl mx-auto px-3.5 sm:px-6 lg:px-8 py-6 sm:py-12 lg:py-14 relative z-10 grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-8 items-center">
+            <div className="lg:col-span-7 space-y-3 sm:space-y-4">
+              <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full sf-hero-glass-mini text-[11px] sm:text-xs font-semibold text-white">
                 <PhoneIcon className="w-3.5 h-3.5 text-emerald-400" />
                 <span>Direct Pharmacy Counter Desk • {sf.city}</span>
               </span>
-              <h1 className="sf-display text-3xl sm:text-4xl lg:text-[42px] font-extrabold text-white tracking-tight leading-tight">
+              <h1 className="sf-display text-2xl sm:text-4xl lg:text-[42px] font-extrabold text-white tracking-tight leading-tight">
                 {activeView === "hours"
                   ? `Operating Hours & Dispatch Schedule — ${displayName}`
                   : `Contact ${displayName} Counter & Support`}
               </h1>
-              <p className="text-sm sm:text-base text-slate-300 leading-relaxed max-w-xl">
+              <p className="text-xs sm:text-base text-slate-300 leading-relaxed max-w-xl">
                 Speak directly with our pharmacy counter team in {sf.city} for stock inquiries,
                 prescription review, order updates, or walk-in counter assistance.
               </p>
 
-              <div className="flex flex-wrap items-center gap-3 pt-1">
+              <div className="grid grid-cols-1 min-[370px]:grid-cols-2 sm:flex sm:flex-wrap items-center gap-2.5 sm:gap-3 pt-1">
                 {sf.contact_phone && (
                   <a
                     href={`tel:${sf.contact_phone}`}
-                    className="h-11 px-5 rounded-xl sf-btn-warm text-xs sm:text-sm font-extrabold inline-flex items-center gap-2 tabular-nums shadow-md"
+                    className="min-h-[44px] px-4 sm:px-5 rounded-xl sf-btn-warm text-xs sm:text-sm font-extrabold inline-flex items-center justify-center gap-2 tabular-nums shadow-md"
                   >
-                    <PhoneIcon className="w-4 h-4" />
-                    <span>Call {sf.contact_phone}</span>
+                    <PhoneIcon className="w-4 h-4 shrink-0" />
+                    <span className="truncate">Call {sf.contact_phone}</span>
                   </a>
                 )}
                 {whatsappDigits && (
@@ -1696,9 +1696,9 @@ export function InfoPagesView({
                     href={`https://wa.me/${whatsappDigits}`}
                     target="_blank"
                     rel="noreferrer"
-                    className="h-11 px-5 rounded-xl sf-btn-ghost-light text-xs sm:text-sm font-semibold inline-flex items-center gap-2"
+                    className="min-h-[44px] px-4 sm:px-5 rounded-xl sf-btn-ghost-light text-xs sm:text-sm font-semibold inline-flex items-center justify-center gap-2"
                   >
-                    <WhatsAppIcon className="w-4 h-4 text-[#9AF0DF]" />
+                    <WhatsAppIcon className="w-4 h-4 text-[#9AF0DF] shrink-0" />
                     <span>WhatsApp Counter</span>
                   </a>
                 )}
@@ -1706,7 +1706,7 @@ export function InfoPagesView({
             </div>
 
             <div className="lg:col-span-5">
-              <div className="sf-hero-glass-frame rounded-xl p-2.5">
+              <div className="sf-hero-glass-frame rounded-xl p-2 sm:p-2.5">
                 <img
                   src={EDITORIAL_MEDIA.conciergeSupportWebp}
                   alt={`${displayName} pharmacy telephone and parcel support desk`}
@@ -1719,7 +1719,7 @@ export function InfoPagesView({
           </div>
         </section>
 
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-12">
+        <div className="max-w-6xl mx-auto px-3.5 sm:px-6 lg:px-8 space-y-8 sm:space-y-12">
           {/* Section B: Dedicated Pharmacy Support Channels */}
           <section className="grid grid-cols-1 md:grid-cols-3 gap-5">
             {/* Desk 1: Phone */}
@@ -1834,23 +1834,23 @@ export function InfoPagesView({
                 </h2>
               </div>
 
-              <div className="divide-y divide-[#E7D8C0] bg-white rounded-2xl border border-[#E5E7EB] overflow-hidden text-xs sm:text-sm">
+              <div className="divide-y divide-[#E7D8C0] bg-white rounded-xl sm:rounded-2xl border border-[#E5E7EB] overflow-hidden text-xs sm:text-sm">
                 {openingHours?.is_24_hours ? (
-                  <div className="p-4 flex items-center justify-between gap-3">
+                  <div className="p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-3">
                     <span className="font-bold text-[#111827]">Monday – Sunday (All Week)</span>
-                    <span className="px-3 py-1 rounded-full bg-[#E9F5F1] text-[#0E5146] font-bold text-xs">
+                    <span className="px-3 py-1 rounded-full bg-[#E9F5F1] text-[#0E5146] font-bold text-xs self-start sm:self-auto">
                       Open 24 Hours
                     </span>
                   </div>
                 ) : (
                   <>
-                    <div className="p-4 flex items-center justify-between gap-3">
+                    <div className="p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-1 sm:gap-3">
                       <span className="font-semibold text-[#4B5563]">Monday – Saturday</span>
                       <strong className="sf-num font-extrabold text-[#111827]">
                         {openingHours?.mon_sat || "09:00 AM – 11:00 PM"}
                       </strong>
                     </div>
-                    <div className="p-4 flex items-center justify-between gap-3">
+                    <div className="p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-1 sm:gap-3">
                       <span className="font-semibold text-[#4B5563]">Sunday</span>
                       <strong className="sf-num font-extrabold text-[#111827]">
                         {openingHours?.sun || "10:00 AM – 10:00 PM"}
@@ -1858,13 +1858,13 @@ export function InfoPagesView({
                     </div>
                   </>
                 )}
-                <div className="p-4 flex items-center justify-between gap-3 bg-[#F9FAFB]">
+                <div className="p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-1 sm:gap-3 bg-[#F9FAFB]">
                   <span className="font-semibold text-[#4B5563]">
                     Online Catalog &amp; Order Placement
                   </span>
                   <strong className="text-[#0E5146] font-bold">24/7 Online Queue</strong>
                 </div>
-                <div className="p-4 flex items-center justify-between gap-3 bg-[#F9FAFB]">
+                <div className="p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-1 sm:gap-3 bg-[#F9FAFB]">
                   <span className="font-semibold text-[#4B5563]">
                     Order Tracking &amp; 80mm PDF Receipt
                   </span>
@@ -2021,30 +2021,30 @@ export function InfoPagesView({
     ];
 
     return (
-      <main className="flex-1 pb-12 sm:pb-16 sf-fade-up space-y-10">
+      <main className="flex-1 pb-10 sm:pb-16 sf-fade-up space-y-6 sm:space-y-10">
         {/* Photo-Led Legal & Clinical Masthead */}
         <section className="sf-hero-aurora relative overflow-hidden border-b border-white/12">
           <div
             aria-hidden="true"
             className="pointer-events-none absolute inset-0 sf-hero-grid-pattern opacity-55"
           />
-          <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-10 sm:py-14 relative z-10 grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
-            <div className="lg:col-span-7 space-y-3.5">
-              <span className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full sf-hero-glass-mini text-xs font-semibold text-white">
+          <div className="max-w-6xl mx-auto px-3.5 sm:px-6 lg:px-8 py-6 sm:py-12 lg:py-14 relative z-10 grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-8 items-center">
+            <div className="lg:col-span-7 space-y-2.5 sm:space-y-3.5">
+              <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full sf-hero-glass-mini text-[11px] sm:text-xs font-semibold text-white">
                 <ShieldCheckIcon className="w-3.5 h-3.5 text-emerald-400" />
                 <span>Storefront Governance • {displayName}</span>
               </span>
-              <h1 className="sf-display text-3xl sm:text-4xl lg:text-[42px] font-extrabold text-white tracking-tight leading-tight">
+              <h1 className="sf-display text-2xl sm:text-4xl lg:text-[42px] font-extrabold text-white tracking-tight leading-tight">
                 Terms &amp; Dispensing Conditions
               </h1>
-              <p className="text-sm sm:text-base text-slate-300 leading-relaxed max-w-xl">
+              <p className="text-xs sm:text-base text-slate-300 leading-relaxed max-w-xl">
                 Comprehensive terms governing online medicine ordering, unit-level POS pricing,
                 prescription verification, local delivery, and pharmaceutical safety at{" "}
                 {displayName} ({sf.city}).
               </p>
             </div>
 
-            <div className="lg:col-span-5">
+            <div className="hidden sm:block lg:col-span-5">
               <div className="sf-hero-glass-frame rounded-xl p-2.5">
                 <img
                   src={EDITORIAL_MEDIA.dispensingDeskWebp}
@@ -2059,9 +2059,29 @@ export function InfoPagesView({
         </section>
 
         {/* 2-Column Structured Legal Layout */}
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-          {/* Sticky Table of Contents & Pharmacy Box */}
-          <aside className="lg:col-span-4 lg:sticky lg:top-24 space-y-5">
+        <div className="max-w-6xl mx-auto px-3.5 sm:px-6 lg:px-8 grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-8 items-start">
+          {/* Mobile Collapsible TOC */}
+          <details className="lg:hidden sf-card rounded-xl overflow-hidden">
+            <summary className="px-4 py-3.5 bg-[#F9FAFB] text-xs font-extrabold uppercase tracking-wider text-[#0E5146] cursor-pointer list-none flex items-center justify-between">
+              <span>Jump to Section ({termsSections.length})</span>
+              <ChevronRightIcon className="w-4 h-4" />
+            </summary>
+            <nav aria-label="Terms sections mobile" className="p-2.5 space-y-1 text-xs border-t border-[#E5E7EB]">
+              {termsSections.map((sec) => (
+                <a
+                  key={sec.id}
+                  href={`#${sec.id}`}
+                  className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-[#4B5563] hover:text-[#0E5146] hover:bg-[#E9F5F1]/70 font-semibold transition"
+                >
+                  <span className="font-mono text-[11px] font-bold text-[#0E5146]">{sec.num}</span>
+                  <span className="truncate">{sec.title}</span>
+                </a>
+              ))}
+            </nav>
+          </details>
+
+          {/* Desktop Sticky Table of Contents & Pharmacy Box */}
+          <aside className="hidden lg:block lg:col-span-4 lg:sticky lg:top-24 space-y-5">
             <div className="sf-card-elevated rounded-xl p-5 sm:p-6 space-y-4">
               <span className="text-[11px] font-extrabold uppercase tracking-wider text-[#0E5146] block">
                 Document Sections
@@ -2107,22 +2127,22 @@ export function InfoPagesView({
           </aside>
 
           {/* Long-Form Clauses */}
-          <article className="lg:col-span-8 space-y-5">
+          <article className="lg:col-span-8 space-y-3.5 sm:space-y-5">
             {termsSections.map((sec) => (
               <section
                 key={sec.id}
                 id={sec.id}
-                className="sf-card rounded-xl p-6 sm:p-8 space-y-3.5 scroll-mt-28"
+                className="sf-card rounded-xl p-4 sm:p-8 space-y-3 scroll-mt-32"
               >
-                <div className="flex items-start gap-3">
-                  <span className="px-2.5 py-1 rounded-lg bg-[#E9F5F1] border border-[#C6E2D9] font-mono text-xs font-extrabold text-[#0E5146] shrink-0 whitespace-nowrap mt-0.5">
+                <div className="flex flex-col sm:flex-row sm:items-start gap-2 sm:gap-3">
+                  <span className="self-start px-2.5 py-1 rounded-lg bg-[#E9F5F1] border border-[#C6E2D9] font-mono text-[11px] sm:text-xs font-extrabold text-[#0E5146] shrink-0 whitespace-nowrap">
                     Section {sec.num}
                   </span>
-                  <h2 className="sf-display text-lg sm:text-xl font-extrabold text-[#111827]">
+                  <h2 className="sf-display text-base sm:text-xl font-extrabold text-[#111827] leading-snug">
                     {sec.title}
                   </h2>
                 </div>
-                <div className="space-y-3 text-xs sm:text-[14.5px] text-[#4B606D] leading-relaxed">
+                <div className="space-y-2.5 sm:space-y-3 text-[13.5px] sm:text-[14.5px] text-[#4B606D] leading-relaxed">
                   {sec.paragraphs.map((p, idx) => (
                     <p key={idx}>{p}</p>
                   ))}
@@ -2211,29 +2231,29 @@ export function InfoPagesView({
   ];
 
   return (
-    <main className="flex-1 pb-12 sm:pb-16 sf-fade-up space-y-10">
+    <main className="flex-1 pb-10 sm:pb-16 sf-fade-up space-y-6 sm:space-y-10">
       {/* Photo-Led Privacy Masthead */}
       <section className="sf-hero-aurora relative overflow-hidden border-b border-white/12">
         <div
           aria-hidden="true"
           className="pointer-events-none absolute inset-0 sf-hero-grid-pattern opacity-55"
         />
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-10 sm:py-14 relative z-10 grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
-          <div className="lg:col-span-7 space-y-3.5">
-            <span className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full sf-hero-glass-mini text-xs font-semibold text-white">
+        <div className="max-w-6xl mx-auto px-3.5 sm:px-6 lg:px-8 py-6 sm:py-12 lg:py-14 relative z-10 grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-8 items-center">
+          <div className="lg:col-span-7 space-y-2.5 sm:space-y-3.5">
+            <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full sf-hero-glass-mini text-[11px] sm:text-xs font-semibold text-white">
               <ShieldCheckIcon className="w-3.5 h-3.5 text-[#9AF0DF]" />
               <span>Patient &amp; Customer Confidentiality • {displayName}</span>
             </span>
-            <h1 className="sf-display text-3xl sm:text-4xl lg:text-[42px] font-extrabold text-white tracking-tight leading-tight">
+            <h1 className="sf-display text-2xl sm:text-4xl lg:text-[42px] font-extrabold text-white tracking-tight leading-tight">
               Privacy &amp; Customer Data Policy
             </h1>
-            <p className="text-sm sm:text-base text-slate-300 leading-relaxed max-w-xl">
+            <p className="text-xs sm:text-base text-slate-300 leading-relaxed max-w-xl">
               How {displayName} protects your personal contact details, prescription records,
               local delivery addresses, and digital pharmacy invoices.
             </p>
           </div>
 
-          <div className="lg:col-span-5">
+          <div className="hidden sm:block lg:col-span-5">
             <div className="sf-hero-glass-frame rounded-xl p-2.5">
               <img
                 src={EDITORIAL_MEDIA.conciergeSupportWebp}
@@ -2248,9 +2268,29 @@ export function InfoPagesView({
       </section>
 
       {/* 2-Column Structured Privacy Layout */}
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-        {/* Sticky Sidebar */}
-        <aside className="lg:col-span-4 lg:sticky lg:top-24 space-y-5">
+      <div className="max-w-6xl mx-auto px-3.5 sm:px-6 lg:px-8 grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-8 items-start">
+        {/* Mobile Collapsible TOC */}
+        <details className="lg:hidden sf-card rounded-xl overflow-hidden">
+          <summary className="px-4 py-3.5 bg-[#F9FAFB] text-xs font-extrabold uppercase tracking-wider text-[#0E5146] cursor-pointer list-none flex items-center justify-between">
+            <span>Jump to Clause ({privacySections.length})</span>
+            <ChevronRightIcon className="w-4 h-4" />
+          </summary>
+          <nav aria-label="Privacy policy sections mobile" className="p-2.5 space-y-1 text-xs border-t border-[#E5E7EB]">
+            {privacySections.map((sec) => (
+              <a
+                key={sec.id}
+                href={`#${sec.id}`}
+                className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-[#4B5563] hover:text-[#0E5146] hover:bg-[#E9F5F1]/70 font-semibold transition"
+              >
+                <span className="font-mono text-[11px] font-bold text-[#0E5146]">{sec.num}</span>
+                <span className="truncate">{sec.title}</span>
+              </a>
+            ))}
+          </nav>
+        </details>
+
+        {/* Desktop Sticky Sidebar */}
+        <aside className="hidden lg:block lg:col-span-4 lg:sticky lg:top-24 space-y-5">
           <div className="sf-card-elevated rounded-xl p-5 sm:p-6 space-y-4">
             <span className="text-[11px] font-extrabold uppercase tracking-wider text-[#0E5146] block">
               Policy Overview
@@ -2301,22 +2341,22 @@ export function InfoPagesView({
         </aside>
 
         {/* Long-Form Privacy Clauses */}
-        <article className="lg:col-span-8 space-y-5">
+        <article className="lg:col-span-8 space-y-3.5 sm:space-y-5">
           {privacySections.map((sec) => (
             <section
               key={sec.id}
               id={sec.id}
-              className="sf-card rounded-xl p-6 sm:p-8 space-y-3.5 scroll-mt-28"
+              className="sf-card rounded-xl p-4 sm:p-8 space-y-3 scroll-mt-32"
             >
-              <div className="flex items-start gap-3">
-                <span className="px-2.5 py-1 rounded-lg bg-[#E9F5F1] border border-[#C6E2D9] font-mono text-xs font-extrabold text-[#0E5146] shrink-0 whitespace-nowrap mt-0.5">
+              <div className="flex flex-col sm:flex-row sm:items-start gap-2 sm:gap-3">
+                <span className="self-start px-2.5 py-1 rounded-lg bg-[#E9F5F1] border border-[#C6E2D9] font-mono text-[11px] sm:text-xs font-extrabold text-[#0E5146] shrink-0 whitespace-nowrap">
                   Clause {sec.num}
                 </span>
-                <h2 className="sf-display text-lg sm:text-xl font-extrabold text-[#111827]">
+                <h2 className="sf-display text-base sm:text-xl font-extrabold text-[#111827] leading-snug">
                   {sec.title}
                 </h2>
               </div>
-              <div className="space-y-3 text-xs sm:text-[14.5px] text-[#4B606D] leading-relaxed">
+              <div className="space-y-2.5 sm:space-y-3 text-[13.5px] sm:text-[14.5px] text-[#4B606D] leading-relaxed">
                 {sec.paragraphs.map((p, idx) => (
                   <p key={idx}>{p}</p>
                 ))}

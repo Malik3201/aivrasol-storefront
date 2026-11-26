@@ -19,6 +19,7 @@ interface SmartSearchBarProps {
   placeholder?: string;
   size?: "header" | "hero" | "catalog";
   testId?: string;
+  inputId?: string;
   showShortcutHint?: boolean;
   showSubmitButton?: boolean;
 }
@@ -151,12 +152,14 @@ function SuggestionRow({
         </div>
       </div>
 
-      <div className="flex items-center gap-2.5 shrink-0">
+      <div className="flex items-center gap-2 shrink-0">
         <div className="text-right">
-          <span className="block text-[13px] font-extrabold text-[#0F172A] tabular-nums">
-            PKR {price.toLocaleString()}
+          <span className="block text-[12.5px] sm:text-[13px] font-extrabold text-[#0F172A] tabular-nums whitespace-nowrap">
+            Rs. {price.toLocaleString()}
           </span>
-          <span className="block text-[10.5px] text-[#64748B]">/ {unitName}</span>
+          <span className="block text-[10px] sm:text-[10.5px] text-[#64748B] truncate max-w-[68px]">
+            / {unitName}
+          </span>
         </div>
 
         {!isOut && onQuickAdd && (
@@ -168,9 +171,9 @@ function SuggestionRow({
               onQuickAdd();
             }}
             aria-label={`Add ${product.name} to cart`}
-            className="h-8 px-2.5 rounded-lg sf-btn-primary text-[11px] font-bold inline-flex items-center gap-1 shrink-0"
+            className="min-h-[36px] sm:h-8 px-2.5 rounded-lg sf-btn-primary text-[11px] font-bold inline-flex items-center gap-1 shrink-0 active:scale-[0.97]"
           >
-            <ShoppingBagIcon className="w-3 h-3" />
+            <ShoppingBagIcon className="w-3.5 h-3.5 sm:w-3 sm:h-3" />
             <span>Add</span>
           </button>
         )}
@@ -188,6 +191,7 @@ export function SmartSearchBar({
   placeholder = "Search medicines, generic salt (e.g. Paracetamol), or healthcare items…",
   size = "header",
   testId,
+  inputId,
   showShortcutHint = false,
   showSubmitButton = false,
 }: SmartSearchBarProps) {
@@ -222,15 +226,19 @@ export function SmartSearchBar({
     });
   };
 
-  // Close dropdown on click outside
+  // Close dropdown on click or tap outside
   useEffect(() => {
-    const onDocMouseDown = (e: MouseEvent) => {
+    const onDocPointerDown = (e: MouseEvent | TouchEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setOpen(false);
       }
     };
-    document.addEventListener("mousedown", onDocMouseDown);
-    return () => document.removeEventListener("mousedown", onDocMouseDown);
+    document.addEventListener("mousedown", onDocPointerDown);
+    document.addEventListener("touchstart", onDocPointerDown, { passive: true });
+    return () => {
+      document.removeEventListener("mousedown", onDocPointerDown);
+      document.removeEventListener("touchstart", onDocPointerDown);
+    };
   }, []);
 
   // Fetch debounced live suggestions + generic alternatives
@@ -291,14 +299,15 @@ export function SmartSearchBar({
         }}
         className={`flex items-center bg-white border transition-all ${
           isHero
-            ? "h-12 sm:h-[50px] rounded-lg border-[#D1D5DB] focus-within:border-[var(--sf-primary)] focus-within:ring-2 focus-within:ring-[var(--sf-primary-soft)] p-1 shadow-2xs"
+            ? "min-h-[48px] sm:h-[50px] rounded-lg border-[#D1D5DB] focus-within:border-[var(--sf-primary)] focus-within:ring-2 focus-within:ring-[var(--sf-primary-soft)] p-1 shadow-2xs"
             : isCatalog
-              ? "h-10 rounded-lg border-[#D1D5DB] focus-within:border-[var(--sf-primary)] focus-within:ring-2 focus-within:ring-[var(--sf-primary-soft)] pl-1 pr-1"
-              : "h-11 rounded-lg border-[#D1D5DB] bg-[#F9FAFB] focus-within:bg-white focus-within:border-[var(--sf-primary)] focus-within:ring-2 focus-within:ring-[var(--sf-primary-soft)] pl-1 pr-1"
+              ? "min-h-[44px] sm:h-10 rounded-lg border-[#D1D5DB] focus-within:border-[var(--sf-primary)] focus-within:ring-2 focus-within:ring-[var(--sf-primary-soft)] pl-1 pr-1"
+              : "min-h-[44px] rounded-lg border-[#D1D5DB] bg-[#F9FAFB] focus-within:bg-white focus-within:border-[var(--sf-primary)] focus-within:ring-2 focus-within:ring-[var(--sf-primary-soft)] pl-1 pr-1"
         }`}
       >
         <SearchIcon className="w-4 h-4 text-[#64748B] ml-2.5 shrink-0" />
         <input
+          id={inputId}
           type="search"
           value={value}
           data-testid={testId}
@@ -338,7 +347,7 @@ export function SmartSearchBar({
           }}
           placeholder={placeholder}
           className={`flex-1 min-w-0 bg-transparent px-2.5 text-[#0F172A] placeholder:text-[#64748B] focus:outline-none ${
-            isHero ? "text-sm font-medium" : "text-[13.5px] font-medium"
+            isHero ? "text-base sm:text-sm font-medium" : "text-base sm:text-[13.5px] font-medium"
           }`}
         />
 
@@ -350,9 +359,9 @@ export function SmartSearchBar({
               setData(null);
             }}
             aria-label="Clear search"
-            className="w-7 h-7 rounded-lg hover:bg-[#F1F5F9] flex items-center justify-center text-[#64748B] hover:text-[#0F172A] transition shrink-0 mr-1"
+            className="w-9 h-9 sm:w-7 sm:h-7 rounded-lg hover:bg-[#F1F5F9] flex items-center justify-center text-[#64748B] hover:text-[#0F172A] transition active:scale-95 shrink-0 mr-0.5"
           >
-            <CloseIcon className="w-3.5 h-3.5" />
+            <CloseIcon className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
           </button>
         ) : showShortcutHint ? (
           <kbd
@@ -366,7 +375,7 @@ export function SmartSearchBar({
         {(isHero || showSubmitButton) && (
           <button
             type="submit"
-            className="h-9 px-4 rounded-md sf-btn-primary text-xs font-bold inline-flex items-center gap-1.5 shrink-0"
+            className="min-h-[38px] sm:h-9 px-3.5 sm:px-4 rounded-md sf-btn-primary text-xs font-bold inline-flex items-center gap-1.5 shrink-0"
           >
             <span>Search</span>
             {isHero && <ArrowRightIcon className="w-3.5 h-3.5" />}

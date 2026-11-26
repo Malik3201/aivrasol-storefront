@@ -5,7 +5,7 @@ export interface QuantityStepperInputProps {
   min?: number;
   max?: number;
   disabled?: boolean;
-  size?: "sm" | "md";
+  size?: "sm" | "md" | "touch";
   onChange: (nextQty: number) => void;
   onCapReached?: (cap: number) => void;
 }
@@ -45,13 +45,20 @@ export function QuantityStepperInput({
   };
 
   const isMd = size === "md";
+  const isTouch = size === "touch";
 
   return (
     <div
       onClick={(e) => e.stopPropagation()}
       className={`inline-flex items-center rounded-xl sf-glass-stepper ${
         disabled ? "opacity-50 pointer-events-none" : ""
-      } ${isMd ? "p-1 gap-1 h-[44px]" : "p-0.5 gap-0.5 h-[36px]"}`}
+      } ${
+        isTouch
+          ? "p-1 gap-1 h-[46px]"
+          : isMd
+            ? "p-1 gap-1 h-[44px]"
+            : "p-0.5 gap-0.5 h-[40px] sm:h-[36px]"
+      }`}
     >
       <button
         type="button"
@@ -59,8 +66,12 @@ export function QuantityStepperInput({
         onClick={() => commitValue(value - 1)}
         aria-label="Decrease quantity"
         className={`${
-          isMd ? "w-8 h-8 text-base" : "w-7 h-7 text-sm"
-        } rounded-lg font-bold text-[#142B35] hover:bg-white disabled:opacity-35 disabled:hover:bg-transparent transition flex items-center justify-center select-none`}
+          isTouch
+            ? "w-10 h-10 text-lg"
+            : isMd
+              ? "w-9 h-9 sm:w-8 sm:h-8 text-base"
+              : "w-8 h-8 sm:w-7 sm:h-7 text-sm"
+        } rounded-lg font-bold text-[#142B35] hover:bg-white disabled:opacity-35 disabled:hover:bg-transparent transition active:scale-95 flex items-center justify-center select-none`}
       >
         −
       </button>
@@ -116,7 +127,11 @@ export function QuantityStepperInput({
           }
         }}
         className={`qty-stepper-input sf-num ${
-          isMd ? "w-12 h-8 text-sm" : "w-10 h-7 text-xs"
+          isTouch
+            ? "w-11 h-10 text-base sm:text-sm"
+            : isMd
+              ? "w-12 h-9 sm:h-8 text-base sm:text-sm"
+              : "w-10 h-8 sm:h-7 text-base sm:text-xs"
         } rounded-lg bg-white border border-[#DCE6E1] text-center font-bold text-[#0F232C] focus:outline-none focus:border-[var(--sf-primary)] focus:ring-2 focus:ring-[var(--sf-primary-soft)]`}
       />
       <button
@@ -125,8 +140,12 @@ export function QuantityStepperInput({
         onClick={() => commitValue(value + 1)}
         aria-label="Increase quantity"
         className={`${
-          isMd ? "w-8 h-8 text-base" : "w-7 h-7 text-sm"
-        } rounded-lg font-bold text-[#142B35] hover:bg-white disabled:opacity-35 disabled:hover:bg-transparent transition flex items-center justify-center select-none`}
+          isTouch
+            ? "w-10 h-10 text-lg"
+            : isMd
+              ? "w-9 h-9 sm:w-8 sm:h-8 text-base"
+              : "w-8 h-8 sm:w-7 sm:h-7 text-sm"
+        } rounded-lg font-bold text-[#142B35] hover:bg-white disabled:opacity-35 disabled:hover:bg-transparent transition active:scale-95 flex items-center justify-center select-none`}
       >
         +
       </button>

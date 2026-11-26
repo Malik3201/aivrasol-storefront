@@ -90,16 +90,16 @@ export const ProductCard = React.memo(function ProductCard({
         role="button"
         tabIndex={0}
         aria-label={`View details for ${product.name}`}
-        className="relative w-full h-[160px] sm:h-[192px] bg-white border-b border-[#F3F4F6] cursor-pointer overflow-hidden flex items-center justify-center p-2.5 sm:p-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--sf-primary)]"
+        className="relative w-full aspect-square sm:aspect-auto sm:h-[192px] bg-white border-b border-[#F3F4F6] cursor-pointer overflow-hidden flex items-center justify-center p-2 sm:p-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--sf-primary)]"
       >
         {/* Minimal Retail Corner Ribbons (Only when Discounted or Rx) */}
         {hasDiscount && (
-          <span className="absolute top-2 left-2 z-10 px-1.5 py-0.5 rounded bg-[#DC2626] text-white text-[10px] font-extrabold tracking-tight tabular-nums">
+          <span className="absolute top-1.5 left-1.5 sm:top-2 sm:left-2 z-10 px-1.5 py-0.5 rounded bg-[#DC2626] text-white text-[10px] font-extrabold tracking-tight tabular-nums">
             -{discountPct}%
           </span>
         )}
         {product.requires_prescription && (
-          <span className="absolute top-2 right-2 z-10 px-1.5 py-0.5 rounded bg-[#FEF2F2] text-[#B91C1C] border border-[#FECACA] text-[9.5px] font-extrabold tracking-wide">
+          <span className="absolute top-1.5 right-1.5 sm:top-2 sm:right-2 z-10 px-1.5 py-0.5 rounded bg-[#FEF2F2] text-[#B91C1C] border border-[#FECACA] text-[9.5px] font-extrabold tracking-wide">
             Rx
           </span>
         )}
@@ -131,15 +131,15 @@ export const ProductCard = React.memo(function ProductCard({
       </div>
 
       {/* 2. Disciplined Commercial Typography & Controls */}
-      <div className="p-3 sm:p-3.5 flex-1 flex flex-col justify-between gap-2.5">
-        <div className="space-y-1">
+      <div className="p-2.5 sm:p-3.5 flex-1 flex flex-col justify-between gap-2 sm:gap-2.5 min-w-0">
+        <div className="space-y-1 min-w-0">
           {/* Subtle Brand / Department Micro-Label */}
           <p className="text-[10px] font-bold uppercase tracking-wider text-[#6B7280] truncate">
             {eyebrow}
           </p>
 
           {/* Clean 2-Line Product Name */}
-          <h3 className="sf-heading text-[13.5px] sm:text-[14px] font-bold text-[#111827] leading-[1.35] line-clamp-2 min-h-[37px]">
+          <h3 className="sf-heading text-[13px] sm:text-[14px] font-bold text-[#111827] leading-[1.3] sm:leading-[1.35] line-clamp-2 min-h-[34px] sm:min-h-[37px]">
             <button
               type="button"
               onClick={() => onOpenProductDetail(product)}
@@ -169,7 +169,7 @@ export const ProductCard = React.memo(function ProductCard({
                     type="button"
                     onClick={() => onSelectUnit(product.id, u.unit_id)}
                     title={`${u.label || u.unit_name} — Rs. ${Number(u.price_pkr).toLocaleString()}`}
-                    className={`h-6 px-2 rounded text-[10.5px] font-bold transition ${
+                    className={`min-h-[26px] sm:h-6 px-2 rounded text-[10.5px] font-bold max-w-full truncate transition active:scale-[0.96] ${
                       selected
                         ? "bg-[#111827] text-white"
                         : uOut
@@ -186,21 +186,21 @@ export const ProductCard = React.memo(function ProductCard({
         </div>
 
         {/* 3. Crisp Commercial Price + Live Cart Action */}
-        <div className="pt-2 space-y-2 border-t border-[#F3F4F6]">
-          <div className="flex items-baseline justify-between gap-1">
+        <div className="pt-2 space-y-2 border-t border-[#F3F4F6] min-w-0">
+          <div className="flex items-baseline justify-between gap-1 min-w-0">
             <div className="flex items-baseline gap-1 min-w-0">
-              <span className="sf-heading sf-price text-[15.5px] sm:text-[17px] font-extrabold text-[#111827] tracking-tight whitespace-nowrap">
+              <span className="sf-heading sf-price text-[14.5px] sm:text-[17px] font-extrabold text-[#111827] tracking-tight whitespace-nowrap">
                 Rs. {effectivePrice.toLocaleString()}
               </span>
               {hasDiscount && (
-                <span className="text-[10.5px] text-[#9CA3AF] line-through tabular-nums truncate">
+                <span className="text-[10px] sm:text-[10.5px] text-[#9CA3AF] line-through tabular-nums truncate">
                   {comparePrice.toLocaleString()}
                 </span>
               )}
             </div>
 
             <span
-              className={`inline-flex items-center gap-1 text-[10.5px] font-semibold shrink-0 ${
+              className={`inline-flex items-center gap-1 text-[10px] sm:text-[10.5px] font-semibold shrink-0 ${
                 isUnitOut
                   ? "text-rose-600"
                   : product.availability_status === "low_stock"
@@ -229,7 +229,7 @@ export const ProductCard = React.memo(function ProductCard({
 
           {inCartItem ? (
             <div
-              className="h-9 rounded-lg border border-[var(--sf-primary)] bg-[var(--sf-primary-soft)] flex items-center justify-between px-1"
+              className="min-h-[42px] sm:min-h-0 sm:h-9 rounded-lg border border-[var(--sf-primary)] bg-[var(--sf-primary-soft)] flex items-center justify-between px-1"
               onClick={(e) => e.stopPropagation()}
             >
               <button
@@ -243,7 +243,7 @@ export const ProductCard = React.memo(function ProductCard({
                 }}
                 aria-label="Decrease quantity"
                 data-testid="card-remove-cart-btn"
-                className="w-7 h-7 rounded-md bg-white hover:bg-[#F3F4F6] text-[#111827] font-extrabold text-sm flex items-center justify-center shadow-2xs transition"
+                className="w-9 h-9 sm:w-7 sm:h-7 rounded-md bg-white hover:bg-[#F3F4F6] text-[#111827] font-extrabold text-base sm:text-sm flex items-center justify-center shadow-2xs transition active:scale-95"
               >
                 −
               </button>
@@ -263,7 +263,7 @@ export const ProductCard = React.memo(function ProductCard({
                   onUpdateCartQty(activeCartKey, inCartItem.qty + 1);
                 }}
                 aria-label="Increase quantity"
-                className="w-7 h-7 rounded-md sf-btn-primary font-extrabold text-sm flex items-center justify-center transition"
+                className="w-9 h-9 sm:w-7 sm:h-7 rounded-md sf-btn-primary font-extrabold text-base sm:text-sm flex items-center justify-center transition active:scale-95"
               >
                 +
               </button>
@@ -273,7 +273,7 @@ export const ProductCard = React.memo(function ProductCard({
               type="button"
               onClick={() => onOpenProductDetail(product)}
               data-testid="add-to-cart-btn"
-              className="w-full h-9 rounded-lg text-[11.5px] font-bold bg-[#F9FAFB] hover:bg-[#F3F4F6] text-[#4B5563] border border-[#E5E7EB] transition"
+              className="w-full min-h-[42px] sm:min-h-0 sm:h-9 rounded-lg text-[11.5px] font-bold bg-[#F9FAFB] hover:bg-[#F3F4F6] text-[#4B5563] border border-[#E5E7EB] transition active:scale-[0.97]"
             >
               Alternatives
             </button>
@@ -282,9 +282,11 @@ export const ProductCard = React.memo(function ProductCard({
               type="button"
               onClick={() => onAddToCart(product, 1, false, activeUnit)}
               data-testid="add-to-cart-btn"
-              className="w-full h-9 px-2.5 rounded-lg sf-btn-primary text-xs font-bold inline-flex items-center justify-center gap-1.5"
+              className="w-full min-h-[42px] sm:min-h-0 sm:h-9 px-2 rounded-lg sf-btn-primary text-xs font-bold inline-flex items-center justify-center gap-1 min-w-0"
             >
-              <span>{units.length > 1 ? `Add ${activeUnit.unit_name}` : "Add to Cart"}</span>
+              <span className="truncate">
+                {units.length > 1 ? `Add ${activeUnit.unit_name}` : "Add to Cart"}
+              </span>
             </button>
           )}
         </div>
