@@ -71,6 +71,7 @@ import {
 import { invalidateTenantBundleCache } from "../domain-resolver";
 import { computeNormalizedCoreKey } from "../../shared/medicine-identity-matcher";
 import {
+  getCentralImageIndex,
   loadStorefrontCatalogDoc,
   rebuildAndSaveCentralImageIndex,
   saveStorefrontCatalogDoc,
@@ -1125,6 +1126,31 @@ async function handleManageRoutesInner(
   if (pathname === "/api/v1/manage/central-library/overview" && req.method === "GET") {
     const overview = await getCentralLibraryOverview(env);
     return new Response(JSON.stringify({ ok: true, overview }), { status: 200, headers });
+  }
+
+  // GET /api/v1/manage/central-library/index — Zero-D1-Scan R2-cached full verified image library
+  if (pathname === "/api/v1/manage/central-library/index" && req.method === "GET") {
+    const force = url.searchParams.get("force") === "1";
+    const compiled = force
+      ? await rebuildAndSaveCentralImageIndex(env)
+      : await getCentralImageIndex(env);
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        source: "r2_index",
+        version: compiled.doc.version,
+        updated_at: compiled.doc.updated_at,
+        total_verified: compiled.doc.entries.length,
+        entries: compiled.doc.entries,
+      }),
+      {
+        status: 200,
+        headers: {
+          ...headers,
+          "Cache-Control": "private, max-age=60",
+        },
+      }
+    );
   }
 
   // GET /api/v1/manage/central-library/medicines
