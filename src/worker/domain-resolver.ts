@@ -329,6 +329,243 @@ function evaluateStorefrontLifecycle(
   };
 }
 
+export interface ResolvedTenantBundle {
+  ctx: ResolvedTenantContext;
+  settings: StorefrontSettingsRecord | null;
+  branding: StorefrontBrandingRecord | null;
+  branches: StorefrontBranchRecord[];
+  reviewSummary: { count: number; avg: number } | null;
+}
+
+const TENANT_BUNDLE_CACHE_TTL_MS = 30_000;
+const TENANT_BUNDLE_CACHE_MAX = 120;
+const tenantBundleCache = new Map<
+  string,
+  { expiresAt: number; bundle: ResolvedTenantBundle }
+>();
+
+/**
+ * Evicts cached tenant metadata from this Worker isolate immediately whenever branding,
+ * settings, status, sync version, or reviews change — guaranteeing fast & fresh updates.
+ */
+export function invalidateTenantBundleCache(storefrontId?: string): void {
+  if (!storefrontId) {
+    tenantBundleCache.clear();
+    return;
+  }
+  for (const [k, entry] of tenantBundleCache.entries()) {
+    if (entry.bundle.ctx.storefront?.id === storefrontId) {
+      tenantBundleCache.delete(k);
+    }
+  }
+}
+
+/**
+ * Blazing-fast cached tenant resolver + settings/branding/branches/review bundle.
+ * - Isolate warm hit: 0ms latency, 0 D1 reads!
+ * - Cold miss: single parallel D1 read (~4 rows total) cached for 30s across all public routes.
+ */
+export async function resolveTenantBundleCached(
+  db: D1Database,
+  rawHostname: string,
+  baseDomain: string = PLATFORM_PRIMARY_BASE_DOMAIN
+): Promise<ResolvedTenantBundle> {
+  const cacheKey = `${rawHostname.toLowerCase()}|${baseDomain.toLowerCase()}`;
+  const now = Date.now();
+  const cached = tenantBundleCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) {
+    return cached.bundle;
+  }
+
+  const ctx = await resolveTenantByHostname(db, rawHostname, baseDomain);
+  let settings: StorefrontSettingsRecord | null = null;
+  let branding: StorefrontBrandingRecord | null = null;
+  let branches: StorefrontBranchRecord[] = [];
+  let reviewSummary: { count: number; avg: number } | null = null;
+
+  if (ctx.storefront) {
+    const sf = ctx.storefront;
+    if (ctx.ok) {
+      const [sRow, bRow, brRes, rvRow] = await Promise.all([
+        db
+          .prepare("SELECT * FROM storefront_settings WHERE storefront_id = ? AND pharmacy_id = ? LIMIT 1")
+          .bind(sf.id, sf.pharmacy_id)
+          .first<StorefrontSettingsRecord>(),
+        db
+          .prepare("SELECT * FROM storefront_branding WHERE storefront_id = ? AND pharmacy_id = ? LIMIT 1")
+          .bind(sf.id, sf.pharmacy_id)
+          .first<StorefrontBrandingRecord>(),
+        db
+          .prepare(
+            "SELECT * FROM storefront_branches WHERE storefront_id = ? AND pharmacy_id = ? AND status = 'active' ORDER BY is_main DESC, name ASC"
+          )
+          .bind(sf.id, sf.pharmacy_id)
+          .all<StorefrontBranchRecord>(),
+        db
+          .prepare(
+            `SELECT COUNT(*) AS cnt, AVG(rating) AS avg_r FROM storefront_reviews
+             WHERE storefront_id = ? AND pharmacy_id = ? AND status = 'published'`
+          )
+          .bind(sf.id, sf.pharmacy_id)
+          .first<{ cnt: number; avg_r: number | null }>()
+          .catch(() => null),
+      ]);
+      settings = sRow || null;
+      branding = bRow || null;
+      branches = brRes.results || [];
+      if (rvRow && Number(rvRow.cnt || 0) > 0 && rvRow.avg_r) {
+        reviewSummary = {
+          count: Number(rvRow.cnt),
+          avg: Number(Number(rvRow.avg_r).toFixed(1)),
+        };
+      }
+    } else {
+      branding =
+        (await db
+          .prepare("SELECT * FROM storefront_branding WHERE storefront_id = ? AND pharmacy_id = ? LIMIT 1")
+          .bind(sf.id, sf.pharmacy_id)
+          .first<StorefrontBrandingRecord>()) || null;
+    }
+  }
+
+  const bundle: ResolvedTenantBundle = { ctx, settings, branding, branches, reviewSummary };
+  if (tenantBundleCache.size >= TENANT_BUNDLE_CACHE_MAX && !tenantBundleCache.has(cacheKey)) {
+    const firstKey = tenantBundleCache.keys().next().value;
+    if (firstKey) tenantBundleCache.delete(firstKey);
+  }
+  tenantBundleCache.set(cacheKey, {
+    expiresAt: now + TENANT_BUNDLE_CACHE_TTL_MS,
+    bundle,
+  });
+  return bundle;
+}
+
+/**
+ * Builds the `/api/v1/public/resolve` JSON payload directly from an already-loaded `ResolvedTenantBundle`
+ * (0 extra D1 queries!).
+ */
+export function buildPublicResolutionPayloadFromBundle(
+  bundle: ResolvedTenantBundle
+): DomainResolutionResponse {
+  const { ctx, branding, settings, branches } = bundle;
+  if (ctx.resolutionStatus === "redirect") {
+    return {
+      ok: true,
+      resolution_status: "redirect",
+      requested_hostname: ctx.requestedHostname,
+      normalized_hostname: ctx.normalizedHostname,
+      redirect_to_hostname: ctx.redirectToHostname,
+      redirect_url: ctx.redirectUrl,
+      message: ctx.message,
+    };
+  }
+  if (ctx.resolutionStatus === "not_found" || !ctx.storefront) {
+    return {
+      ok: false,
+      resolution_status: "not_found",
+      requested_hostname: ctx.requestedHostname,
+      normalized_hostname: ctx.normalizedHostname,
+      message: ctx.message || "Pharmacy website not found.",
+    };
+  }
+
+  const sf = ctx.storefront;
+  if (ctx.resolutionStatus === "suspended" || ctx.resolutionStatus === "inactive") {
+    return {
+      ok: false,
+      resolution_status: ctx.resolutionStatus,
+      requested_hostname: ctx.requestedHostname,
+      normalized_hostname: ctx.normalizedHostname,
+      message: ctx.message,
+      storefront: {
+        id: sf.id,
+        pharmacy_id: sf.pharmacy_id,
+        slug: sf.slug,
+        pharmacy_name: sf.pharmacy_name,
+        primary_domain: sf.primary_domain,
+        status: sf.status,
+        website_enabled: Number(sf.website_enabled) === 1,
+        entitlement_status: sf.entitlement_status,
+        city: sf.city,
+        address_line: sf.address_line,
+        contact_phone: sf.contact_phone,
+        whatsapp_phone: sf.whatsapp_phone,
+        contact_email: sf.contact_email,
+        drug_sale_license_no: sf.drug_sale_license_no,
+        pharmacist_name: sf.pharmacist_name,
+        published_products_count: 0,
+        config_version: sf.config_version,
+      },
+      branding: branding || undefined,
+    };
+  }
+
+  let openingHours: Record<string, unknown> = {};
+  if (settings?.opening_hours_json) {
+    try {
+      openingHours = JSON.parse(settings.opening_hours_json);
+    } catch {
+      openingHours = {};
+    }
+  }
+
+  return {
+    ok: true,
+    resolution_status: "active",
+    requested_hostname: ctx.requestedHostname,
+    normalized_hostname: ctx.normalizedHostname,
+    storefront: {
+      id: sf.id,
+      pharmacy_id: sf.pharmacy_id,
+      slug: sf.slug,
+      pharmacy_name: sf.pharmacy_name,
+      primary_domain: sf.primary_domain,
+      status: sf.status,
+      website_enabled: Number(sf.website_enabled) === 1,
+      entitlement_status: sf.entitlement_status,
+      city: sf.city,
+      address_line: sf.address_line,
+      contact_phone: sf.contact_phone,
+      whatsapp_phone: sf.whatsapp_phone,
+      contact_email: sf.contact_email,
+      drug_sale_license_no: sf.drug_sale_license_no,
+      pharmacist_name: sf.pharmacist_name,
+      published_products_count: Number(sf.published_products_count || 0),
+      config_version: Number(sf.config_version || 1),
+    },
+    branding: branding || undefined,
+    settings: settings
+      ? {
+          delivery_enabled: settings.delivery_enabled,
+          pickup_enabled: settings.pickup_enabled,
+          min_order_amount_pkr: settings.min_order_amount_pkr,
+          standard_delivery_fee_pkr: settings.standard_delivery_fee_pkr,
+          free_delivery_threshold_pkr: settings.free_delivery_threshold_pkr,
+          estimated_delivery_minutes: settings.estimated_delivery_minutes,
+          estimated_pickup_minutes: settings.estimated_pickup_minutes,
+          delivery_radius_km: settings.delivery_radius_km,
+          cod_enabled: settings.cod_enabled,
+          bank_transfer_enabled: settings.bank_transfer_enabled,
+          prescription_upload_enabled: settings.prescription_upload_enabled,
+          whatsapp_order_assist_enabled: settings.whatsapp_order_assist_enabled,
+          announcement_bar_enabled: settings.announcement_bar_enabled,
+          announcement_bar_text: settings.announcement_bar_text,
+          featured_categories_enabled: settings.featured_categories_enabled,
+          require_rx_for_prescription_items: settings.require_rx_for_prescription_items,
+          show_exact_stock_qty: settings.show_exact_stock_qty,
+          hide_out_of_stock: settings.hide_out_of_stock,
+          seo_title: settings.seo_title,
+          seo_description: settings.seo_description,
+          legal_disclaimer_text: settings.legal_disclaimer_text,
+          pharmacist_supervision_note: settings.pharmacist_supervision_note,
+          emergency_notice_text: settings.emergency_notice_text,
+          opening_hours: openingHours,
+        }
+      : undefined,
+    branches,
+  };
+}
+
 /**
  * Loads full public resolution payload (Storefront + Branding + Public Settings + Active Branches)
  * for `/api/v1/public/resolve`.

@@ -28,13 +28,17 @@ import type {
 } from "../../shared/types";
 import { decodeCursor, encodeCursor } from "../../shared/validation";
 import {
-  buildPublicResolutionPayload,
+  buildPublicResolutionPayloadFromBundle,
   extractRequestHostname,
-  resolveTenantByHostname,
+  resolveTenantBundleCached,
 } from "../domain-resolver";
 import type { StorefrontWorkerEnv, WorkerExecutionContext } from "../env";
 import { buildResponseHeaders } from "../security";
-import { recordStorefrontUsage, writeStorefrontAuditLog } from "../usage-tracker";
+import {
+  recordBufferedPublicUsage,
+  recordStorefrontUsage,
+  writeStorefrontAuditLog,
+} from "../usage-tracker";
 import { invalidateOrderNotifCache } from "./sync-routes";
 import {
   buildTenantEdgeCacheKey,
@@ -46,6 +50,11 @@ import {
   queryProductsFromSnapshot,
   suggestProductsFromSnapshot,
 } from "../edge-cache-and-snapshots";
+import {
+  discoverGenericSaltInMemory,
+  getCentralImageIndex,
+  loadStorefrontCatalogDoc,
+} from "../r2-catalog-store";
 
 function isSyncTimestampStale(
   lastSyncIso: string | null | undefined,
@@ -324,21 +333,34 @@ export async function handlePublicRoutes(
 ): Promise<Response> {
   const url = new URL(req.url);
   const rawHost = extractRequestHostname(req, env);
-  const ctx = await resolveTenantByHostname(
+  const bundle = await resolveTenantBundleCached(
     env.DB,
     rawHost,
     env.PLATFORM_BASE_DOMAIN
   );
+  const ctx = bundle.ctx;
 
-  // 1. GET /api/v1/public/resolve — Always returns structured resolution state
+  // 1. GET /api/v1/public/resolve — Always returns structured resolution state (Isolate + Edge Cached -> 0 D1 reads/writes!)
   if (pathname === "/api/v1/public/resolve" && req.method === "GET") {
-    const payload = await buildPublicResolutionPayload(env.DB, ctx);
+    const resolveEdgeKey = ctx.storefront
+      ? buildTenantEdgeCacheKey(req, {
+          storefrontId: ctx.storefront.id,
+          configVersion: Number(ctx.storefront.config_version || 1),
+          hostname: ctx.normalizedHostname || ctx.storefront.primary_domain || "default",
+        })
+      : null;
+    if (resolveEdgeKey) {
+      const hit = await getEdgeCachedResponse(resolveEdgeKey);
+      if (hit) return hit;
+    }
+
+    const payload = buildPublicResolutionPayloadFromBundle(bundle);
     if (ctx.storefront) {
-      await recordStorefrontUsage(env.DB, {
+      await recordBufferedPublicUsage(env.DB, {
         storefrontId: ctx.storefront.id,
         pharmacyId: ctx.storefront.pharmacy_id,
         publicRequests: 1,
-        d1RowsReadEst: 3,
+        d1RowsRead: 0,
       });
     }
     const headers = buildResponseHeaders({
@@ -346,15 +368,19 @@ export async function handlePublicRoutes(
       storefrontId: ctx.storefront?.id,
       configVersion: ctx.storefront?.config_version,
       hostname: ctx.normalizedHostname,
-      isPrivate: true,
+      ...(ctx.ok ? { cacheMaxAgeSec: 60 } : { isPrivate: true }),
     });
-    return new Response(JSON.stringify(payload), {
+    const res = new Response(JSON.stringify(payload), {
       status: ctx.httpStatus,
       headers,
     });
+    if (resolveEdgeKey && ctx.ok) {
+      putEdgeCachedResponse(resolveEdgeKey, res, execCtx);
+    }
+    return res;
   }
 
-  // 1b. GET/HEAD /api/v1/public/media/:mediaId — Public Shared & Tenant-Scoped Media Serving (Edge-Cached + Cross-Tenant Safe)
+  // 1b. GET/HEAD /api/v1/public/media/:mediaId — Public Shared & Tenant-Scoped Media Serving (Edge-Cached + Zero-D1 Shared Lookup)
   if (pathname.startsWith("/api/v1/public/media/") && (req.method === "GET" || req.method === "HEAD")) {
     const mediaId = decodeURIComponent(pathname.slice("/api/v1/public/media/".length));
 
@@ -377,14 +403,38 @@ export async function handlePublicRoutes(
       }
     }
 
-    const mediaRow = await env.DB.prepare(
-      `SELECT id, storefront_id, pharmacy_id, r2_object_key, public_url, content_type, byte_size, is_shared
-       FROM storefront_media
-       WHERE id = ?
-       LIMIT 1`
-    )
-      .bind(mediaId)
-      .first<Record<string, unknown>>();
+    // Fast 0-D1 lookup for shared verified medicine artwork via in-memory/R2 Central Image Index
+    let mediaRow: Record<string, unknown> | null = null;
+    if (mediaId.startsWith("sfm_shared_")) {
+      try {
+        const centralIdx = await getCentralImageIndex(env);
+        const fastMeta = centralIdx.byMediaId.get(mediaId);
+        if (fastMeta && fastMeta.r2_object_key) {
+          mediaRow = {
+            id: mediaId,
+            storefront_id: "sf_central_library",
+            pharmacy_id: "pharmacy_central_platform",
+            r2_object_key: fastMeta.r2_object_key,
+            public_url: fastMeta.public_url,
+            content_type: fastMeta.content_type || "image/webp",
+            is_shared: 1,
+          };
+        }
+      } catch {
+        mediaRow = null;
+      }
+    }
+
+    if (!mediaRow) {
+      mediaRow = await env.DB.prepare(
+        `SELECT id, storefront_id, pharmacy_id, r2_object_key, public_url, content_type, byte_size, is_shared
+         FROM storefront_media
+         WHERE id = ?
+         LIMIT 1`
+      )
+        .bind(mediaId)
+        .first<Record<string, unknown>>();
+    }
 
     if (!mediaRow) {
       return new Response(
@@ -507,42 +557,43 @@ export async function handlePublicRoutes(
   }
 
   const sf = ctx.storefront;
-
-  // Load tenant settings for visibility rules
-  const settings = await env.DB.prepare(
-    "SELECT * FROM storefront_settings WHERE storefront_id = ? AND pharmacy_id = ? LIMIT 1"
-  )
-    .bind(sf.id, sf.pharmacy_id)
-    .first<StorefrontSettingsRecord>();
+  // Reuse cached settings & branding from `ResolvedTenantBundle` (0 extra D1 reads!)
+  const settings = bundle.settings;
 
   const showExactStock = Number(settings?.show_exact_stock_qty) === 1;
   const showStockBadges = Number(settings?.show_stock_badges ?? 1) === 1;
   const hideOutOfStock = Number(settings?.hide_out_of_stock) === 1;
   const staleThresholdHours = Number(settings?.stale_stock_threshold_hours || 24);
 
+  // Include global Central Image Index version in Edge Cache scope so newly uploaded central
+  // images appear immediately across all pharmacy storefronts without manual cache purges!
+  let centralIndexVersion = 0;
+  try {
+    const cIdx = await getCentralImageIndex(env);
+    centralIndexVersion = cIdx.doc.version || 0;
+  } catch {
+    centralIndexVersion = 0;
+  }
+
   const tenantEdgeScope = {
     storefrontId: sf.id,
     configVersion: Number(sf.config_version || 1),
+    centralIndexVersion,
     hostname: ctx.normalizedHostname || sf.primary_domain || "default",
   };
 
-  // 2. GET /api/v1/public/settings (Edge-Cached by tenant + config_version)
+  // 2. GET /api/v1/public/settings (Edge-Cached + Isolate-Cached -> 0 D1 reads/writes!)
   if (pathname === "/api/v1/public/settings" && req.method === "GET") {
     const edgeKey = buildTenantEdgeCacheKey(req, tenantEdgeScope);
     const cached = await getEdgeCachedResponse(edgeKey);
     if (cached) return cached;
 
-    const branding = await env.DB.prepare(
-      "SELECT * FROM storefront_branding WHERE storefront_id = ? AND pharmacy_id = ? LIMIT 1"
-    )
-      .bind(sf.id, sf.pharmacy_id)
-      .first<StorefrontBrandingRecord>();
-
-    await recordStorefrontUsage(env.DB, {
+    const branding = bundle.branding;
+    await recordBufferedPublicUsage(env.DB, {
       storefrontId: sf.id,
       pharmacyId: sf.pharmacy_id,
       publicRequests: 1,
-      d1RowsReadEst: 2,
+      d1RowsRead: 0,
     });
 
     let openingHours: Record<string, unknown> = {};
@@ -671,43 +722,21 @@ export async function handlePublicRoutes(
     let alternativeReason: string | null = result.alternativeReason;
 
     // If searched medicine is NOT in this pharmacy's published catalog at all,
-    // check unpublished store products or central canonical library to discover its generic salt
-    // and recommend in-stock same-formula alternatives!
+    // discover its generic salt 100% in memory from unpublished R2 catalog items + Central Image Index (0 D1 reads!)
     if (result.suggestions.length === 0 && q.length >= 3) {
-      const qLike = `%${q.toLowerCase()}%`;
       try {
-        const localUnpub = await env.DB.prepare(
-          `SELECT name, generic_name FROM storefront_products
-           WHERE storefront_id = ? AND pharmacy_id = ?
-             AND LOWER(name) LIKE ? AND generic_name IS NOT NULL AND generic_name != ''
-           LIMIT 1`
-        )
-          .bind(sf.id, sf.pharmacy_id, qLike)
-          .first<{ name: string; generic_name: string }>();
-
-        let discoveredSalt = cleanGenericSaltText(localUnpub?.generic_name);
-        let discoveredName = localUnpub?.name || null;
-
-        if (!discoveredSalt) {
-          const canonical = await env.DB.prepare(
-            `SELECT canonical_name, generic_name FROM central_medicine_canonical
-             WHERE normalized_name LIKE ? AND generic_name IS NOT NULL AND generic_name != ''
-             LIMIT 1`
-          )
-            .bind(qLike)
-            .first<{ canonical_name: string; generic_name: string }>();
-          if (canonical?.generic_name) {
-            discoveredSalt = cleanGenericSaltText(canonical.generic_name);
-            discoveredName = canonical.canonical_name;
-          }
-        }
-
+        const [{ doc }, centralIdx] = await Promise.all([
+          loadStorefrontCatalogDoc(env, sf.id, sf.pharmacy_id, { hydrateCentralImages: false }),
+          getCentralImageIndex(env),
+        ]);
+        const discovered = discoverGenericSaltInMemory(q.toLowerCase(), doc, centralIdx);
+        const discoveredSalt = cleanGenericSaltText(discovered?.genericName);
         if (discoveredSalt) {
           const altFound = findGenericAlternativesInSnapshot(snapshot, discoveredSalt, new Set(), 5);
           if (altFound.length > 0) {
             alternativesRows = altFound;
             matchedGeneric = discoveredSalt;
-            matchedUnavailableName = discoveredName || q;
+            matchedUnavailableName = discovered?.medicineName || q;
             alternativeReason = "unavailable_brand";
           }
         }
@@ -796,24 +825,12 @@ export async function handlePublicRoutes(
       let salt = cleanGenericSaltText(items[0]?.generic_name);
       if (!salt) {
         try {
-          const qLike = `%${q}%`;
-          const localOrCanon =
-            (await env.DB.prepare(
-              `SELECT generic_name FROM storefront_products
-               WHERE storefront_id = ? AND pharmacy_id = ?
-                 AND LOWER(name) LIKE ? AND generic_name IS NOT NULL AND generic_name != ''
-               LIMIT 1`
-            )
-              .bind(sf.id, sf.pharmacy_id, qLike)
-              .first<{ generic_name: string }>()) ||
-            (await env.DB.prepare(
-              `SELECT generic_name FROM central_medicine_canonical
-               WHERE normalized_name LIKE ? AND generic_name IS NOT NULL AND generic_name != ''
-               LIMIT 1`
-            )
-              .bind(qLike)
-              .first<{ generic_name: string }>());
-          salt = cleanGenericSaltText(localOrCanon?.generic_name);
+          const [{ doc }, centralIdx] = await Promise.all([
+            loadStorefrontCatalogDoc(env, sf.id, sf.pharmacy_id, { hydrateCentralImages: false }),
+            getCentralImageIndex(env),
+          ]);
+          const discovered = discoverGenericSaltInMemory(q, doc, centralIdx);
+          salt = cleanGenericSaltText(discovered?.genericName);
         } catch {
           // ignore
         }
@@ -920,19 +937,20 @@ export async function handlePublicRoutes(
     return res;
   }
 
-  // 6. GET /api/v1/public/products/:idOrSlug
+  // 6. GET /api/v1/public/products/:idOrSlug (Edge-Cached + R2-First Catalog -> 0 D1 reads!)
   if (pathname.startsWith("/api/v1/public/products/") && req.method === "GET") {
+    const edgeKey = buildTenantEdgeCacheKey(req, tenantEdgeScope);
+    const cached = await getEdgeCachedResponse(edgeKey);
+    if (cached) return cached;
+
     const idOrSlug = decodeURIComponent(pathname.slice("/api/v1/public/products/".length));
-    const row = await env.DB.prepare(
-      `SELECT ${SAFE_PRODUCT_COLUMNS}
-       FROM storefront_products
-       WHERE storefront_id = ? AND pharmacy_id = ?
-         AND publish_status = 'published' AND is_controlled_substance = 0
-         AND (id = ? OR slug = ? OR pos_product_id = ?)
-       LIMIT 1`
-    )
-      .bind(sf.id, sf.pharmacy_id, idOrSlug, idOrSlug, idOrSlug)
-      .first<Record<string, unknown>>();
+    const { snapshot, source } = await getCatalogSnapshotForTenant(env, sf, execCtx);
+    const row = snapshot.products.find(
+      (p) =>
+        String(p.id || "") === idOrSlug ||
+        String(p.slug || "") === idOrSlug ||
+        String(p.pos_product_id || "") === idOrSlug
+    );
 
     if (!row) {
       return new Response(
@@ -948,33 +966,25 @@ export async function handlePublicRoutes(
       );
     }
 
-    const [imagesRes, relatedRes] = await Promise.all([
-      env.DB.prepare(
-        `SELECT id, image_url, alt_text, sort_order, is_primary
-         FROM storefront_product_images
-         WHERE storefront_id = ? AND pharmacy_id = ? AND product_id = ?
-         ORDER BY is_primary DESC, sort_order ASC`
+    const rowCatLower = String(row.category_name || "General Medicines").trim().toLowerCase();
+    const relatedRows = snapshot.products
+      .filter(
+        (p) =>
+          String(p.id || "") !== String(row.id) &&
+          String(p.category_name || "General Medicines").trim().toLowerCase() === rowCatLower
       )
-        .bind(sf.id, sf.pharmacy_id, String(row.id))
-        .all(),
-      env.DB.prepare(
-        `SELECT ${SAFE_PRODUCT_COLUMNS}
-         FROM storefront_products
-         WHERE storefront_id = ? AND pharmacy_id = ?
-           AND publish_status = 'published' AND is_controlled_substance = 0
-           AND category_name = ? AND id != ?
-         ORDER BY is_featured DESC, name ASC
-         LIMIT 4`
+      .sort(
+        (a, b) =>
+          Number(b.is_featured || 0) - Number(a.is_featured || 0) ||
+          String(a.name || "").localeCompare(String(b.name || ""))
       )
-        .bind(sf.id, sf.pharmacy_id, String(row.category_name || "General Medicines"), String(row.id))
-        .all<Record<string, unknown>>(),
-    ]);
+      .slice(0, 4);
 
-    await recordStorefrontUsage(env.DB, {
+    await recordBufferedPublicUsage(env.DB, {
       storefrontId: sf.id,
       pharmacyId: sf.pharmacy_id,
       publicRequests: 1,
-      d1RowsReadEst: 4,
+      d1RowsRead: 0,
     });
 
     const mappedProduct = mapPublicProductRow(
@@ -984,7 +994,7 @@ export async function handlePublicRoutes(
       staleThresholdHours,
       showStockBadges
     );
-    const relatedProducts = (relatedRes.results || []).map((r) =>
+    const relatedProducts = relatedRows.map((r) =>
       mapPublicProductRow(
         r,
         showExactStock,
@@ -998,48 +1008,63 @@ export async function handlePublicRoutes(
     let genericAlternatives: PublicStorefrontProduct[] = [];
     const prodSalt = cleanGenericSaltText(row.generic_name);
     if (prodSalt) {
-      try {
-        const { snapshot } = await getCatalogSnapshotForTenant(env, sf, execCtx);
-        const altRows = findGenericAlternativesInSnapshot(
-          snapshot,
-          prodSalt,
-          new Set([String(row.id)]),
-          4
-        );
-        genericAlternatives = altRows.map((r) =>
-          mapPublicProductRow(r, showExactStock, sf.last_sync_at, staleThresholdHours, showStockBadges)
-        );
-      } catch {
-        genericAlternatives = [];
-      }
+      const altRows = findGenericAlternativesInSnapshot(
+        snapshot,
+        prodSalt,
+        new Set([String(row.id)]),
+        4
+      );
+      genericAlternatives = altRows.map((r) =>
+        mapPublicProductRow(r, showExactStock, sf.last_sync_at, staleThresholdHours, showStockBadges)
+      );
     }
 
-    return new Response(
+    const galleryImages = Array.isArray((row as any).gallery_images)
+      ? (row as any).gallery_images
+      : mappedProduct.primary_image_url
+      ? [
+          {
+            id: `primary_${mappedProduct.id}`,
+            image_url: mappedProduct.primary_image_url,
+            alt_text: mappedProduct.name,
+            sort_order: 0,
+            is_primary: 1,
+          },
+        ]
+      : [];
+
+    const headers = buildResponseHeaders({
+      req,
+      storefrontId: sf.id,
+      configVersion: sf.config_version,
+      hostname: ctx.normalizedHostname,
+      cacheMaxAgeSec: 180,
+    });
+    headers.set("X-Catalog-Source", source);
+
+    const res = new Response(
       JSON.stringify({
         ok: true,
         storefront_id: sf.id,
         product: {
           ...mappedProduct,
-          images: imagesRes.results || [],
+          images: galleryImages,
         },
         related_products: relatedProducts,
         generic_alternatives: genericAlternatives,
       }),
-      {
-        status: 200,
-        headers: buildResponseHeaders({
-          req,
-          storefrontId: sf.id,
-          configVersion: sf.config_version,
-          hostname: ctx.normalizedHostname,
-          cacheMaxAgeSec: 120,
-        }),
-      }
+      { status: 200, headers }
     );
+    putEdgeCachedResponse(edgeKey, res, execCtx);
+    return res;
   }
 
-  // 7. GET /api/v1/public/banners
+  // 7. GET /api/v1/public/banners (Edge-Cached)
   if (pathname === "/api/v1/public/banners" && req.method === "GET") {
+    const edgeKey = buildTenantEdgeCacheKey(req, tenantEdgeScope);
+    const cached = await getEdgeCachedResponse(edgeKey);
+    if (cached) return cached;
+
     const { results } = await env.DB.prepare(
       `SELECT id, storefront_id, pharmacy_id, title, subtitle, badge_text,
               cta_label, cta_url, image_url, bg_gradient, placement, sort_order, is_active, starts_at, ends_at
@@ -1050,14 +1075,14 @@ export async function handlePublicRoutes(
       .bind(sf.id, sf.pharmacy_id)
       .all<StorefrontBannerRecord>();
 
-    await recordStorefrontUsage(env.DB, {
+    await recordBufferedPublicUsage(env.DB, {
       storefrontId: sf.id,
       pharmacyId: sf.pharmacy_id,
       publicRequests: 1,
-      d1RowsReadEst: Math.max(1, results.length),
+      d1RowsRead: Math.max(1, results.length),
     });
 
-    return new Response(
+    const res = new Response(
       JSON.stringify({
         ok: true,
         storefront_id: sf.id,
@@ -1070,14 +1095,20 @@ export async function handlePublicRoutes(
           storefrontId: sf.id,
           configVersion: sf.config_version,
           hostname: ctx.normalizedHostname,
-          isPrivate: true,
+          cacheMaxAgeSec: 180,
         }),
       }
     );
+    putEdgeCachedResponse(edgeKey, res, execCtx);
+    return res;
   }
 
-  // 7b. GET /api/v1/public/promotions
+  // 7b. GET /api/v1/public/promotions (Edge-Cached)
   if (pathname === "/api/v1/public/promotions" && req.method === "GET") {
+    const edgeKey = buildTenantEdgeCacheKey(req, tenantEdgeScope);
+    const cached = await getEdgeCachedResponse(edgeKey);
+    if (cached) return cached;
+
     const nowIso = new Date().toISOString();
     const { results } = await env.DB.prepare(
       `SELECT *
@@ -1090,7 +1121,7 @@ export async function handlePublicRoutes(
       .bind(sf.id, sf.pharmacy_id, nowIso, nowIso)
       .all<StorefrontPromotionRecord>();
 
-    return new Response(
+    const res = new Response(
       JSON.stringify({
         ok: true,
         storefront_id: sf.id,
@@ -1103,14 +1134,20 @@ export async function handlePublicRoutes(
           storefrontId: sf.id,
           configVersion: sf.config_version,
           hostname: ctx.normalizedHostname,
-          isPrivate: true,
+          cacheMaxAgeSec: 120,
         }),
       }
     );
+    putEdgeCachedResponse(edgeKey, res, execCtx);
+    return res;
   }
 
-  // 8. GET /api/v1/public/delivery-config
+  // 8. GET /api/v1/public/delivery-config (Edge-Cached)
   if (pathname === "/api/v1/public/delivery-config" && req.method === "GET") {
+    const edgeKey = buildTenantEdgeCacheKey(req, tenantEdgeScope);
+    const cached = await getEdgeCachedResponse(edgeKey);
+    if (cached) return cached;
+
     const zonesRes = await env.DB.prepare(
       `SELECT id, zone_name, city, areas_json, delivery_fee_pkr, min_order_pkr,
               free_delivery_above_pkr, estimated_minutes, sort_order
@@ -1121,14 +1158,14 @@ export async function handlePublicRoutes(
       .bind(sf.id, sf.pharmacy_id)
       .all();
 
-    await recordStorefrontUsage(env.DB, {
+    await recordBufferedPublicUsage(env.DB, {
       storefrontId: sf.id,
       pharmacyId: sf.pharmacy_id,
       publicRequests: 1,
-      d1RowsReadEst: 2,
+      d1RowsRead: 1,
     });
 
-    return new Response(
+    const res = new Response(
       JSON.stringify({
         ok: true,
         storefront_id: sf.id,
@@ -1154,23 +1191,19 @@ export async function handlePublicRoutes(
           storefrontId: sf.id,
           configVersion: sf.config_version,
           hostname: ctx.normalizedHostname,
-          isPrivate: true,
+          cacheMaxAgeSec: 180,
         }),
       }
     );
+    putEdgeCachedResponse(edgeKey, res, execCtx);
+    return res;
   }
 
-  // 9. GET /api/v1/public/opening-hours
+  // 9. GET /api/v1/public/opening-hours (Edge-Cached + Isolate-Cached Branches -> 0 D1 reads!)
   if (pathname === "/api/v1/public/opening-hours" && req.method === "GET") {
-    const branchesRes = await env.DB.prepare(
-      `SELECT id, pos_branch_id, branch_code, name, is_main, phone, whatsapp_phone,
-              address_line, city, pickup_enabled, delivery_enabled, opening_hours_json
-       FROM storefront_branches
-       WHERE storefront_id = ? AND pharmacy_id = ? AND status = 'active'
-       ORDER BY is_main DESC, name ASC`
-    )
-      .bind(sf.id, sf.pharmacy_id)
-      .all<StorefrontBranchRecord>();
+    const edgeKey = buildTenantEdgeCacheKey(req, tenantEdgeScope);
+    const cached = await getEdgeCachedResponse(edgeKey);
+    if (cached) return cached;
 
     let generalHours: Record<string, unknown> = {};
     try {
@@ -1179,20 +1212,20 @@ export async function handlePublicRoutes(
       generalHours = {};
     }
 
-    await recordStorefrontUsage(env.DB, {
+    await recordBufferedPublicUsage(env.DB, {
       storefrontId: sf.id,
       pharmacyId: sf.pharmacy_id,
       publicRequests: 1,
-      d1RowsReadEst: 2,
+      d1RowsRead: 0,
     });
 
-    return new Response(
+    const res = new Response(
       JSON.stringify({
         ok: true,
         storefront_id: sf.id,
         timezone: sf.timezone,
         opening_hours: generalHours,
-        branches: (branchesRes.results || []).map((b) => {
+        branches: (bundle.branches || []).map((b) => {
           let bh = {};
           try {
             bh = b.opening_hours_json ? JSON.parse(b.opening_hours_json) : {};
@@ -1212,10 +1245,12 @@ export async function handlePublicRoutes(
           storefrontId: sf.id,
           configVersion: sf.config_version,
           hostname: ctx.normalizedHostname,
-          isPrivate: true,
+          cacheMaxAgeSec: 180,
         }),
       }
     );
+    putEdgeCachedResponse(edgeKey, res, execCtx);
+    return res;
   }
 
   // 10. POST /api/v1/public/orders — Server-Validated Transactional Online Order Creation (Section 9)
@@ -1386,6 +1421,21 @@ export async function handlePublicRoutes(
     }
 
     // 2. Independently validate every product ID, selling unit, multiplier & compute authoritative server prices
+    // Reads FRESH from R2 authoritative catalog (`live.json`) -> ~12ms total, ZERO D1 product reads!
+    const { doc: liveCheckoutCatalog } = await loadStorefrontCatalogDoc(env, sf.id, sf.pharmacy_id, {
+      freshFromR2: true,
+      hydrateCentralImages: false,
+    });
+    const checkoutProdById = new Map<string, Record<string, unknown>>();
+    const checkoutProdByPosId = new Map<string, Record<string, unknown>>();
+    for (const p of liveCheckoutCatalog.products) {
+      if (p.publish_status === "published" && Number(p.is_controlled_substance || 0) === 0) {
+        const rec = p as unknown as Record<string, unknown>;
+        checkoutProdById.set(p.id, rec);
+        checkoutProdByPosId.set(p.pos_product_id, rec);
+      }
+    }
+
     let subtotalPkr = 0;
     let orderRequiresRx = false;
     const baseQtyByPosProductId = new Map<string, number>();
@@ -1422,17 +1472,7 @@ export async function handlePublicRoutes(
         );
       }
 
-      const dbProd = await env.DB.prepare(
-        `SELECT ${SAFE_PRODUCT_COLUMNS}
-         FROM storefront_products
-         WHERE storefront_id = ? AND pharmacy_id = ?
-           AND (id = ? OR pos_product_id = ?)
-           AND publish_status = 'published'
-           AND is_controlled_substance = 0
-         LIMIT 1`
-      )
-        .bind(sf.id, sf.pharmacy_id, prodId, prodId)
-        .first<Record<string, unknown>>();
+      const dbProd = checkoutProdById.get(prodId) || checkoutProdByPosId.get(prodId) || null;
 
       if (!dbProd) {
         return new Response(

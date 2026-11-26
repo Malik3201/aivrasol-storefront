@@ -10,9 +10,16 @@
 
 import type { D1Database, StorefrontWorkerEnv, WorkerExecutionContext } from "./env";
 import type { PublicStorefrontProduct, StorefrontCategoryRecord, StorefrontRecord } from "../shared/types";
+import { invalidateTenantBundleCache } from "./domain-resolver";
+import {
+  buildPublicSnapshotViewFromCatalogDoc,
+  invalidateCatalogMemCache,
+  loadStorefrontCatalogDoc,
+} from "./r2-catalog-store";
 
 export interface StorefrontCatalogSnapshot {
   version: number;
+  central_index_version?: number;
   storefront_id: string;
   pharmacy_id: string;
   generated_at: string;
@@ -21,12 +28,50 @@ export interface StorefrontCatalogSnapshot {
   products: Array<Record<string, unknown>>;
 }
 
-// Per-isolate tiny in-memory snapshot cache (max 12 tenants to keep Worker memory low)
-const ISOLATE_SNAPSHOT_TTL_MS = 45_000;
-const isolateSnapshotCache = new Map<
+// Per-isolate tiny in-memory category metadata cache (avoids querying storefront_categories on every visit)
+const CATEGORY_META_TTL_MS = 60_000;
+const categoryMetaCache = new Map<
   string,
-  { expiresAt: number; snapshot: StorefrontCatalogSnapshot }
+  { expiresAt: number; categories: StorefrontCategoryRecord[] }
 >();
+
+export function invalidateCategoryMetaCache(storefrontId: string): void {
+  categoryMetaCache.delete(storefrontId);
+}
+
+async function getCategoryMetaCached(
+  db: D1Database,
+  storefrontId: string,
+  pharmacyId: string
+): Promise<StorefrontCategoryRecord[]> {
+  const now = Date.now();
+  const hit = categoryMetaCache.get(storefrontId);
+  if (hit && hit.expiresAt > now) {
+    return hit.categories;
+  }
+  const res = await db
+    .prepare(
+      `SELECT id, storefront_id, pharmacy_id, slug, name, description, icon_name,
+              image_url, sort_order, is_visible, published_product_count
+       FROM storefront_categories
+       WHERE storefront_id = ? AND pharmacy_id = ?
+       ORDER BY sort_order ASC, name ASC`
+    )
+    .bind(storefrontId, pharmacyId)
+    .all<StorefrontCategoryRecord>()
+    .catch(() => ({ results: [] as StorefrontCategoryRecord[] }));
+
+  const categories = res.results || [];
+  if (categoryMetaCache.size > 60 && !categoryMetaCache.has(storefrontId)) {
+    const firstKey = categoryMetaCache.keys().next().value;
+    if (firstKey) categoryMetaCache.delete(firstKey);
+  }
+  categoryMetaCache.set(storefrontId, {
+    expiresAt: now + CATEGORY_META_TTL_MS,
+    categories,
+  });
+  return categories;
+}
 
 function getDefaultEdgeCache(): Cache | null {
   try {
@@ -39,15 +84,23 @@ function getDefaultEdgeCache(): Cache | null {
 
 /**
  * Builds a strict tenant-scoped synthetic cache key Request so Cloudflare Edge Cache
- * can NEVER collide responses across pharmacy hostnames or stale config versions.
+ * can NEVER collide responses across pharmacy hostnames or stale config/central-image versions.
  */
 export function buildTenantEdgeCacheKey(
   req: Request,
-  tenantScope: { storefrontId: string; configVersion: number; hostname: string }
+  tenantScope: {
+    storefrontId: string;
+    configVersion: number;
+    hostname: string;
+    centralIndexVersion?: number;
+  }
 ): Request {
   const url = new URL(req.url);
   url.searchParams.set("__sf", tenantScope.storefrontId);
   url.searchParams.set("__v", String(tenantScope.configVersion || 1));
+  if (tenantScope.centralIndexVersion) {
+    url.searchParams.set("__cv", String(tenantScope.centralIndexVersion));
+  }
   url.searchParams.set("__h", tenantScope.hostname || "default");
   return new Request(url.toString(), { method: "GET" });
 }
@@ -124,12 +177,10 @@ export async function bumpStorefrontConfigVersion(
     .first<{ config_version: number }>();
 
   const nextVersion = Number(row?.config_version || 1);
-  // Evict stale isolate snapshot entries for this storefront
-  for (const key of isolateSnapshotCache.keys()) {
-    if (key.startsWith(`${storefrontId}:`)) {
-      isolateSnapshotCache.delete(key);
-    }
-  }
+  // Evict stale isolate caches for this storefront immediately
+  invalidateCatalogMemCache(storefrontId);
+  invalidateCategoryMetaCache(storefrontId);
+  invalidateTenantBundleCache(storefrontId);
   return nextVersion;
 }
 
@@ -137,133 +188,60 @@ export function getCatalogSnapshotR2Key(storefrontId: string, configVersion: num
   return `snapshots/${storefrontId}/catalog-v${configVersion || 1}.json`;
 }
 
-const SNAPSHOT_PRODUCT_COLUMNS = `
-  id, storefront_id, pharmacy_id, pos_product_id, master_medicine_id, sku_code, slug, name,
-  generic_name, strength, dosage_form, brand_name, packing_label, unit_label,
-  base_unit_label, selling_units_json, available_base_qty,
-  public_description, public_selling_price_pkr, compare_at_price_pkr, override_price_pkr,
-  availability_status, available_qty, branch_stock_json, category_name, primary_image_url,
-  search_keywords, requires_prescription, is_featured, is_popular, max_order_qty,
-  sync_version, last_synced_at, updated_at
-`;
-
 /**
- * Builds a compact public catalog JSON snapshot from D1 and stores it in R2 (`MEDIA_BUCKET`)
- * so customer visits serve from R2 / Edge Cache with ZERO D1 reads!
+ * Refreshes the in-memory & R2-First catalog snapshot for a storefront (ZERO D1 product scans!).
  */
 export async function buildAndSaveCatalogSnapshot(
   env: StorefrontWorkerEnv,
   sf: Pick<StorefrontRecord, "id" | "pharmacy_id" | "config_version" | "last_sync_at">
 ): Promise<StorefrontCatalogSnapshot> {
-  const version = Number(sf.config_version || 1);
-  const [catsRes, prodsRes] = await Promise.all([
-    env.DB.prepare(
-      `SELECT id, storefront_id, pharmacy_id, slug, name, description, icon_name,
-              image_url, sort_order, is_visible, published_product_count
-       FROM storefront_categories
-       WHERE storefront_id = ? AND pharmacy_id = ? AND is_visible = 1
-       ORDER BY sort_order ASC, name ASC`
-    )
-      .bind(sf.id, sf.pharmacy_id)
-      .all<StorefrontCategoryRecord>(),
-    env.DB.prepare(
-      `SELECT ${SNAPSHOT_PRODUCT_COLUMNS}
-       FROM storefront_products
-       WHERE storefront_id = ? AND pharmacy_id = ?
-         AND publish_status = 'published' AND is_controlled_substance = 0
-       ORDER BY name ASC, id ASC`
-    )
-      .bind(sf.id, sf.pharmacy_id)
-      .all<Record<string, unknown>>(),
-  ]);
-
-  const snapshot: StorefrontCatalogSnapshot = {
-    version,
-    storefront_id: sf.id,
-    pharmacy_id: sf.pharmacy_id,
-    generated_at: new Date().toISOString(),
-    last_sync_at: sf.last_sync_at || null,
-    categories: catsRes.results || [],
-    products: prodsRes.results || [],
-  };
-
-  const cacheKey = `${sf.id}:v${version}`;
-  if (isolateSnapshotCache.size > 12) {
-    const firstKey = isolateSnapshotCache.keys().next().value;
-    if (firstKey) isolateSnapshotCache.delete(firstKey);
-  }
-  isolateSnapshotCache.set(cacheKey, {
-    expiresAt: Date.now() + ISOLATE_SNAPSHOT_TTL_MS,
-    snapshot,
+  const { doc, centralIndexVersion } = await loadStorefrontCatalogDoc(env, sf.id, sf.pharmacy_id, {
+    freshFromR2: true,
+    hydrateCentralImages: true,
   });
-
-  if (env.MEDIA_BUCKET) {
-    const r2Key = getCatalogSnapshotR2Key(sf.id, version);
-    await env.MEDIA_BUCKET.put(r2Key, JSON.stringify(snapshot), {
-      httpMetadata: {
-        contentType: "application/json; charset=utf-8",
-        cacheControl: "public, max-age=300, s-maxage=3600",
-      },
-      customMetadata: {
-        storefront_id: sf.id,
-        config_version: String(version),
-        product_count: String(snapshot.products.length),
-      },
-    }).catch(() => {});
-  }
-
-  return snapshot;
+  const catMeta = await getCategoryMetaCached(env.DB, sf.id, sf.pharmacy_id);
+  const view = buildPublicSnapshotViewFromCatalogDoc(doc, sf, catMeta);
+  return {
+    ...view,
+    central_index_version: centralIndexVersion,
+  };
 }
 
 /**
- * Loads the tenant's catalog snapshot using a 3-tier zero-D1 hierarchy:
+ * Loads the tenant's public catalog snapshot directly from the R2-First authoritative catalog:
  * 1. Isolate Memory Cache (0ms, 0 D1, 0 R2)
- * 2. Cloudflare R2 Static JSON Snapshot (~15ms, 0 D1, 1 free Class B R2 op)
- * 3. D1 Fallback -> builds and persists snapshot to R2 for all subsequent visitors!
+ * 2. Cloudflare R2 `storefront-catalogs/{sfId}/live.json` (~12ms, 0 D1)
+ * 3. Seamless 1-time D1 migration on very first access for legacy storefronts!
  */
 export async function getCatalogSnapshotForTenant(
   env: StorefrontWorkerEnv,
   sf: Pick<StorefrontRecord, "id" | "pharmacy_id" | "config_version" | "last_sync_at">,
   execCtx?: WorkerExecutionContext
-): Promise<{ snapshot: StorefrontCatalogSnapshot; source: "isolate" | "r2" | "d1_built" }> {
-  const version = Number(sf.config_version || 1);
-  const memKey = `${sf.id}:v${version}`;
-  const now = Date.now();
+): Promise<{
+  snapshot: StorefrontCatalogSnapshot;
+  source: "isolate" | "r2" | "d1_built";
+  centralIndexVersion: number;
+}> {
+  const [{ doc, source, centralIndexVersion }, catMeta] = await Promise.all([
+    loadStorefrontCatalogDoc(env, sf.id, sf.pharmacy_id, {
+      hydrateCentralImages: true,
+      execCtx,
+    }),
+    getCategoryMetaCached(env.DB, sf.id, sf.pharmacy_id),
+  ]);
 
-  const memHit = isolateSnapshotCache.get(memKey);
-  if (memHit && memHit.expiresAt > now) {
-    return { snapshot: memHit.snapshot, source: "isolate" };
-  }
+  const view = buildPublicSnapshotViewFromCatalogDoc(doc, sf, catMeta);
+  const mappedSource: "isolate" | "r2" | "d1_built" =
+    source === "isolate" ? "isolate" : source === "r2" || source === "empty" ? "r2" : "d1_built";
 
-  if (env.MEDIA_BUCKET) {
-    try {
-      const r2Key = getCatalogSnapshotR2Key(sf.id, version);
-      const obj = await env.MEDIA_BUCKET.get(r2Key);
-      if (obj) {
-        const buf = await obj.arrayBuffer();
-        const text = new TextDecoder().decode(buf);
-        const parsed = JSON.parse(text) as StorefrontCatalogSnapshot;
-        if (parsed && parsed.storefront_id === sf.id && Array.isArray(parsed.products)) {
-          if (isolateSnapshotCache.size > 12) {
-            const firstKey = isolateSnapshotCache.keys().next().value;
-            if (firstKey) isolateSnapshotCache.delete(firstKey);
-          }
-          isolateSnapshotCache.set(memKey, {
-            expiresAt: now + ISOLATE_SNAPSHOT_TTL_MS,
-            snapshot: parsed,
-          });
-          return { snapshot: parsed, source: "r2" };
-        }
-      }
-    } catch {
-      // Fall through to D1 build
-    }
-  }
-
-  // Build snapshot from D1 and save to R2 (so next 10,000 hits pay 0 D1 reads)
-  const built = await buildAndSaveCatalogSnapshot(env, sf);
-  void execCtx;
-  return { snapshot: built, source: "d1_built" };
+  return {
+    snapshot: {
+      ...view,
+      central_index_version: centralIndexVersion,
+    },
+    source: mappedSource,
+    centralIndexVersion,
+  };
 }
 
 /**

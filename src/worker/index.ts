@@ -8,7 +8,11 @@
  * - `/*`               : Cloudflare Workers Static Assets with lightweight crawler SEO metadata injection
  */
 
-import { extractRequestHostname, resolveTenantByHostname } from "./domain-resolver";
+import {
+  extractRequestHostname,
+  resolveTenantBundleCached,
+} from "./domain-resolver";
+import { getCatalogSnapshotForTenant } from "./edge-cache-and-snapshots";
 import type { StorefrontWorkerEnv, WorkerExecutionContext } from "./env";
 import { handleManageRoutes } from "./routes/manage-routes";
 import { handlePublicRoutes } from "./routes/public-routes";
@@ -36,28 +40,13 @@ export async function injectStorefrontSeoMetadata(
   try {
     const url = new URL(req.url);
     const rawHost = extractRequestHostname(req, env);
-    const ctx = await resolveTenantByHostname(env.DB, rawHost, env.PLATFORM_BASE_DOMAIN);
+    const bundle = await resolveTenantBundleCached(env.DB, rawHost, env.PLATFORM_BASE_DOMAIN);
+    const ctx = bundle.ctx;
     if (!ctx.ok || !ctx.storefront) return html;
 
     const sf = ctx.storefront;
-    const [settings, branding] = await Promise.all([
-      env.DB.prepare(
-        "SELECT seo_title, seo_description, opening_hours_json FROM storefront_settings WHERE storefront_id = ? LIMIT 1"
-      )
-        .bind(sf.id)
-        .first<{ seo_title: string | null; seo_description: string | null; opening_hours_json: string | null }>(),
-      env.DB.prepare(
-        "SELECT display_name, tagline, logo_url, hero_banner_url, favicon_url FROM storefront_branding WHERE storefront_id = ? LIMIT 1"
-      )
-        .bind(sf.id)
-        .first<{
-          display_name: string | null;
-          tagline: string | null;
-          logo_url: string | null;
-          hero_banner_url: string | null;
-          favicon_url: string | null;
-        }>(),
-    ]);
+    const settings = bundle.settings;
+    const branding = bundle.branding;
 
     const brandName = (branding?.display_name && branding.display_name.trim()) || sf.pharmacy_name;
     const originUrl = `https://${sf.primary_domain}`;
@@ -87,20 +76,7 @@ export async function injectStorefrontSeoMetadata(
     const canonicalPath = subPath === "/" ? "" : subPath;
     const canonicalUrl = `${originUrl}${canonicalPath}`;
 
-    let reviewAggregate: { count: number; avg: number } | null = null;
-    try {
-      const rv = await env.DB.prepare(
-        `SELECT COUNT(*) AS cnt, AVG(rating) AS avg_r FROM storefront_reviews
-         WHERE storefront_id = ? AND pharmacy_id = ? AND status = 'published'`
-      )
-        .bind(sf.id, sf.pharmacy_id)
-        .first<{ cnt: number; avg_r: number | null }>();
-      if (rv && Number(rv.cnt || 0) > 0 && rv.avg_r) {
-        reviewAggregate = { count: Number(rv.cnt), avg: Number(Number(rv.avg_r).toFixed(1)) };
-      }
-    } catch {
-      reviewAggregate = null;
-    }
+    const reviewAggregate = bundle.reviewSummary;
 
     const schemaGraph: Array<Record<string, unknown>> = [
       {
@@ -176,20 +152,14 @@ export async function injectStorefrontSeoMetadata(
     }
 
     // Check if this is a product detail URL (`/product/:slug` or `/s/:store/product/:slug`)
+    // Resolved 100% from R2 / Isolate RAM catalog snapshot (0 D1 reads!)
     const prodMatch = url.pathname.match(/^(?:\/s\/[a-z0-9-]+)?\/product\/([^/]+)$/i);
     if (prodMatch) {
       const slug = decodeURIComponent(prodMatch[1]);
-      const prod = await env.DB.prepare(
-        `SELECT name, generic_name, strength, dosage_form, brand_name, category_name, sku_code,
-                public_description, public_selling_price_pkr, override_price_pkr,
-                availability_status, primary_image_url
-         FROM storefront_products
-         WHERE storefront_id = ? AND pharmacy_id = ? AND publish_status = 'published'
-           AND (slug = ? OR id = ?)
-         LIMIT 1`
-      )
-        .bind(sf.id, sf.pharmacy_id, slug, slug)
-        .first<Record<string, any>>();
+      const { snapshot } = await getCatalogSnapshotForTenant(env, sf);
+      const prod = snapshot.products.find(
+        (p) => String(p.slug || "") === slug || String(p.id || "") === slug
+      ) as Record<string, any> | undefined;
 
       if (prod) {
         const effPrice =

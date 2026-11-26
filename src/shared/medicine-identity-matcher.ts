@@ -501,7 +501,7 @@ export function matchMedicineIdentity(
         matchType: "exact_master_name",
         canonicalId: singleMatch.id,
         canonicalRecord: singleMatch,
-        preferredMediaId: singleMatch.preferred_media_id,
+        preferredMediaId: singleMatch.preferred_media_id ?? null,
         explanation: `Exact Master Catalog Name match (${singleMatch.canonical_name}) with verified critical identity.`,
       };
     }

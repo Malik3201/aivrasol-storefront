@@ -32,12 +32,18 @@ import type {
 } from "../../shared/types";
 import {
   computeNormalizedCoreKey,
-  matchMedicineIdentity,
   type ProductInput,
-  type CanonicalMedicineRecord,
 } from "../../shared/medicine-identity-matcher";
-import { findMatchingCanonicalMedicinesIndexed } from "../central-image-service";
-import { buildAndSaveCatalogSnapshot, bumpStorefrontConfigVersion } from "../edge-cache-and-snapshots";
+import { bumpStorefrontConfigVersion } from "../edge-cache-and-snapshots";
+import { invalidateTenantBundleCache } from "../domain-resolver";
+import {
+  getCentralImageIndex,
+  loadStorefrontCatalogDoc,
+  matchProductAgainstCentralIndex,
+  saveStorefrontCatalogDoc,
+  syncStorefrontMetadataFromCatalogDoc,
+  type R2CatalogProductRecord,
+} from "../r2-catalog-store";
 
 function resolveEffectiveOrderStatusSync(ord: Record<string, any>): StorefrontOrderStatus {
   const outcome = ord.fulfillment_outcome ? String(ord.fulfillment_outcome).trim() : "";
@@ -98,165 +104,28 @@ export function invalidateOrderNotifCache(storefrontId: string, pharmacyId: stri
   orderNotifCache.delete(`${storefrontId}:${pharmacyId}`);
 }
 
-const CANONICAL_MEDIA_CACHE_TTL_MS = 60_000;
-let verifiedCanonicalCache: {
-  expiresAt: number;
-  rows: Array<CanonicalMedicineRecord & { preferred_image_url: string }>;
-} | null = null;
-
-async function loadVerifiedCanonicalCatalogCached(
-  db: D1Database
-): Promise<{
-  catalog: Array<CanonicalMedicineRecord & { preferred_image_url: string }>;
-  rowsRead: number;
-}> {
-  const now = Date.now();
-  if (verifiedCanonicalCache && verifiedCanonicalCache.expiresAt > now) {
-    return { catalog: verifiedCanonicalCache.rows, rowsRead: 0 };
-  }
-  const res = await db
-    .prepare(
-      `SELECT c.id, c.canonical_name, c.master_catalog_id, c.master_catalog_name, c.normalized_catalog_name,
-              c.brand_name, c.generic_name, c.strength, c.dosage_form,
-              c.manufacturer, c.pack_size, c.pack_unit, c.barcode, c.aliases_json,
-              c.verification_status, c.preferred_media_id, m.public_url AS preferred_image_url
-       FROM central_medicines c
-       INNER JOIN storefront_media m ON c.preferred_media_id = m.id
-       WHERE c.verification_status = 'verified' AND c.preferred_media_id IS NOT NULL`
-    )
-    .all<Record<string, unknown>>();
-
-  const rows: Array<CanonicalMedicineRecord & { preferred_image_url: string }> = (
-    res.results || []
-  ).map((r) => ({
-    id: String(r.id),
-    canonical_name: String(r.canonical_name),
-    master_catalog_id: r.master_catalog_id ? String(r.master_catalog_id) : null,
-    master_catalog_name: r.master_catalog_name ? String(r.master_catalog_name) : null,
-    normalized_catalog_name: r.normalized_catalog_name ? String(r.normalized_catalog_name) : null,
-    brand_name: r.brand_name ? String(r.brand_name) : null,
-    generic_name: r.generic_name ? String(r.generic_name) : null,
-    strength: r.strength ? String(r.strength) : null,
-    dosage_form: r.dosage_form ? String(r.dosage_form) : null,
-    manufacturer: r.manufacturer ? String(r.manufacturer) : null,
-    pack_size: r.pack_size ? Number(r.pack_size) : null,
-    pack_unit: r.pack_unit ? String(r.pack_unit) : null,
-    barcode: r.barcode ? String(r.barcode) : null,
-    aliases_json: r.aliases_json ? String(r.aliases_json) : null,
-    verification_status: String(r.verification_status),
-    preferred_media_id: String(r.preferred_media_id),
-    preferred_image_url: String(r.preferred_image_url),
-  }));
-
-  verifiedCanonicalCache = {
-    expiresAt: now + CANONICAL_MEDIA_CACHE_TTL_MS,
-    rows,
-  };
-  const { rowsRead } = sumD1MetaCounts([res as any], { rowsRead: rows.length + 1 });
-  return { catalog: rows, rowsRead };
-}
-
 export async function recalculateStorefrontCatalogCounts(
-  db: D1Database,
+  dbOrEnv: D1Database | StorefrontWorkerEnv,
   storefrontId: string,
   pharmacyId: string,
   options?: { skipCategories?: boolean }
 ): Promise<number> {
-  const countRow = await db
-    .prepare(
-      `SELECT COUNT(*) AS cnt
-       FROM storefront_products
-       WHERE storefront_id = ? AND pharmacy_id = ?
-         AND publish_status = 'published' AND is_controlled_substance = 0`
-    )
-    .bind(storefrontId, pharmacyId)
-    .first<{ cnt: number }>();
-
-  const publishedCount = Number(countRow?.cnt || 0);
-  const nowIso = new Date().toISOString();
-
-  await db
-    .prepare(
-      `UPDATE storefronts
-       SET published_products_count = ?, updated_at = ?
-       WHERE id = ? AND pharmacy_id = ?`
-    )
-    .bind(publishedCount, nowIso, storefrontId, pharmacyId)
-    .run();
-
-  // If this is an intermediate batch in a chunked multi-batch sync, skip category recounts
-  // to conserve D1 operations and CPU time. Final batch will perform the full recount.
-  if (options?.skipCategories) {
-    return publishedCount;
+  if ("DB" in dbOrEnv) {
+    const { doc } = await loadStorefrontCatalogDoc(dbOrEnv, storefrontId, pharmacyId, {
+      hydrateCentralImages: false,
+    });
+    const res = await syncStorefrontMetadataFromCatalogDoc(dbOrEnv.DB, doc, {
+      syncCategories: !options?.skipCategories,
+    });
+    return res.publishedCount;
   }
 
-  // Refresh category counts
-  const catCounts = await db
-    .prepare(
-      `SELECT category_name, COUNT(*) AS cnt
-       FROM storefront_products
-       WHERE storefront_id = ? AND pharmacy_id = ?
-         AND publish_status = 'published' AND is_controlled_substance = 0
-       GROUP BY category_name`
-    )
+  // Fallback for direct D1 callers
+  const row = await dbOrEnv
+    .prepare(`SELECT published_products_count FROM storefronts WHERE id = ? AND pharmacy_id = ? LIMIT 1`)
     .bind(storefrontId, pharmacyId)
-    .all<{ category_name: string; cnt: number }>();
-
-  await db
-    .prepare(
-      `UPDATE storefront_categories
-       SET published_product_count = 0, updated_at = ?
-       WHERE storefront_id = ? AND pharmacy_id = ?`
-    )
-    .bind(nowIso, storefrontId, pharmacyId)
-    .run();
-
-  for (const row of catCounts.results || []) {
-    const catName = String(row.category_name || "General Medicines").trim();
-    const catSlug = toUrlSlug(catName);
-    const existingCat = await db
-      .prepare(
-        `SELECT id FROM storefront_categories
-         WHERE storefront_id = ? AND pharmacy_id = ? AND (LOWER(name) = LOWER(?) OR slug = ?)
-         LIMIT 1`
-      )
-      .bind(storefrontId, pharmacyId, catName, catSlug)
-      .first<{ id: string }>();
-
-    if (existingCat) {
-      await db
-        .prepare(
-          `UPDATE storefront_categories
-           SET published_product_count = ?, updated_at = ?
-           WHERE id = ? AND storefront_id = ?`
-        )
-        .bind(Number(row.cnt || 0), nowIso, existingCat.id, storefrontId)
-        .run();
-    } else {
-      await db
-        .prepare(
-          `INSERT INTO storefront_categories (
-             id, storefront_id, pharmacy_id, slug, name, description,
-             sort_order, is_visible, published_product_count, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`
-        )
-        .bind(
-          `sfc_${crypto.randomUUID()}`,
-          storefrontId,
-          pharmacyId,
-          catSlug,
-          catName,
-          `${catName} available at our pharmacy`,
-          10,
-          Number(row.cnt || 0),
-          nowIso,
-          nowIso
-        )
-        .run();
-    }
-  }
-
-  return publishedCount;
+    .first<{ published_products_count: number }>();
+  return Number(row?.published_products_count || 0);
 }
 
 export async function handleSyncRoutes(
@@ -593,12 +462,12 @@ export async function handleSyncRoutes(
       );
     }
 
-    if (body.items.length > 250) {
+    if (body.items.length > 1000) {
       return new Response(
         JSON.stringify({
           ok: false,
           error: "batch_too_large",
-          message: "Maximum 250 product delta items per request to respect D1 Free Tier limits.",
+          message: "Maximum 1000 product delta items per request.",
         }),
         { status: 400, headers }
       );
@@ -665,28 +534,30 @@ export async function handleSyncRoutes(
     const syncEventId = `sfe_${crypto.randomUUID()}`;
     const nowIso = new Date().toISOString();
 
-    // 38,000-scale indexed lookup: queries ONLY verified central_medicines matching this batch's keys (~10-60 rows vs 38,000!)
-    const batchInputs: ProductInput[] = body.items
-      .filter((it) => Boolean(it?.product_identity?.name))
-      .map((it) => ({
-        name: String(it.product_identity.name || ""),
-        generic_name: it.product_identity.generic_name || null,
-        strength: it.product_identity.strength || null,
-        dosage_form: it.product_identity.dosage_form || null,
-        brand_name: it.product_identity.brand_name || null,
-        sku_code: it.product_identity.sku_code || null,
-        barcode: it.product_identity.sku_code || null,
-        master_medicine_id: it.product_identity.master_medicine_id || null,
-      }));
-    const { catalog: canonicalCatalog, rowsRead: canonicalRowsRead } =
-      await findMatchingCanonicalMedicinesIndexed(env.DB, batchInputs);
+    // Option B R2-First Catalog Merge:
+    // Loads the pharmacy's authoritative catalog from R2 (`live.json`) + Central Image Index in parallel.
+    // ZERO D1 reads/writes on `storefront_products` or `storefront_product_visibility`!
+    const [{ doc: catalogDoc }, centralIndex] = await Promise.all([
+      loadStorefrontCatalogDoc(env, actor.storefrontId, actor.pharmacyId, {
+        freshFromR2: true,
+        hydrateCentralImages: false,
+      }),
+      getCentralImageIndex(env),
+    ]);
+
+    const existingByPosId = new Map<string, R2CatalogProductRecord>();
+    const usedSlugs = new Set<string>();
+    for (const p of catalogDoc.products) {
+      existingByPosId.set(p.pos_product_id, p);
+      if (p.slug) usedSlugs.add(p.slug);
+    }
 
     let itemsApplied = 0;
     let itemsSkippedUnchanged = 0;
     let itemsWritten = 0;
     let itemsRejected = 0;
     let catalogTopologyChanged = false;
-    let syncActualRowsRead = canonicalRowsRead + 3;
+    const syncActualRowsRead = 3; // idempotency + storefront + settings
     const rejections: Array<{ pos_product_id: string; error_code: string; message: string }> = [];
 
     for (let i = 0; i < body.items.length; i++) {
@@ -720,42 +591,9 @@ export async function handleSyncRoutes(
         continue;
       }
 
-      // Check existing product revision, category, delta fields & image source
-      const existingProd = await env.DB.prepare(
-        `SELECT id, slug, name, public_selling_price_pkr, availability_status, available_qty,
-                available_base_qty, selling_units_json, sync_version, branch_stock_json,
-                primary_image_url, publish_status, category_name, is_controlled_substance,
-                canonical_medicine_id, selected_media_id, image_source, normalized_core_key
-         FROM storefront_products
-         WHERE storefront_id = ? AND pharmacy_id = ? AND pos_product_id = ?
-         LIMIT 1`
-      )
-        .bind(actor.storefrontId, actor.pharmacyId, posProdId)
-        .first<{
-          id: string;
-          slug: string;
-          name?: string;
-          public_selling_price_pkr?: number;
-          availability_status?: string;
-          available_qty?: number;
-          available_base_qty?: number;
-          selling_units_json?: string;
-          sync_version: number;
-          branch_stock_json?: string;
-          primary_image_url?: string | null;
-          publish_status?: string;
-          category_name?: string | null;
-          is_controlled_substance?: number;
-          canonical_medicine_id?: string | null;
-          selected_media_id?: string | null;
-          image_source?: string | null;
-          normalized_core_key?: string | null;
-        }>();
-      syncActualRowsRead += 1;
-
+      const existingProd = existingByPosId.get(posProdId);
       const rev = Number(item?.source_revision ?? 1);
       if (existingProd && Number(existingProd.sync_version) > rev) {
-        // Idempotently skip older revision
         itemsApplied++;
         continue;
       }
@@ -766,19 +604,15 @@ export async function handleSyncRoutes(
           if (existingProd.publish_status !== "archived") {
             catalogTopologyChanged = true;
           }
-          await env.DB.prepare(
-            `UPDATE storefront_products
-             SET publish_status = 'archived',
-                 availability_status = 'unavailable',
-                 available_qty = 0,
-                 deleted_at = ?,
-                 sync_version = ?,
-                 last_synced_at = ?,
-                 updated_at = ?
-             WHERE id = ? AND storefront_id = ? AND pharmacy_id = ?`
-          )
-            .bind(nowIso, rev, nowIso, nowIso, existingProd.id, actor.storefrontId, actor.pharmacyId)
-            .run();
+          existingProd.publish_status = "archived";
+          existingProd.availability_status = "unavailable";
+          existingProd.available_qty = 0;
+          existingProd.available_base_qty = 0;
+          existingProd.deleted_at = nowIso;
+          existingProd.sync_version = rev;
+          existingProd.last_synced_at = nowIso;
+          existingProd.updated_at = nowIso;
+          itemsWritten++;
         }
         itemsApplied++;
         continue;
@@ -800,26 +634,23 @@ export async function handleSyncRoutes(
 
       const isControlled = Boolean(item.product_identity.is_controlled_substance);
       let effectivePublishStatus = item.website_visibility || existingProd?.publish_status || "draft";
-      let visibilityReason = "owner_approved";
 
       if (isControlled && !allowControlled) {
         effectivePublishStatus = "unpublished";
-        visibilityReason = "controlled_blocked";
       } else if (
         Number(settings?.auto_unpublish_zero_stock) === 1 &&
         item.availability === "out_of_stock"
       ) {
         effectivePublishStatus = "unpublished";
-        visibilityReason = "out_of_stock_hidden";
       } else if (
-        (settings?.publishing_mode === "in_stock_approved" || Number((settings as any)?.auto_sync_all_products ?? 0) === 1) &&
+        (settings?.publishing_mode === "in_stock_approved" ||
+          Number((settings as any)?.auto_sync_all_products ?? 0) === 1) &&
         !isControlled &&
         item.availability !== "out_of_stock" &&
-        effectivePublishStatus !== "archived" &&
+        String(effectivePublishStatus) !== "archived" &&
         !item.is_deleted
       ) {
         effectivePublishStatus = "published";
-        visibilityReason = "rule_matched";
       }
 
       // Merge per-branch availability without aggregating across branches
@@ -843,18 +674,17 @@ export async function handleSyncRoutes(
         };
       }
 
-      // Check shared medicine image fallback if no explicit primary_image_url is set
+      // Resolve image in O(1) memory via R2 Central Image Index (preserves owner_override!)
       let resolvedImageUrl =
         item.product_identity.primary_image_url || existingProd?.primary_image_url || null;
-      let canonicalMedicineId: string | null = (existingProd as any)?.canonical_medicine_id || null;
-      let selectedMediaId: string | null = (existingProd as any)?.selected_media_id || null;
-      let imageSource: string = (existingProd as any)?.image_source || "none";
+      let canonicalMedicineId: string | null = existingProd?.canonical_medicine_id || null;
+      let selectedMediaId: string | null = existingProd?.selected_media_id || null;
+      let imageSource: string = existingProd?.image_source || "none";
 
       if (item.product_identity.primary_image_url) {
         imageSource = "owner_override";
         resolvedImageUrl = item.product_identity.primary_image_url;
       } else if (imageSource !== "owner_override") {
-        // Try linking with verified Central Medicine Image Library using smart safety-first matcher
         const prodInput: ProductInput = {
           name,
           generic_name: item.product_identity.generic_name || null,
@@ -867,13 +697,11 @@ export async function handleSyncRoutes(
           barcode: item.product_identity.sku_code || null,
           master_medicine_id: item.product_identity.master_medicine_id || null,
         };
-
-        const matchRes = matchMedicineIdentity(prodInput, canonicalCatalog);
-        if (matchRes.matched && matchRes.canonicalId && matchRes.preferredMediaId) {
-          const cMatch = canonicalCatalog.find((c) => c.id === matchRes.canonicalId);
-          resolvedImageUrl = cMatch?.preferred_image_url || null;
+        const matchRes = matchProductAgainstCentralIndex(prodInput, centralIndex);
+        if (matchRes.matched && matchRes.canonicalId && matchRes.imageUrl) {
+          resolvedImageUrl = matchRes.imageUrl;
           canonicalMedicineId = matchRes.canonicalId;
-          selectedMediaId = matchRes.preferredMediaId;
+          selectedMediaId = matchRes.mediaId;
           imageSource = "shared_library";
         } else if (imageSource === "shared_library") {
           resolvedImageUrl = null;
@@ -886,16 +714,15 @@ export async function handleSyncRoutes(
       const prodId = existingProd?.id || `sfp_${crypto.randomUUID()}`;
       let prodSlug = existingProd?.slug || toUrlSlug(name, posProdId);
       if (!existingProd) {
-        const slugCollision = await env.DB.prepare(
-          "SELECT id FROM storefront_products WHERE storefront_id = ? AND slug = ? LIMIT 1"
-        )
-          .bind(actor.storefrontId, prodSlug)
-          .first<{ id: string }>();
-        if (slugCollision) {
+        if (usedSlugs.has(prodSlug)) {
           prodSlug = `${prodSlug}-${crypto.randomUUID().slice(0, 6)}`;
         }
+        usedSlugs.add(prodSlug);
       }
-      const categoryName = String(item.product_identity.category_name || "General Medicines").trim();
+
+      const categoryName =
+        String(item.product_identity.category_name || existingProd?.category_name || "General Medicines").trim() ||
+        "General Medicines";
       if (
         !existingProd ||
         existingProd.publish_status !== effectivePublishStatus ||
@@ -904,6 +731,7 @@ export async function handleSyncRoutes(
       ) {
         catalogTopologyChanged = true;
       }
+
       const searchKeywords = [
         name,
         item.product_identity.generic_name,
@@ -926,12 +754,12 @@ export async function handleSyncRoutes(
       );
       const sellingUnitsJson = Array.isArray(item.selling_units)
         ? JSON.stringify(item.selling_units)
-        : "[]";
-      const normalizedCoreKey = computeNormalizedCoreKey(name) || null;
+        : existingProd?.selling_units_json || "[]";
+      const normalizedCoreKey =
+        computeNormalizedCoreKey(name) || existingProd?.normalized_core_key || null;
       const incomingAvailStatus = item.availability || "in_stock";
       const incomingAvailQty = Math.max(0, Number(item.available_qty ?? 0));
 
-      // Delta-Only Write Guard: skip redundant D1 writes when nothing actually changed (protects 100k rows_written/day free cap!)
       const isUnchangedDelta =
         Boolean(existingProd) &&
         String(existingProd!.name || "") === name &&
@@ -952,164 +780,73 @@ export async function handleSyncRoutes(
         continue;
       }
 
-      await env.DB.prepare(
-        `INSERT INTO storefront_products (
-           id, storefront_id, pharmacy_id, pos_product_id, master_medicine_id,
-           sku_code, slug, name, generic_name, strength, dosage_form,
-           brand_name, packing_label, unit_label, base_unit_label, selling_units_json,
-           public_description, public_selling_price_pkr, compare_at_price_pkr,
-           availability_status, available_qty, available_base_qty, branch_stock_json, category_name, primary_image_url,
-           search_keywords, publish_status, requires_prescription,
-           is_controlled_substance, is_featured, is_popular, max_order_qty,
-           sync_version, last_synced_at, created_at, updated_at,
-           image_source, selected_media_id, canonical_medicine_id, normalized_core_key
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(storefront_id, pos_product_id) DO UPDATE SET
-           master_medicine_id = COALESCE(excluded.master_medicine_id, storefront_products.master_medicine_id),
-           sku_code = COALESCE(excluded.sku_code, storefront_products.sku_code),
-           name = excluded.name,
-           generic_name = COALESCE(excluded.generic_name, storefront_products.generic_name),
-           strength = COALESCE(excluded.strength, storefront_products.strength),
-           dosage_form = COALESCE(excluded.dosage_form, storefront_products.dosage_form),
-           brand_name = COALESCE(excluded.brand_name, storefront_products.brand_name),
-           packing_label = COALESCE(excluded.packing_label, storefront_products.packing_label),
-           unit_label = excluded.unit_label,
-           base_unit_label = excluded.base_unit_label,
-           selling_units_json = CASE
-             WHEN excluded.selling_units_json != '[]' THEN excluded.selling_units_json
-             ELSE storefront_products.selling_units_json
-           END,
-           public_description = COALESCE(storefront_products.public_description, excluded.public_description),
-           public_selling_price_pkr = excluded.public_selling_price_pkr,
-           compare_at_price_pkr = COALESCE(excluded.compare_at_price_pkr, storefront_products.compare_at_price_pkr),
-           availability_status = excluded.availability_status,
-           available_qty = excluded.available_qty,
-           available_base_qty = excluded.available_base_qty,
-           branch_stock_json = excluded.branch_stock_json,
-           category_name = COALESCE(excluded.category_name, storefront_products.category_name),
-           primary_image_url = CASE
-             WHEN storefront_products.image_source = 'owner_override' THEN storefront_products.primary_image_url
-             WHEN excluded.primary_image_url IS NOT NULL THEN excluded.primary_image_url
-             ELSE storefront_products.primary_image_url
-           END,
-           image_source = CASE
-             WHEN storefront_products.image_source = 'owner_override' THEN 'owner_override'
-             WHEN excluded.image_source != 'none' THEN excluded.image_source
-             ELSE storefront_products.image_source
-           END,
-           canonical_medicine_id = CASE
-             WHEN storefront_products.image_source = 'owner_override' THEN storefront_products.canonical_medicine_id
-             WHEN excluded.canonical_medicine_id IS NOT NULL THEN excluded.canonical_medicine_id
-             ELSE storefront_products.canonical_medicine_id
-           END,
-           selected_media_id = CASE
-             WHEN storefront_products.image_source = 'owner_override' THEN storefront_products.selected_media_id
-             WHEN excluded.selected_media_id IS NOT NULL THEN excluded.selected_media_id
-             ELSE storefront_products.selected_media_id
-           END,
-           normalized_core_key = COALESCE(excluded.normalized_core_key, storefront_products.normalized_core_key),
-           search_keywords = excluded.search_keywords,
-           publish_status = excluded.publish_status,
-           requires_prescription = excluded.requires_prescription,
-           is_controlled_substance = excluded.is_controlled_substance,
-           is_featured = CASE WHEN excluded.is_featured = 1 THEN 1 ELSE storefront_products.is_featured END,
-           is_popular = CASE WHEN excluded.is_popular = 1 THEN 1 ELSE storefront_products.is_popular END,
-           max_order_qty = excluded.max_order_qty,
-           deleted_at = NULL,
-           sync_version = excluded.sync_version,
-           last_synced_at = excluded.last_synced_at,
-           updated_at = excluded.updated_at`
-      )
-        .bind(
-          prodId,
-          actor.storefrontId,
-          actor.pharmacyId,
-          posProdId,
-          item.product_identity.master_medicine_id || null,
-          item.product_identity.sku_code || null,
-          prodSlug,
-          name,
-          item.product_identity.generic_name || null,
-          item.product_identity.strength || null,
-          item.product_identity.dosage_form || null,
-          item.product_identity.brand_name || null,
-          item.product_identity.packing_label || null,
-          item.product_identity.unit_label || "Pack",
-          baseUnitLabel,
-          sellingUnitsJson,
-          item.product_identity.public_description || null,
-          price,
-          item.compare_at_price_pkr ?? null,
-          incomingAvailStatus,
-          incomingAvailQty,
-          availableBaseQty,
-          JSON.stringify(branchStockMap),
-          categoryName,
-          resolvedImageUrl,
-          searchKeywords,
-          effectivePublishStatus,
-          item.product_identity.requires_prescription ? 1 : 0,
-          isControlled ? 1 : 0,
-          item.is_featured ? 1 : 0,
-          item.is_popular ? 1 : 0,
-          Math.max(1, Number(item.max_order_qty ?? 20)),
-          rev,
-          nowIso,
-          nowIso,
-          nowIso,
-          imageSource,
-          selectedMediaId,
-          canonicalMedicineId,
-          normalizedCoreKey
-        )
-        .run();
+      const updatedRecord: R2CatalogProductRecord = {
+        id: prodId,
+        storefront_id: actor.storefrontId,
+        pharmacy_id: actor.pharmacyId,
+        pos_product_id: posProdId,
+        master_medicine_id:
+          item.product_identity.master_medicine_id || existingProd?.master_medicine_id || null,
+        sku_code: item.product_identity.sku_code || existingProd?.sku_code || null,
+        slug: prodSlug,
+        name,
+        generic_name: item.product_identity.generic_name || existingProd?.generic_name || null,
+        strength: item.product_identity.strength || existingProd?.strength || null,
+        dosage_form: item.product_identity.dosage_form || existingProd?.dosage_form || null,
+        brand_name: item.product_identity.brand_name || existingProd?.brand_name || null,
+        packing_label: item.product_identity.packing_label || existingProd?.packing_label || null,
+        unit_label: item.product_identity.unit_label || "Pack",
+        base_unit_label: baseUnitLabel,
+        selling_units_json: sellingUnitsJson,
+        public_description:
+          existingProd?.public_description || item.product_identity.public_description || null,
+        public_selling_price_pkr: price,
+        compare_at_price_pkr:
+          item.compare_at_price_pkr ?? existingProd?.compare_at_price_pkr ?? null,
+        override_price_pkr: existingProd?.override_price_pkr ?? null,
+        availability_status: incomingAvailStatus,
+        available_qty: incomingAvailQty,
+        available_base_qty: availableBaseQty,
+        branch_stock_json: JSON.stringify(branchStockMap),
+        category_name: categoryName,
+        primary_image_url:
+          existingProd?.image_source === "owner_override"
+            ? existingProd.primary_image_url
+            : resolvedImageUrl,
+        image_source:
+          existingProd?.image_source === "owner_override"
+            ? "owner_override"
+            : imageSource,
+        selected_media_id:
+          existingProd?.image_source === "owner_override"
+            ? existingProd.selected_media_id
+            : selectedMediaId,
+        canonical_medicine_id:
+          existingProd?.image_source === "owner_override"
+            ? existingProd.canonical_medicine_id
+            : canonicalMedicineId,
+        normalized_core_key: normalizedCoreKey,
+        search_keywords: searchKeywords,
+        publish_status: effectivePublishStatus,
+        requires_prescription: item.product_identity.requires_prescription ? 1 : 0,
+        is_controlled_substance: isControlled ? 1 : 0,
+        is_featured: item.is_featured || existingProd?.is_featured ? 1 : 0,
+        is_popular: item.is_popular || existingProd?.is_popular ? 1 : 0,
+        max_order_qty: Math.max(1, Number(item.max_order_qty ?? existingProd?.max_order_qty ?? 20)),
+        sync_version: rev,
+        deleted_at: null,
+        last_synced_at: nowIso,
+        created_at: existingProd?.created_at || nowIso,
+        updated_at: nowIso,
+        ...(existingProd?.gallery_images ? { gallery_images: existingProd.gallery_images } : {}),
+      };
 
+      existingByPosId.set(posProdId, updatedRecord);
       itemsWritten++;
-
-      const validReasons = new Set([
-        "owner_approved",
-        "admin_approved",
-        "rule_matched",
-        "manual_hidden",
-        "controlled_blocked",
-        "out_of_stock_hidden",
-      ]);
-      const safeVisibilityReason = validReasons.has(visibilityReason)
-        ? visibilityReason
-        : effectivePublishStatus === "published"
-        ? "owner_approved"
-        : "manual_hidden";
-
-      await env.DB.prepare(
-        `INSERT INTO storefront_product_visibility (
-           id, storefront_id, pharmacy_id, product_id, pos_product_id, branch_id,
-           is_visible, visibility_reason, approved_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(storefront_id, pos_product_id, branch_id) DO UPDATE SET
-           is_visible = excluded.is_visible,
-           visibility_reason = excluded.visibility_reason,
-           updated_at = excluded.updated_at`
-      )
-        .bind(
-          `sfv_${crypto.randomUUID()}`,
-          actor.storefrontId,
-          actor.pharmacyId,
-          prodId,
-          posProdId,
-          branchId,
-          effectivePublishStatus === "published" ? 1 : 0,
-          safeVisibilityReason,
-          nowIso,
-          nowIso
-        )
-        .run();
-
       itemsApplied++;
     }
 
-    // Automatically unpublish synthetic starter rows (POS-MED-* / PORTAL-ITEM-*) ONLY on full snapshot
-    // or initial low-count sync, using indexed prefix ranges on UNIQUE(storefront_id, pos_product_id)
-    // instead of scanning all 2,000+ published products with LIKE on every delta!
+    // In-memory starter-row cleanup & single-batch full-snapshot reconciliation (0 D1 scans!)
     const shouldCheckStarterRows =
       Boolean(body.full_snapshot) ||
       pathname === "/api/v1/sync/catalog-snapshot" ||
@@ -1119,108 +856,67 @@ export async function handleSyncRoutes(
       const syncedPosIds = new Set(
         body.items.map((it) => String(it?.pos_product_id || "").trim()).filter(Boolean)
       );
-      const legacyStarterRes = await env.DB.prepare(
-        `SELECT id, pos_product_id FROM storefront_products
-         WHERE storefront_id = ?
-           AND (
-             (pos_product_id >= 'POS-MED-' AND pos_product_id < 'POS-MED.')
-             OR (pos_product_id >= 'PORTAL-ITEM-' AND pos_product_id < 'PORTAL-ITEM.')
-           )
-           AND pharmacy_id = ?
-           AND publish_status = 'published'`
-      )
-        .bind(actor.storefrontId, actor.pharmacyId)
-        .all<{ id: string; pos_product_id: string }>();
-      syncActualRowsRead += sumD1MetaCounts([legacyStarterRes as any], {
-        rowsRead: (legacyStarterRes.results || []).length,
-      }).rowsRead;
-
-      for (const leg of legacyStarterRes.results || []) {
-        if (!syncedPosIds.has(leg.pos_product_id)) {
+      for (const p of existingByPosId.values()) {
+        if (
+          p.publish_status === "published" &&
+          (p.pos_product_id.startsWith("POS-MED-") || p.pos_product_id.startsWith("PORTAL-ITEM-")) &&
+          !syncedPosIds.has(p.pos_product_id)
+        ) {
+          p.publish_status = "unpublished";
+          p.updated_at = nowIso;
           catalogTopologyChanged = true;
-          await env.DB.prepare(
-            `UPDATE storefront_products
-             SET publish_status = 'unpublished', updated_at = ?
-             WHERE id = ? AND storefront_id = ? AND pharmacy_id = ?`
-          )
-            .bind(nowIso, leg.id, actor.storefrontId, actor.pharmacyId)
-            .run();
+          itemsWritten++;
         }
       }
 
-      // Reconcile catalog when all products are transmitted in a single complete batch (e.g. initial setup or post-reset)
       if (
-        (body.auto_approve_all === true || body.full_snapshot === true) &&
+        ((body as any).auto_approve_all === true || body.full_snapshot === true) &&
         Number(body.total_batches || 1) === 1 &&
         syncedPosIds.size > 0
       ) {
-        const stalePublishedRes = await env.DB.prepare(
-          `SELECT id, pos_product_id FROM storefront_products
-           WHERE storefront_id = ? AND pharmacy_id = ?
-             AND publish_status = 'published'`
-        )
-          .bind(actor.storefrontId, actor.pharmacyId)
-          .all<{ id: string; pos_product_id: string }>();
-        syncActualRowsRead += sumD1MetaCounts([stalePublishedRes as any], {
-          rowsRead: (stalePublishedRes.results || []).length,
-        }).rowsRead;
-
-        for (const row of stalePublishedRes.results || []) {
-          if (!syncedPosIds.has(row.pos_product_id)) {
+        for (const p of existingByPosId.values()) {
+          if (p.publish_status === "published" && !syncedPosIds.has(p.pos_product_id)) {
+            p.publish_status = "archived";
+            p.availability_status = "unavailable";
+            p.available_qty = 0;
+            p.deleted_at = nowIso;
+            p.updated_at = nowIso;
             catalogTopologyChanged = true;
-            await env.DB.prepare(
-              `UPDATE storefront_products
-               SET publish_status = 'archived',
-                   availability_status = 'unavailable',
-                   available_qty = 0,
-                   deleted_at = ?,
-                   updated_at = ?
-               WHERE id = ? AND storefront_id = ? AND pharmacy_id = ?`
-            )
-              .bind(nowIso, nowIso, row.id, actor.storefrontId, actor.pharmacyId)
-              .run();
+            itemsWritten++;
           }
         }
       }
     }
 
-    // Avoid full COUNT(*) + GROUP BY scans on intermediate chunks or stock/price-only deltas
-    const needsCatalogRecount =
-      !isIntermediateBatch &&
-      (catalogTopologyChanged ||
-        Boolean(body.full_snapshot) ||
-        pathname === "/api/v1/sync/catalog-snapshot");
-
-    const publishedCount = needsCatalogRecount
-      ? await recalculateStorefrontCatalogCounts(env.DB, actor.storefrontId, actor.pharmacyId, {
-          skipCategories: false,
-        })
-      : Number(sf.published_products_count || 0);
-    if (needsCatalogRecount) {
-      syncActualRowsRead += Math.max(1, publishedCount * 2);
+    // Persist authoritative catalog to R2 (`storefront-catalogs/{sfId}/live.json`) — 1 R2 write, 0 D1 product writes!
+    catalogDoc.products = Array.from(existingByPosId.values());
+    catalogDoc.last_sync_at = nowIso;
+    catalogDoc.central_index_version = centralIndex.doc.version;
+    if (itemsWritten > 0 || catalogTopologyChanged || !isIntermediateBatch) {
+      await saveStorefrontCatalogDoc(env, catalogDoc);
     }
 
-    // Update storefront last_sync_at (and rotate config_version + R2 catalog snapshot if catalog changed)
-    let nextConfigVersion = Number(sf.config_version || 1);
-    if ((itemsWritten > 0 || catalogTopologyChanged) && !isIntermediateBatch) {
-      nextConfigVersion = await bumpStorefrontConfigVersion(env.DB, actor.storefrontId);
-      const refreshTask = buildAndSaveCatalogSnapshot(env, {
-        id: actor.storefrontId,
-        pharmacy_id: actor.pharmacyId,
-        config_version: nextConfigVersion,
-        last_sync_at: nowIso,
-      }).catch(() => {});
-      if (execCtx && typeof execCtx.waitUntil === "function") {
-        execCtx.waitUntil(refreshTask);
-      }
+    const publishedCount = catalogDoc.published_count;
+
+    // On final batch (or single batch), update `storefronts` metadata + categories in minimal D1 writes (~1-4 writes total!)
+    if (!isIntermediateBatch) {
+      await syncStorefrontMetadataFromCatalogDoc(env.DB, catalogDoc, {
+        bumpConfigVersion: itemsWritten > 0 || catalogTopologyChanged,
+        updateLastSyncAt: nowIso,
+        syncCategories:
+          catalogTopologyChanged ||
+          Boolean(body.full_snapshot) ||
+          pathname === "/api/v1/sync/catalog-snapshot",
+      });
+      invalidateTenantBundleCache(actor.storefrontId);
+    } else if (itemsWritten > 0) {
+      await env.DB.prepare(
+        `UPDATE storefronts SET published_products_count = ?, last_sync_at = ?, updated_at = ? WHERE id = ? AND pharmacy_id = ?`
+      )
+        .bind(publishedCount, nowIso, nowIso, actor.storefrontId, actor.pharmacyId)
+        .run();
     }
     void itemsSkippedUnchanged;
-
-    await env.DB.prepare(
-      `UPDATE storefronts SET last_sync_at = ?, updated_at = ? WHERE id = ? AND pharmacy_id = ?`
-    )
-      .bind(nowIso, nowIso, actor.storefrontId, actor.pharmacyId)
-      .run();
 
     // Advance sync cursor
     await env.DB.prepare(
@@ -1256,30 +952,6 @@ export async function handleSyncRoutes(
         ? "partial"
         : "failed";
 
-    await env.DB.prepare(
-      `INSERT INTO storefront_sync_events (
-         id, storefront_id, pharmacy_id, branch_id, idempotency_key,
-         event_type, source_cursor, next_cursor,
-         items_received, items_applied, items_rejected, status, created_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-      .bind(
-        syncEventId,
-        actor.storefrontId,
-        actor.pharmacyId,
-        branchId,
-        idempotencyKey,
-        eventType,
-        body.source_cursor || null,
-        nextCursor,
-        body.items.length,
-        itemsApplied,
-        itemsRejected,
-        status,
-        nowIso
-      )
-      .run();
-
     const responsePayload: StorefrontCatalogDeltaResponse = {
       ok: true,
       duplicate: false,
@@ -1298,12 +970,34 @@ export async function handleSyncRoutes(
     };
 
     const expiresAt = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString();
-    await env.DB.prepare(
-      `INSERT INTO storefront_import_idempotency (
-         storefront_id, pharmacy_id, idempotency_key, request_hash, response_json, created_at, expires_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?)`
-    )
-      .bind(
+    // Batch sync event + idempotency in 1 single D1 round-trip
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO storefront_sync_events (
+           id, storefront_id, pharmacy_id, branch_id, idempotency_key,
+           event_type, source_cursor, next_cursor,
+           items_received, items_applied, items_rejected, status, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        syncEventId,
+        actor.storefrontId,
+        actor.pharmacyId,
+        branchId,
+        idempotencyKey,
+        eventType,
+        body.source_cursor || null,
+        nextCursor,
+        body.items.length,
+        itemsApplied,
+        itemsRejected,
+        status,
+        nowIso
+      ),
+      env.DB.prepare(
+        `INSERT INTO storefront_import_idempotency (
+           storefront_id, pharmacy_id, idempotency_key, request_hash, response_json, created_at, expires_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
         actor.storefrontId,
         actor.pharmacyId,
         idempotencyKey,
@@ -1311,34 +1005,38 @@ export async function handleSyncRoutes(
         JSON.stringify(responsePayload),
         nowIso,
         expiresAt
-      )
-      .run();
+      ),
+    ]);
 
-    await recordStorefrontUsage(env.DB, {
-      storefrontId: actor.storefrontId,
-      pharmacyId: actor.pharmacyId,
-      syncRequests: 1,
-      d1RowsReadEst: syncActualRowsRead,
-      d1RowsWrittenEst: itemsApplied * 2 + 4,
-    });
+    if (!isIntermediateBatch) {
+      await recordStorefrontUsage(env.DB, {
+        storefrontId: actor.storefrontId,
+        pharmacyId: actor.pharmacyId,
+        syncRequests: 1,
+        d1RowsReadEst: syncActualRowsRead,
+        d1RowsWrittenEst: 4,
+        r2ClassAOps: 1,
+      });
 
-    await writeStorefrontAuditLog(env.DB, {
-      storefrontId: actor.storefrontId,
-      pharmacyId: actor.pharmacyId,
-      action: `catalog_sync_${eventType}`,
-      actorType: "pos_sync",
-      actorId: branchId,
-      entityType: "catalog",
-      entityId: syncEventId,
-      summary: `Synced ${itemsApplied} catalog items (${itemsRejected} rejected); ${publishedCount} total published.`,
-      metadata: {
-        idempotency_key: idempotencyKey,
-        next_cursor: nextCursor,
-        items_received: body.items.length,
-        items_applied: itemsApplied,
-        items_rejected: itemsRejected,
-      },
-    });
+      await writeStorefrontAuditLog(env.DB, {
+        storefrontId: actor.storefrontId,
+        pharmacyId: actor.pharmacyId,
+        action: `catalog_sync_${eventType}`,
+        actorType: "pos_sync",
+        actorId: branchId,
+        entityType: "catalog",
+        entityId: syncEventId,
+        summary: `Synced ${itemsApplied} catalog items to R2 (${itemsRejected} rejected); ${publishedCount} total published.`,
+        metadata: {
+          idempotency_key: idempotencyKey,
+          next_cursor: nextCursor,
+          items_received: body.items.length,
+          items_applied: itemsApplied,
+          items_rejected: itemsRejected,
+          storage_engine: "r2_first_v2",
+        },
+      });
+    }
 
     return new Response(JSON.stringify(responsePayload), { status: 200, headers });
     } catch (syncErr: any) {
@@ -1543,21 +1241,20 @@ export async function handleSyncRoutes(
       }
     }
 
-    // Lookup SKU codes ONLY for the handful of product IDs actually referenced by these orders
+    // Lookup SKU codes from R2-First catalog doc if any order line missed a snapshot SKU (0 D1 reads!)
     const skuBySfProdId = new Map<string, string | null>();
-    const skuLookupIds = Array.from(missingSkuProductIds);
-    for (let i = 0; i < skuLookupIds.length; i += IN_CHUNK) {
-      const chunk = skuLookupIds.slice(i, i + IN_CHUNK);
-      const ph = chunk.map(() => "?").join(", ");
-      const prodSkusRes = await env.DB.prepare(
-        `SELECT id, sku_code FROM storefront_products
-         WHERE storefront_id = ? AND id IN (${ph})`
-      )
-        .bind(actor.storefrontId, ...chunk)
-        .all<{ id: string; sku_code: string | null }>();
-      trackedMetaResponses.push(prodSkusRes as any);
-      for (const pr of prodSkusRes.results || []) {
-        skuBySfProdId.set(pr.id, pr.sku_code);
+    if (missingSkuProductIds.size > 0) {
+      try {
+        const { doc } = await loadStorefrontCatalogDoc(env, actor.storefrontId, actor.pharmacyId, {
+          hydrateCentralImages: false,
+        });
+        for (const pr of doc.products) {
+          if (missingSkuProductIds.has(pr.id)) {
+            skuBySfProdId.set(pr.id, pr.sku_code);
+          }
+        }
+      } catch {
+        // Non-fatal
       }
     }
 
@@ -2213,22 +1910,33 @@ export async function handleSyncRoutes(
       )
       .run();
 
-    // Update storefront product immediately if synced on website
-    const prodUpdate = await env.DB.prepare(
-      `UPDATE storefront_products
-       SET primary_image_url = ?, selected_media_id = ?, image_source = 'owner_override', updated_at = ?
-       WHERE storefront_id = ? AND pharmacy_id = ? AND (pos_product_id = ? OR (master_medicine_id IS NOT NULL AND master_medicine_id = ?))`
-    )
-      .bind(
-        publicUrl,
-        mediaId,
-        nowIso,
-        actor.storefrontId,
-        actor.pharmacyId,
-        posProdId,
-        body.master_medicine_id ? String(body.master_medicine_id).trim() : "__none__"
-      )
-      .run();
+    // Update storefront product immediately in R2-First catalog (`live.json`) -> 0 D1 product writes!
+    let updatedProductCount = 0;
+    try {
+      const { doc } = await loadStorefrontCatalogDoc(env, actor.storefrontId, actor.pharmacyId, {
+        freshFromR2: true,
+        hydrateCentralImages: false,
+      });
+      const masterIdFilter = body.master_medicine_id ? String(body.master_medicine_id).trim() : null;
+      for (const p of doc.products) {
+        if (
+          p.pos_product_id === posProdId ||
+          (masterIdFilter && p.master_medicine_id === masterIdFilter)
+        ) {
+          p.primary_image_url = publicUrl;
+          p.selected_media_id = mediaId;
+          p.image_source = "owner_override";
+          p.updated_at = nowIso;
+          updatedProductCount++;
+        }
+      }
+      if (updatedProductCount > 0) {
+        await saveStorefrontCatalogDoc(env, doc);
+        await bumpStorefrontConfigVersion(env.DB, actor.storefrontId);
+      }
+    } catch {
+      updatedProductCount = 0;
+    }
 
     // Optionally submit to Super Admin Central Image Library queue (default true!) so once verified, all pharmacies benefit
     let submissionId: string | null = null;
@@ -2260,26 +1968,12 @@ export async function handleSyncRoutes(
         });
     }
 
-    // Rotate config_version + refresh R2 snapshot so website shows new photo immediately
-    if (Number(prodUpdate.meta?.changes || 0) > 0) {
-      const nextVer = await bumpStorefrontConfigVersion(env.DB, actor.storefrontId);
-      const refreshTask = buildAndSaveCatalogSnapshot(env, {
-        id: actor.storefrontId,
-        pharmacy_id: actor.pharmacyId,
-        config_version: nextVer,
-        last_sync_at: nowIso,
-      }).catch(() => {});
-      if (execCtx && typeof execCtx.waitUntil === "function") {
-        execCtx.waitUntil(refreshTask);
-      }
-    }
-
     return new Response(
       JSON.stringify({
         ok: true,
         media_id: mediaId,
         public_url: publicUrl,
-        updated_storefront_product: Number(prodUpdate.meta?.changes || 0) > 0,
+        updated_storefront_product: updatedProductCount > 0,
         submission_id: submissionId,
       }),
       { status: 200, headers }

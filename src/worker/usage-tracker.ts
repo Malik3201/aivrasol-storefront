@@ -65,8 +65,66 @@ interface BufferedUsageBucket {
 }
 
 const pollUsageBuffer = new Map<string, BufferedUsageBucket>();
-const POLL_USAGE_FLUSH_INTERVAL_MS = 60_000;
-const POLL_USAGE_FLUSH_REQ_THRESHOLD = 15;
+const POLL_USAGE_FLUSH_INTERVAL_MS = 180_000;
+const POLL_USAGE_FLUSH_REQ_THRESHOLD = 40;
+
+interface BufferedPublicUsageBucket {
+  storefrontId: string;
+  pharmacyId: string;
+  publicRequests: number;
+  searchRequests: number;
+  d1RowsRead: number;
+  lastFlushAt: number;
+}
+
+const publicUsageBuffer = new Map<string, BufferedPublicUsageBucket>();
+const PUBLIC_USAGE_FLUSH_INTERVAL_MS = 180_000;
+const PUBLIC_USAGE_FLUSH_REQ_THRESHOLD = 50;
+
+/**
+ * Buffers high-volume public storefront telemetry in isolate memory and flushes at most once
+ * every 3 minutes or 50 hits — cutting public D1 `rows_written` by ~98% for 100+ pharmacies!
+ */
+export async function recordBufferedPublicUsage(
+  db: D1Database,
+  input: {
+    storefrontId: string;
+    pharmacyId: string;
+    publicRequests?: number;
+    searchRequests?: number;
+    d1RowsRead?: number;
+  }
+): Promise<void> {
+  const key = `${input.storefrontId}:${input.pharmacyId}`;
+  const now = Date.now();
+  const existing = publicUsageBuffer.get(key) || {
+    storefrontId: input.storefrontId,
+    pharmacyId: input.pharmacyId,
+    publicRequests: 0,
+    searchRequests: 0,
+    d1RowsRead: 0,
+    lastFlushAt: now,
+  };
+  existing.publicRequests += input.publicRequests ?? 1;
+  existing.searchRequests += input.searchRequests ?? 0;
+  existing.d1RowsRead += Math.max(0, Math.round(input.d1RowsRead ?? 0));
+  publicUsageBuffer.set(key, existing);
+
+  if (
+    existing.publicRequests >= PUBLIC_USAGE_FLUSH_REQ_THRESHOLD ||
+    now - existing.lastFlushAt >= PUBLIC_USAGE_FLUSH_INTERVAL_MS
+  ) {
+    publicUsageBuffer.delete(key);
+    await recordStorefrontUsage(db, {
+      storefrontId: existing.storefrontId,
+      pharmacyId: existing.pharmacyId,
+      publicRequests: existing.publicRequests,
+      searchRequests: existing.searchRequests,
+      d1RowsReadEst: existing.d1RowsRead,
+      d1RowsWrittenEst: 1,
+    });
+  }
+}
 
 /**
  * Buffers high-frequency poll telemetry in isolate memory and flushes to D1 at most once per minute
