@@ -102,7 +102,7 @@ export function SiteHeader({
   );
 
   const whatsappDigits = (sf.whatsapp_phone || sf.contact_phone || "").replace(/[^0-9]/g, "");
-  const topCategories = categories.filter(isMeaningfulCategory).slice(0, 5);
+  const topCategories = categories.filter(isMeaningfulCategory).slice(0, 4);
 
   return (
     <>

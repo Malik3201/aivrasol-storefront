@@ -132,38 +132,41 @@ export function HomeView({
   return (
     <div className="sf-fade-up">
       {/* =================================================================== */}
-      {/* 1. SOLID COMMERCIAL E-COMMERCE SPLIT HERO (ZERO OVERLAYS ON PHOTO)  */}
+      {/* 1. RICH SOLID TWO-TONE E-COMMERCE HERO BANNER (ZERO OVERLAYS)       */}
       {/* =================================================================== */}
-      <section className="bg-white border-b border-[#E2E8F0]">
-        <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8 sm:py-12 lg:py-14">
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-10 items-center">
-            {/* Left Column: Crisp Commercial Copy + Instant Smart Search + Solid CTAs */}
-            <div className="lg:col-span-6 space-y-5 sm:space-y-6">
+      <section className="bg-[#EEF2F6] border-b border-[#E2E8F0]">
+        <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-5 sm:py-7">
+          <div className="rounded-2xl overflow-hidden border border-[#CBD5E1]/70 shadow-[0_12px_30px_-14px_rgba(15,23,42,0.18)] grid grid-cols-1 lg:grid-cols-12">
+            {/* Left Brand Panel: Rich Solid Pharmacy Brand Color for High-Impact Commercial Contrast */}
+            <div
+              className="lg:col-span-6 p-6 sm:p-8 lg:p-10 text-white flex flex-col justify-center space-y-5"
+              style={{ backgroundColor: "var(--sf-hero-bg, #084C3E)" }}
+            >
               <div className="flex flex-wrap items-center gap-2">
-                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold sf-badge-brand">
-                  <ShieldCheckIcon className="w-3.5 h-3.5" />
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-white/15 border border-white/25 text-white">
+                  <ShieldCheckIcon className="w-3.5 h-3.5 text-emerald-300" />
                   <span>
                     {sf.drug_sale_license_no
                       ? `Licensed Pharmacy • Lic #${sf.drug_sale_license_no}`
                       : `Verified Local Pharmacy • ${sf.city}`}
                   </span>
                 </span>
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#F1F5F9] border border-[#E2E8F0] text-xs font-semibold text-[#334155]">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/20 border border-white/15 text-xs font-semibold text-emerald-100">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                   <span>{scheduleText}</span>
                 </span>
               </div>
 
-              <div className="space-y-3">
-                <h1 className="sf-heading text-[28px] sm:text-[38px] lg:text-[42px] font-extrabold text-[#0F172A] tracking-tight leading-[1.12]">
+              <div className="space-y-2.5">
+                <h1 className="sf-heading text-[26px] sm:text-[34px] lg:text-[38px] font-extrabold text-white tracking-tight leading-[1.13]">
                   {heroTitle}
                 </h1>
-                <p className="text-sm sm:text-[15.5px] text-[#475569] leading-relaxed max-w-xl">
+                <p className="text-sm sm:text-[15px] text-white/85 leading-relaxed max-w-xl">
                   {heroSubtitle}
                 </p>
               </div>
 
-              {/* Hero Smart Search Bar with Instant Suggestions + Generic-Salt Alternatives */}
+              {/* High-Contrast Pure-White Smart Search Bar Popping Against Solid Brand Panel */}
               <div className="space-y-2.5">
                 <SmartSearchBar
                   value={searchQuery}
@@ -177,7 +180,7 @@ export function HomeView({
 
                 {quickDepartments.length > 0 && (
                   <div className="flex flex-wrap items-center gap-1.5 text-xs">
-                    <span className="text-[#64748B] font-semibold mr-1">Popular:</span>
+                    <span className="text-white/70 font-semibold mr-1">Popular:</span>
                     {quickDepartments.map((cat) => (
                       <button
                         key={cat.id}
@@ -186,7 +189,7 @@ export function HomeView({
                           onSelectCategory(cat.name);
                           onSelectView("shop");
                         }}
-                        className="px-2.5 py-1 rounded-lg bg-[#F1F5F9] hover:bg-[var(--sf-primary-soft)] text-[#334155] hover:text-[var(--sf-primary-ink)] font-semibold transition"
+                        className="px-2.5 py-1 rounded-lg bg-white/12 hover:bg-white/22 border border-white/15 text-white font-semibold transition"
                       >
                         {cat.name}
                       </button>
@@ -195,7 +198,7 @@ export function HomeView({
                 )}
               </div>
 
-              {/* Solid Action Buttons */}
+              {/* Crisp High-Contrast Commercial Action Buttons */}
               <div className="flex flex-wrap items-center gap-2.5 pt-1">
                 <button
                   type="button"
@@ -203,11 +206,14 @@ export function HomeView({
                     onSelectCategory("all");
                     onSelectView("shop");
                   }}
-                  className="h-11 sm:h-12 px-5 sm:px-6 rounded-xl sf-btn-primary text-sm font-bold inline-flex items-center gap-2"
+                  className="h-11 px-5 rounded-xl bg-white hover:bg-[#F8FAFC] text-[#0F172A] text-sm font-extrabold inline-flex items-center gap-2 shadow-sm transition"
                 >
                   <span>Shop All Medicines</span>
                   {publishedCount > 0 && (
-                    <span className="px-2 py-0.5 rounded-md bg-white/20 text-xs font-extrabold tabular-nums">
+                    <span
+                      className="px-2 py-0.5 rounded-md text-xs font-extrabold text-white tabular-nums"
+                      style={{ backgroundColor: "var(--sf-primary)" }}
+                    >
                       {publishedCount}
                     </span>
                   )}
@@ -217,9 +223,9 @@ export function HomeView({
                 <button
                   type="button"
                   onClick={() => onSelectView("track")}
-                  className="h-11 sm:h-12 px-4 sm:px-5 rounded-xl sf-btn-secondary text-sm font-bold inline-flex items-center gap-2"
+                  className="h-11 px-4 rounded-xl bg-white/12 hover:bg-white/20 border border-white/25 text-white text-sm font-bold inline-flex items-center gap-2 transition"
                 >
-                  <PackageTrackIcon className="w-4 h-4 sf-text-brand" />
+                  <PackageTrackIcon className="w-4 h-4 text-emerald-300" />
                   <span>Track Order</span>
                 </button>
 
@@ -228,7 +234,7 @@ export function HomeView({
                     href={`https://wa.me/${whatsappDigits}`}
                     target="_blank"
                     rel="noreferrer"
-                    className="h-11 sm:h-12 px-4 rounded-xl bg-[#ECFDF5] hover:bg-[#D1FAE5] border border-[#A7F3D0] text-[#065F46] text-sm font-bold inline-flex items-center gap-2 transition"
+                    className="h-11 px-4 rounded-xl bg-[#16A34A] hover:bg-[#15803D] text-white text-sm font-bold inline-flex items-center gap-2 transition shadow-xs"
                   >
                     <WhatsAppIcon className="w-4 h-4" />
                     <span>Ask Pharmacist</span>
@@ -237,37 +243,35 @@ export function HomeView({
               </div>
             </div>
 
-            {/* Right Column: Clean Full-Size Pharmacy Photograph (Owner-Replaceable, ZERO Overlays!) */}
-            <div className="lg:col-span-6">
-              <div className="rounded-2xl overflow-hidden border border-[#E2E8F0] bg-[#F8FAFC] shadow-xs">
-                <div className="aspect-[16/10] w-full bg-[#F1F5F9] overflow-hidden">
-                  <img
-                    src={heroImgSrc}
-                    alt={`${displayName} retail pharmacy counter in ${sf.city}`}
-                    loading="eager"
-                    decoding="async"
-                    onError={() => {
-                      if (heroImgSrc !== EDITORIAL_MEDIA.heroDesktopWebp) {
-                        setHeroImgSrc(EDITORIAL_MEDIA.heroDesktopWebp);
-                      }
-                    }}
-                    data-testid="hero-pharmacy-photo"
-                    className="w-full h-full object-cover"
-                  />
-                </div>
-                {/* Clean Solid Caption Strip Docked BELOW Photo (Not Overlaid!) */}
-                <div className="px-4 py-3 bg-white border-t border-[#E2E8F0] flex flex-wrap items-center justify-between gap-2 text-xs">
-                  <div className="flex items-center gap-2 min-w-0 text-[#0F172A] font-bold">
-                    <StoreIcon className="w-4 h-4 sf-text-brand shrink-0" />
-                    <span className="truncate">
-                      {displayName}
-                      {sf.address_line ? ` — ${sf.address_line}, ${sf.city}` : ` — ${sf.city}`}
-                    </span>
-                  </div>
-                  <span className="text-[#475569] font-semibold shrink-0 tabular-nums">
-                    {publishedCount > 0 ? `${publishedCount} Items Live` : "Live POS Inventory"}
+            {/* Right Photo Panel: Full-Height Bright Retail Pharmacy Photo + Solid Dark Store Bar Below */}
+            <div className="lg:col-span-6 flex flex-col bg-[#0F172A]">
+              <div className="flex-1 min-h-[240px] sm:min-h-[310px] lg:min-h-0 bg-[#E2E8F0] overflow-hidden">
+                <img
+                  src={heroImgSrc}
+                  alt={`${displayName} retail pharmacy counter in ${sf.city}`}
+                  loading="eager"
+                  decoding="async"
+                  onError={() => {
+                    if (heroImgSrc !== EDITORIAL_MEDIA.heroDesktopWebp) {
+                      setHeroImgSrc(EDITORIAL_MEDIA.heroDesktopWebp);
+                    }
+                  }}
+                  data-testid="hero-pharmacy-photo"
+                  className="w-full h-full object-cover"
+                />
+              </div>
+              {/* Crisp Solid Dark Footer Strip Docked Below Photo (Zero Overlay On Photo!) */}
+              <div className="px-4 sm:px-5 py-3 bg-[#0F172A] text-white border-t border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs">
+                <div className="flex items-center gap-2 min-w-0 font-semibold text-slate-100">
+                  <StoreIcon className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span className="truncate">
+                    {displayName}
+                    {sf.address_line ? ` — ${sf.address_line}, ${sf.city}` : ` — ${sf.city}`}
                   </span>
                 </div>
+                <span className="px-2 py-0.5 rounded bg-emerald-500/20 border border-emerald-400/30 text-emerald-300 font-bold shrink-0 tabular-nums">
+                  {publishedCount > 0 ? `${publishedCount} Items Live` : "Live POS Stock"}
+                </span>
               </div>
             </div>
           </div>
@@ -277,11 +281,11 @@ export function HomeView({
       {/* =================================================================== */}
       {/* 2. SOLID 4-PILLAR COMMERCIAL PHARMACY TRUST BAR                     */}
       {/* =================================================================== */}
-      <section className="bg-[#F8FAFC] border-b border-[#E2E8F0]">
+      <section className="bg-white border-b border-[#E2E8F0]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5">
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
             <div className="flex items-start gap-3">
-              <div className="w-10 h-10 rounded-xl bg-white border border-[#E2E8F0] flex items-center justify-center shrink-0 sf-text-brand">
+              <div className="w-10 h-10 rounded-xl sf-badge-brand flex items-center justify-center shrink-0">
                 <ShieldCheckIcon className="w-5 h-5" />
               </div>
               <div className="min-w-0">
@@ -295,7 +299,7 @@ export function HomeView({
             </div>
 
             <div className="flex items-start gap-3">
-              <div className="w-10 h-10 rounded-xl bg-white border border-[#E2E8F0] flex items-center justify-center shrink-0 sf-text-brand">
+              <div className="w-10 h-10 rounded-xl sf-badge-brand flex items-center justify-center shrink-0">
                 <TruckIcon className="w-5 h-5" />
               </div>
               <div className="min-w-0">
@@ -315,7 +319,7 @@ export function HomeView({
             </div>
 
             <div className="flex items-start gap-3">
-              <div className="w-10 h-10 rounded-xl bg-white border border-[#E2E8F0] flex items-center justify-center shrink-0 sf-text-brand">
+              <div className="w-10 h-10 rounded-xl sf-badge-brand flex items-center justify-center shrink-0">
                 <StoreIcon className="w-5 h-5" />
               </div>
               <div className="min-w-0">
@@ -331,7 +335,7 @@ export function HomeView({
             </div>
 
             <div className="flex items-start gap-3">
-              <div className="w-10 h-10 rounded-xl bg-white border border-[#E2E8F0] flex items-center justify-center shrink-0 sf-text-brand">
+              <div className="w-10 h-10 rounded-xl sf-badge-brand flex items-center justify-center shrink-0">
                 <PrescriptionIcon className="w-5 h-5" />
               </div>
               <div className="min-w-0">

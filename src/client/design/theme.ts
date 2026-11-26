@@ -89,6 +89,7 @@ export function buildTenantThemeVars(
   const primary = normalizeHexColor(branding?.primary_color, DEFAULT_CLINICAL_PRIMARY);
   const teal = normalizeHexColor(branding?.accent_color, DEFAULT_CLINICAL_TEAL);
   const deepSurface = getDeepEditorialSurface(primary, branding?.secondary_color);
+  const heroBg = mixHex(primary, "#07201C", 0.36);
   const footerSurface = "#0F172A";
 
   const hover = mixHex(primary, "#091A16", 0.18);
@@ -104,6 +105,7 @@ export function buildTenantThemeVars(
     "--sf-primary-border": border,
     "--sf-primary-fg": fg,
     "--sf-primary-ink": ink,
+    "--sf-hero-bg": heroBg,
     "--sf-forest": deepSurface,
     "--sf-forest-deep": footerSurface,
     "--sf-teal": teal,
