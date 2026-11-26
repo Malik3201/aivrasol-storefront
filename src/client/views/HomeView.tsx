@@ -4,8 +4,11 @@ import type {
   StorefrontBannerRecord,
   StorefrontBrandingRecord,
   StorefrontCategoryRecord,
+  StorefrontCustomServiceRecord,
+  StorefrontDoctorRecord,
   StorefrontPromotionRecord,
   StorefrontPublicContext,
+  StorefrontReviewRecord,
   StorefrontSettingsRecord,
 } from "../../shared/types";
 import {
@@ -54,8 +57,23 @@ interface HomeViewProps {
   onOpenProductDetail: (prod: PublicStorefrontProduct) => void;
   onQuickAddToCart: (prod: PublicStorefrontProduct) => void;
   onQuickTrackOrder?: (orderNumber: string) => void;
+  reviews?: StorefrontReviewRecord[];
+  reviewsSummary?: { count: number; average_rating: number };
+  doctors?: StorefrontDoctorRecord[];
+  customServices?: StorefrontCustomServiceRecord[];
   renderProductCard: (prod: PublicStorefrontProduct) => React.ReactNode;
 }
+
+const HEALTH_CONCERNS = [
+  { label: "Fever & Pain", query: "paracetamol" },
+  { label: "Cough & Cold", query: "cough" },
+  { label: "Stomach & Acidity", query: "omeprazole" },
+  { label: "Allergy Relief", query: "cetirizine" },
+  { label: "Diabetes Care", query: "metformin" },
+  { label: "Heart & BP", query: "amlodipine" },
+  { label: "Vitamins & Iron", query: "vitamin" },
+  { label: "Antibiotics", query: "amoxicillin" },
+];
 
 export function HomeView({
   sf,
@@ -77,6 +95,10 @@ export function HomeView({
   onApplyPromoCode,
   onOpenProductDetail,
   onQuickAddToCart,
+  reviews = [],
+  reviewsSummary = { count: 0, average_rating: 0 },
+  doctors = [],
+  customServices = [],
   renderProductCard,
 }: HomeViewProps) {
   const validCategories = categories.filter(isMeaningfulCategory);
@@ -414,6 +436,31 @@ export function HomeView({
                 );
               })}
             </div>
+
+            {/* Shop by Health Concern Quick Strip (MeriPharmacy-Style Symptom Discovery) */}
+            <div className="pt-4 border-t border-[#EDF2F7] space-y-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-extrabold uppercase tracking-wider text-[#475569]">
+                  Shop by Health Concern
+                </span>
+                <span className="text-[11px] text-[#64748B]">Instant salt &amp; medicine lookup</span>
+              </div>
+              <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-0.5">
+                {HEALTH_CONCERNS.map((item) => (
+                  <button
+                    key={item.label}
+                    type="button"
+                    onClick={() => {
+                      onSearchChange(item.query);
+                      onSubmitSearch(item.query);
+                    }}
+                    className="h-9 px-3.5 rounded-xl bg-[#F8FAFC] hover:bg-[var(--sf-primary-soft)] border border-[#E2E8F0] hover:border-[var(--sf-primary-border)] text-xs font-bold text-[#1E293B] hover:text-[var(--sf-primary-ink)] whitespace-nowrap transition shrink-0"
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         </section>
       )}
@@ -581,6 +628,292 @@ export function HomeView({
                     {ban.cta_label || "Shop Now"}
                   </button>
                 </div>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* =================================================================== */}
+      {/* 5B. OPTIONAL IN-HOUSE DOCTORS (SHOWN ONLY IF OWNER ADDED DOCTORS!)  */}
+      {/* =================================================================== */}
+      {doctors.length > 0 && (
+        <section className="bg-[#F5F7F9] border-b border-[#E2E8F0]">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 sm:py-12 space-y-6">
+            <div className="flex flex-wrap items-end justify-between gap-4">
+              <div>
+                <span className="text-[11px] font-extrabold uppercase tracking-wider sf-text-brand block">
+                  Clinic Consultation Desk
+                </span>
+                <h2 className="sf-heading text-xl sm:text-2xl font-extrabold text-[#0F172A]">
+                  Available Doctors at {displayName}
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => onSelectView("doctors")}
+                className="h-9 px-4 rounded-xl sf-btn-secondary text-xs font-bold inline-flex items-center gap-1.5"
+              >
+                <span>View All Doctors ({doctors.length})</span>
+                <ArrowRightIcon className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
+              {doctors.slice(0, 3).map((doc) => {
+                const phoneDigits = (doc.booking_phone || whatsappDigits).replace(/[^0-9]/g, "");
+                const fee = Number(doc.consultation_fee_pkr || 0);
+                const waText = encodeURIComponent(
+                  `Assalam-o-Alaikum ${displayName}, I want to book an appointment with ${doc.name}${
+                    doc.timings ? ` (${doc.timings})` : ""
+                  }.`
+                );
+                return (
+                  <div
+                    key={doc.id}
+                    className="sf-card rounded-2xl p-5 flex flex-col justify-between gap-4"
+                  >
+                    <div className="flex items-start gap-3.5">
+                      {doc.photo_url ? (
+                        <img
+                          src={doc.photo_url}
+                          alt={doc.name}
+                          loading="lazy"
+                          decoding="async"
+                          className="w-16 h-16 rounded-2xl object-cover border border-[#E2E8F0] shrink-0"
+                        />
+                      ) : (
+                        <div
+                          className="w-16 h-16 rounded-2xl text-white font-extrabold text-lg flex items-center justify-center shrink-0"
+                          style={{ backgroundColor: "var(--sf-primary)" }}
+                        >
+                          {doc.name.replace(/^dr\.?\s*/i, "").slice(0, 2).toUpperCase()}
+                        </div>
+                      )}
+                      <div className="min-w-0 space-y-0.5">
+                        {doc.specialization && (
+                          <span className="inline-block px-2 py-0.5 rounded sf-badge-brand text-[10px] font-bold">
+                            {doc.specialization}
+                          </span>
+                        )}
+                        <h3 className="sf-heading text-base font-extrabold text-[#0F172A] truncate">
+                          {doc.name}
+                        </h3>
+                        {doc.qualification && (
+                          <p className="text-xs text-[#475569] font-medium truncate">
+                            {doc.qualification}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] px-3.5 py-2.5 text-xs space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[#64748B] font-semibold">Fee</span>
+                        <span className="font-extrabold text-[#0F172A] tabular-nums">
+                          {fee > 0 ? `Rs. ${fee.toLocaleString()}` : "Confirm at Desk"}
+                        </span>
+                      </div>
+                      {doc.timings && (
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[#64748B] font-semibold">Timings</span>
+                          <span className="font-bold text-[#0F172A] truncate">{doc.timings}</span>
+                        </div>
+                      )}
+                      {doc.days_available && (
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[#64748B] font-semibold">Days</span>
+                          <span className="font-semibold text-[#334155] truncate">
+                            {doc.days_available}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    {phoneDigits && (
+                      <a
+                        href={`https://wa.me/${phoneDigits}?text=${waText}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="h-9 px-3 rounded-xl sf-btn-primary text-xs font-bold inline-flex items-center justify-center gap-1.5"
+                      >
+                        <WhatsAppIcon className="w-3.5 h-3.5" />
+                        <span>Book Appointment</span>
+                      </a>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* =================================================================== */}
+      {/* 5C. OPTIONAL CUSTOM SERVICES & LAB TESTS (ONLY IF CONFIGURED!)      */}
+      {/* =================================================================== */}
+      {customServices.length > 0 && (
+        <section className="bg-white border-b border-[#E2E8F0]">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 sm:py-12 space-y-6">
+            <div className="flex flex-wrap items-end justify-between gap-4">
+              <div>
+                <span className="text-[11px] font-extrabold uppercase tracking-wider sf-text-brand block">
+                  Diagnostics &amp; Extra Services
+                </span>
+                <h2 className="sf-heading text-xl sm:text-2xl font-extrabold text-[#0F172A]">
+                  Lab Tests &amp; Healthcare Services
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => onSelectView("services")}
+                className="h-9 px-4 rounded-xl sf-btn-secondary text-xs font-bold inline-flex items-center gap-1.5"
+              >
+                <span>View All Tests &amp; Prices</span>
+                <ArrowRightIcon className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+              {customServices.slice(0, 3).map((svc) => (
+                <div
+                  key={svc.id}
+                  className="sf-card rounded-2xl overflow-hidden flex flex-col justify-between"
+                >
+                  <div>
+                    {svc.image_url && (
+                      <div className="aspect-[16/9] w-full bg-[#F8FAFC] border-b border-[#E2E8F0] overflow-hidden">
+                        <img
+                          src={svc.image_url}
+                          alt={svc.title}
+                          loading="lazy"
+                          decoding="async"
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                    )}
+                    <div className="p-5 space-y-3">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {Boolean(svc.home_service_available) && (
+                          <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10.5px] font-bold">
+                            Home Collection
+                          </span>
+                        )}
+                        {svc.timings && (
+                          <span className="text-[11px] font-semibold text-[#64748B]">
+                            {svc.timings}
+                          </span>
+                        )}
+                      </div>
+                      <h3 className="sf-heading text-base sm:text-lg font-extrabold text-[#0F172A]">
+                        {svc.title}
+                      </h3>
+                      {svc.subtitle && (
+                        <p className="text-xs text-[#475569] leading-relaxed">{svc.subtitle}</p>
+                      )}
+                      {Array.isArray(svc.items) && svc.items.length > 0 && (
+                        <div className="pt-2 border-t border-[#F1F5F9] space-y-1.5">
+                          {svc.items.slice(0, 3).map((it, idx) => (
+                            <div
+                              key={`${it.name}-${idx}`}
+                              className="flex items-center justify-between gap-2 text-xs"
+                            >
+                              <span className="text-[#334155] font-medium truncate">{it.name}</span>
+                              <span className="font-extrabold text-[#0F172A] tabular-nums shrink-0">
+                                {Number(it.price_pkr || 0) > 0
+                                  ? `Rs. ${Number(it.price_pkr).toLocaleString()}`
+                                  : "Free"}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="px-5 pb-5">
+                    <button
+                      type="button"
+                      onClick={() => onSelectView("services")}
+                      className="w-full h-9 rounded-xl sf-btn-soft text-xs font-bold inline-flex items-center justify-center gap-1"
+                    >
+                      <span>
+                        {svc.items && svc.items.length > 3
+                          ? `See all ${svc.items.length} tests & book`
+                          : "View Details & Book"}
+                      </span>
+                      <ChevronRightIcon className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* =================================================================== */}
+      {/* 5D. VERIFIED CUSTOMER REVIEWS (SHOWN ONLY WHEN OWNER PUBLISHES!)    */}
+      {/* =================================================================== */}
+      {reviews.length > 0 && (
+        <section className="bg-[#F5F7F9] border-b border-[#E2E8F0]">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 sm:py-12 space-y-6">
+            <div className="flex flex-wrap items-end justify-between gap-4">
+              <div>
+                <span className="text-[11px] font-extrabold uppercase tracking-wider sf-text-brand block">
+                  Verified Customer Feedback
+                </span>
+                <h2 className="sf-heading text-xl sm:text-2xl font-extrabold text-[#0F172A]">
+                  What Patients &amp; Families Say About {displayName}
+                </h2>
+              </div>
+              <div className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white border border-[#E2E8F0] text-xs font-bold text-[#0F172A]">
+                <span className="text-amber-500 text-sm">★</span>
+                <span className="tabular-nums">
+                  {reviewsSummary.average_rating.toFixed(1)} / 5.0
+                </span>
+                <span className="text-[#64748B] font-medium">
+                  ({reviewsSummary.count} verified {reviewsSummary.count === 1 ? "order" : "orders"})
+                </span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
+              {reviews.slice(0, 6).map((rev) => (
+                <article
+                  key={rev.id}
+                  className="sf-card rounded-2xl p-5 flex flex-col justify-between gap-3"
+                >
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-amber-500 text-sm tracking-tight">
+                        {[1, 2, 3, 4, 5].map((s) => (
+                          <span key={s}>{s <= Number(rev.rating || 5) ? "★" : "☆"}</span>
+                        ))}
+                      </div>
+                      <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold">
+                        Verified Order
+                      </span>
+                    </div>
+                    <p className="text-sm text-[#334155] leading-relaxed">&ldquo;{rev.comment}&rdquo;</p>
+                    {rev.owner_reply && (
+                      <div className="p-2.5 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] text-xs text-[#475569]">
+                        <strong className="text-[#0F172A]">{displayName}:</strong> {rev.owner_reply}
+                      </div>
+                    )}
+                  </div>
+                  <div className="pt-2.5 border-t border-[#F1F5F9] flex items-center justify-between text-xs text-[#64748B]">
+                    <span className="font-bold text-[#0F172A]">{rev.customer_name}</span>
+                    <span>
+                      {rev.created_at
+                        ? new Date(rev.created_at).toLocaleDateString("en-PK", {
+                            day: "numeric",
+                            month: "short",
+                            year: "numeric",
+                          })
+                        : ""}
+                    </span>
+                  </div>
+                </article>
               ))}
             </div>
           </div>

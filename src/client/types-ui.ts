@@ -10,6 +10,8 @@ export type StorefrontView =
   | "cart"
   | "checkout"
   | "track"
+  | "doctors"
+  | "services"
   | "about"
   | "branches"
   | "delivery"

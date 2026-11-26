@@ -8,8 +8,11 @@ import type {
   PublicStorefrontProduct,
   StorefrontBannerRecord,
   StorefrontCategoryRecord,
+  StorefrontCustomServiceRecord,
+  StorefrontDoctorRecord,
   StorefrontOrderRecord,
   StorefrontPromotionRecord,
+  StorefrontReviewRecord,
 } from "../shared/types";
 
 const SLUG_PATH_RE = /^\/s\/([a-z0-9][a-z0-9-]{1,38}[a-z0-9])(?:\/|$)/i;
@@ -469,4 +472,86 @@ export async function trackPublicOrder(params: {
     error: data.error,
     message: data.message,
   };
+}
+
+export async function fetchPublicReviews(): Promise<{
+  reviews: StorefrontReviewRecord[];
+  summary: { count: number; average_rating: number };
+}> {
+  const url = buildPublicUrl("/api/v1/public/reviews");
+  const cached = readCache<{
+    reviews: StorefrontReviewRecord[];
+    summary: { count: number; average_rating: number };
+  }>(url);
+  if (cached) return cached;
+  try {
+    const res = await fetch(url, { headers: buildHeaders() });
+    if (!res.ok) return { reviews: [], summary: { count: 0, average_rating: 0 } };
+    const data = await res.json();
+    const payload = {
+      reviews: (data.reviews || []) as StorefrontReviewRecord[],
+      summary: data.summary || { count: 0, average_rating: 0 },
+    };
+    writeCache(url, payload, 120_000);
+    return payload;
+  } catch {
+    return { reviews: [], summary: { count: 0, average_rating: 0 } };
+  }
+}
+
+export async function submitOrderReview(input: {
+  order_number: string;
+  rating: number;
+  comment: string;
+  customer_name?: string;
+}): Promise<{ ok: boolean; review?: any; message?: string }> {
+  const res = await fetch(buildPublicUrl("/api/v1/public/reviews"), {
+    method: "POST",
+    headers: buildHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(input),
+  });
+  const data = await res.json();
+  return {
+    ok: Boolean(res.ok && data.ok),
+    review: data.review,
+    message: data.message,
+  };
+}
+
+export async function fetchPublicDoctors(): Promise<StorefrontDoctorRecord[]> {
+  const url = buildPublicUrl("/api/v1/public/doctors");
+  const cached = readCache<StorefrontDoctorRecord[]>(url);
+  if (cached) return cached;
+  try {
+    const res = await fetch(url, { headers: buildHeaders() });
+    if (!res.ok) return [];
+    const data = await res.json();
+    const doctors = (data.doctors || []).map((d: StorefrontDoctorRecord) => ({
+      ...d,
+      photo_url: resolvePublicAssetUrl(d.photo_url),
+    }));
+    writeCache(url, doctors, 180_000);
+    return doctors;
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchPublicCustomServices(): Promise<StorefrontCustomServiceRecord[]> {
+  const url = buildPublicUrl("/api/v1/public/services");
+  const cached = readCache<StorefrontCustomServiceRecord[]>(url);
+  if (cached) return cached;
+  try {
+    const res = await fetch(url, { headers: buildHeaders() });
+    if (!res.ok) return [];
+    const data = await res.json();
+    const services = (data.services || []).map((s: StorefrontCustomServiceRecord) => ({
+      ...s,
+      image_url: resolvePublicAssetUrl(s.image_url),
+    }));
+    writeCache(url, services, 180_000);
+    return services;
+  } catch {
+    return [];
+  }
 }

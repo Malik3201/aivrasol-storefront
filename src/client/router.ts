@@ -14,6 +14,8 @@ const SLUG_PREFIX_RE = /^\/s\/([a-z0-9][a-z0-9-]{1,38}[a-z0-9])(?=\/|$)/i;
 const STATIC_VIEW_PATHS = new Set<StorefrontView>([
   "checkout",
   "track",
+  "doctors",
+  "services",
   "about",
   "branches",
   "delivery",

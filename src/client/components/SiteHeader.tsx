@@ -40,6 +40,8 @@ interface SiteHeaderProps {
   cartTotalItems: number;
   cartSubtotalPkr: number;
   onOpenCartDrawer: () => void;
+  hasDoctors?: boolean;
+  hasCustomServices?: boolean;
 }
 
 const SECONDARY_LINKS: Array<{ id: StorefrontView; label: string }> = [
@@ -67,6 +69,8 @@ export function SiteHeader({
   cartTotalItems,
   cartSubtotalPkr,
   onOpenCartDrawer,
+  hasDoctors = false,
+  hasCustomServices = false,
 }: SiteHeaderProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
@@ -338,6 +342,32 @@ export function SiteHeader({
             </div>
 
             <div className="flex items-center gap-1 shrink-0">
+              {hasDoctors && (
+                <button
+                  type="button"
+                  onClick={() => onSelectView("doctors")}
+                  className={`px-2.5 h-8 rounded-lg text-xs whitespace-nowrap transition ${
+                    activeView === "doctors"
+                      ? "font-bold sf-text-brand bg-white border border-[#CBD5E1]"
+                      : "font-bold text-emerald-700 hover:bg-emerald-50"
+                  }`}
+                >
+                  Doctors
+                </button>
+              )}
+              {hasCustomServices && (
+                <button
+                  type="button"
+                  onClick={() => onSelectView("services")}
+                  className={`px-2.5 h-8 rounded-lg text-xs whitespace-nowrap transition ${
+                    activeView === "services"
+                      ? "font-bold sf-text-brand bg-white border border-[#CBD5E1]"
+                      : "font-bold text-sky-700 hover:bg-sky-50"
+                  }`}
+                >
+                  Lab &amp; Services
+                </button>
+              )}
               {SECONDARY_LINKS.map((item) => {
                 const active = activeView === item.id;
                 return (
@@ -411,6 +441,10 @@ export function SiteHeader({
                 {[
                   { id: "home" as StorefrontView, label: "Home" },
                   { id: "shop" as StorefrontView, label: "All Medicines Catalog" },
+                  ...(hasDoctors ? [{ id: "doctors" as StorefrontView, label: "Clinic & Doctors" }] : []),
+                  ...(hasCustomServices
+                    ? [{ id: "services" as StorefrontView, label: "Lab Tests & Services" }]
+                    : []),
                   { id: "track" as StorefrontView, label: "Track Online Order" },
                   ...SECONDARY_LINKS,
                 ].map((item) => {

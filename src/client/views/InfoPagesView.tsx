@@ -26,6 +26,7 @@ import {
   WhatsAppIcon,
 } from "../components/Icons";
 import { downloadStorefront80mmInvoicePdf } from "../utils/invoicePdf80mm";
+import { submitOrderReview } from "../api";
 
 interface OrderTrackingViewProps {
   sf: StorefrontPublicContext;
@@ -55,7 +56,15 @@ export function OrderTrackingView({
   onSelectView,
 }: OrderTrackingViewProps) {
   const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const [reviewRating, setReviewRating] = useState<number>(5);
+  const [reviewName, setReviewName] = useState<string>("");
+  const [reviewComment, setReviewComment] = useState<string>("");
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  const [reviewFeedbackMsg, setReviewFeedbackMsg] = useState<string | null>(null);
+  const [submittedReview, setSubmittedReview] = useState<any | null>(null);
   const whatsappDigits = (sf.whatsapp_phone || sf.contact_phone || "").replace(/[^0-9]/g, "");
+
+  const activeReview = submittedReview || trackedOrder?.existing_review || null;
 
   const stageGuide = [
     {
@@ -362,6 +371,150 @@ export function OrderTrackingView({
                   </div>
                 </div>
               )}
+
+              {/* Verified Customer Order Feedback & Review Box */}
+              <div className="rounded-2xl border border-[#CBD5E1] bg-[#F8FAFC] p-5 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <span className="text-[11px] font-extrabold uppercase tracking-wider sf-text-brand block">
+                      Verified Order Feedback
+                    </span>
+                    <h3 className="sf-heading text-base font-extrabold text-[#0F172A]">
+                      Rate Your Experience with {displayName}
+                    </h3>
+                  </div>
+                  {activeReview && (
+                    <span
+                      className={`px-2.5 py-1 rounded-full text-[11px] font-bold border ${
+                        activeReview.status === "published"
+                          ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                          : "bg-amber-50 text-amber-800 border-amber-200"
+                      }`}
+                    >
+                      {activeReview.status === "published"
+                        ? "Published on Website"
+                        : "Submitted — Awaiting Owner Publish"}
+                    </span>
+                  )}
+                </div>
+
+                {activeReview ? (
+                  <div className="rounded-xl bg-white border border-[#E2E8F0] p-4 space-y-2">
+                    <div className="flex items-center gap-1 text-amber-500 text-base leading-none">
+                      {[1, 2, 3, 4, 5].map((star) => (
+                        <span key={star}>{star <= Number(activeReview.rating || 5) ? "★" : "☆"}</span>
+                      ))}
+                      <span className="ml-2 text-xs font-bold text-[#0F172A]">
+                        {activeReview.customer_name || trackedOrder.customer_name}
+                      </span>
+                    </div>
+                    <p className="text-sm text-[#334155] leading-relaxed">{activeReview.comment}</p>
+                    {activeReview.owner_reply && (
+                      <div className="mt-2 pt-2 border-t border-[#F1F5F9] text-xs text-[#475569]">
+                        <strong className="text-[#0F172A]">{displayName} replied:</strong>{" "}
+                        {activeReview.owner_reply}
+                      </div>
+                    )}
+                    {reviewFeedbackMsg && (
+                      <p className="text-xs font-semibold text-emerald-700 pt-1">
+                        {reviewFeedbackMsg}
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <form
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      setReviewFeedbackMsg(null);
+                      if (reviewComment.trim().length < 4) {
+                        setReviewFeedbackMsg("Please write a short review (at least 4 characters).");
+                        return;
+                      }
+                      setReviewSubmitting(true);
+                      try {
+                        const res = await submitOrderReview({
+                          order_number: trackedOrder.order_number,
+                          rating: reviewRating,
+                          comment: reviewComment.trim(),
+                          customer_name:
+                            reviewName.trim() || trackedOrder.customer_name || "Verified Customer",
+                        });
+                        if (res.ok && res.review) {
+                          setSubmittedReview(res.review);
+                          setReviewFeedbackMsg(
+                            res.message || "Thank you! Your review was submitted."
+                          );
+                        } else {
+                          setReviewFeedbackMsg(res.message || "Could not submit review right now.");
+                        }
+                      } catch {
+                        setReviewFeedbackMsg("Network error while submitting your feedback.");
+                      } finally {
+                        setReviewSubmitting(false);
+                      }
+                    }}
+                    className="space-y-3"
+                  >
+                    <div className="flex flex-wrap items-center gap-3">
+                      <span className="text-xs font-bold text-[#334155]">Your Rating:</span>
+                      <div className="inline-flex items-center gap-1">
+                        {[1, 2, 3, 4, 5].map((star) => (
+                          <button
+                            key={star}
+                            type="button"
+                            onClick={() => setReviewRating(star)}
+                            aria-label={`Rate ${star} stars`}
+                            className={`text-2xl leading-none transition-transform hover:scale-110 ${
+                              star <= reviewRating ? "text-amber-500" : "text-slate-300"
+                            }`}
+                          >
+                            ★
+                          </button>
+                        ))}
+                      </div>
+                      <span className="text-xs font-semibold text-[#64748B]">
+                        {reviewRating} / 5
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <input
+                        type="text"
+                        value={reviewName}
+                        onChange={(e) => setReviewName(e.target.value)}
+                        placeholder={trackedOrder.customer_name || "Your name (optional)"}
+                        className="h-10 rounded-xl sf-input px-3 text-xs sm:text-sm"
+                      />
+                      <input
+                        type="text"
+                        required
+                        value={reviewComment}
+                        onChange={(e) => setReviewComment(e.target.value)}
+                        placeholder="How was delivery speed, packaging & medicine quality?"
+                        className="sm:col-span-2 h-10 rounded-xl sf-input px-3 text-xs sm:text-sm"
+                      />
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      {reviewFeedbackMsg ? (
+                        <p className="text-xs font-semibold text-rose-600">{reviewFeedbackMsg}</p>
+                      ) : (
+                        <p className="text-[11px] text-[#64748B]">
+                          Your feedback goes directly to {displayName} and appears on the website once published.
+                        </p>
+                      )}
+                      <button
+                        type="submit"
+                        disabled={reviewSubmitting}
+                        data-testid="submit-order-review-btn"
+                        className="h-10 px-5 rounded-xl sf-btn-primary text-xs font-bold shrink-0"
+                      >
+                        {reviewSubmitting ? "Submitting…" : "Submit Verified Review"}
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </div>
             </div>
           )}
         </div>

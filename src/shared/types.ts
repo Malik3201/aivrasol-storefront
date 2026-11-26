@@ -453,3 +453,72 @@ export interface CursorPaginatedResult<T> {
   next_cursor: string | null;
   has_more: boolean;
 }
+
+
+export interface StorefrontReviewRecord {
+  id: string;
+  storefront_id: string;
+  pharmacy_id: string;
+  order_id: string | null;
+  order_number: string;
+  customer_name: string;
+  rating: number;
+  comment: string;
+  status: "pending" | "published" | "hidden";
+  owner_reply: string | null;
+  published_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StorefrontDoctorRecord {
+  id: string;
+  storefront_id: string;
+  pharmacy_id: string;
+  name: string;
+  qualification: string | null;
+  specialization: string | null;
+  timings: string | null;
+  days_available: string | null;
+  consultation_fee_pkr: number;
+  experience_years: number | null;
+  room_or_clinic_note: string | null;
+  bio: string | null;
+  booking_phone: string | null;
+  photo_url: string | null;
+  media_id: string | null;
+  sort_order: number;
+  is_active: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StorefrontCustomServiceItem {
+  name: string;
+  price_pkr: number;
+  sample_type?: string;
+  report_time?: string;
+  note?: string;
+}
+
+export interface StorefrontCustomServiceRecord {
+  id: string;
+  storefront_id: string;
+  pharmacy_id: string;
+  title: string;
+  service_type: "lab_tests" | "home_care" | "clinic" | "vaccination" | "custom" | string;
+  subtitle: string | null;
+  description: string | null;
+  image_url: string | null;
+  media_id: string | null;
+  timings: string | null;
+  home_service_available: boolean | number;
+  starting_price_pkr: number | null;
+  booking_phone: string | null;
+  items_json?: string;
+  items: StorefrontCustomServiceItem[];
+  sort_order: number;
+  is_active: number;
+  created_at: string;
+  updated_at: string;
+}

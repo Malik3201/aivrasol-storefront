@@ -193,8 +193,32 @@ export function SmartSearchBar({
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<SearchSuggestionsResponse | null>(null);
   const [activeIndex, setActiveIndex] = useState<number>(-1);
+  const [recentSearches, setRecentSearches] = useState<string[]>(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const raw = localStorage.getItem("sf_recent_searches");
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed.slice(0, 5) : [];
+    } catch {
+      return [];
+    }
+  });
   const containerRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+
+  const saveRecentSearch = (term: string) => {
+    const cleaned = term.trim();
+    if (cleaned.length < 2) return;
+    setRecentSearches((prev) => {
+      const next = [cleaned, ...prev.filter((x) => x.toLowerCase() !== cleaned.toLowerCase())].slice(0, 5);
+      try {
+        localStorage.setItem("sf_recent_searches", JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  };
 
   // Close dropdown on click outside
   useEffect(() => {
@@ -249,6 +273,7 @@ export function SmartSearchBar({
   ];
 
   const showDropdown = open && value.trim().length >= 2;
+  const showRecentDropdown = open && value.trim().length < 2 && recentSearches.length > 0;
 
   const isHero = size === "hero";
   const isCatalog = size === "catalog";
@@ -258,6 +283,7 @@ export function SmartSearchBar({
       <form
         onSubmit={(e) => {
           e.preventDefault();
+          saveRecentSearch(value);
           setOpen(false);
           onSubmit(value);
         }}
@@ -345,6 +371,47 @@ export function SmartSearchBar({
           </button>
         )}
       </form>
+
+      {/* Recent Searches Dropdown (Quick Re-Search Like MeriPharmacy) */}
+      {showRecentDropdown && (
+        <div className="absolute left-0 right-0 top-[calc(100%+6px)] z-50 bg-white rounded-xl border border-[#CBD5E1] shadow-lg overflow-hidden p-3 space-y-2">
+          <div className="flex items-center justify-between text-[11px] font-bold uppercase tracking-wider text-[#64748B]">
+            <span>Recent Searches</span>
+            <button
+              type="button"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                setRecentSearches([]);
+                try {
+                  localStorage.removeItem("sf_recent_searches");
+                } catch {
+                  // ignore
+                }
+              }}
+              className="text-rose-600 hover:underline normal-case font-semibold"
+            >
+              Clear
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {recentSearches.map((term) => (
+              <button
+                key={term}
+                type="button"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  onChange(term);
+                  setOpen(false);
+                  onSubmit(term);
+                }}
+                className="px-2.5 py-1 rounded-lg bg-[#F1F5F9] hover:bg-[var(--sf-primary-soft)] text-xs font-semibold text-[#334155] hover:text-[var(--sf-primary-ink)] transition"
+              >
+                {term}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Solid E-Commerce Autocomplete & Generic-Salt Alternatives Dropdown */}
       {showDropdown && (

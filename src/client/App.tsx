@@ -4,16 +4,22 @@ import type {
   PublicStorefrontProduct,
   StorefrontBannerRecord,
   StorefrontCategoryRecord,
+  StorefrontCustomServiceRecord,
+  StorefrontDoctorRecord,
   StorefrontOrderRecord,
   StorefrontPromotionRecord,
+  StorefrontReviewRecord,
 } from "../shared/types";
 import {
   fetchPublicBanners,
   fetchPublicCategories,
+  fetchPublicCustomServices,
   fetchPublicDeliveryConfig,
+  fetchPublicDoctors,
   fetchPublicProductDetails,
   fetchPublicProducts,
   fetchPublicPromotions,
+  fetchPublicReviews,
   fetchStorefrontResolution,
   getEffectiveTargetHost,
   submitPublicOrder,
@@ -45,6 +51,7 @@ import {
 import type { CartItem, ResolvedSellingUnit, StorefrontView } from "./types-ui";
 import { CatalogView } from "./views/CatalogView";
 import { CheckoutView } from "./views/CheckoutView";
+import { CustomServicesView, DoctorsView } from "./views/ClinicAndServicesView";
 import { HomeView } from "./views/HomeView";
 import { InfoPagesView, OrderTrackingView } from "./views/InfoPagesView";
 import { ProductDetailView, QuickProductModal } from "./views/ProductDetailView";
@@ -229,6 +236,13 @@ export function App() {
   const [banners, setBanners] = useState<StorefrontBannerRecord[]>([]);
   const [promotions, setPromotions] = useState<StorefrontPromotionRecord[]>([]);
   const [deliveryConfig, setDeliveryConfig] = useState<any>(null);
+  const [reviews, setReviews] = useState<StorefrontReviewRecord[]>([]);
+  const [reviewsSummary, setReviewsSummary] = useState<{ count: number; average_rating: number }>({
+    count: 0,
+    average_rating: 0,
+  });
+  const [doctors, setDoctors] = useState<StorefrontDoctorRecord[]>([]);
+  const [customServices, setCustomServices] = useState<StorefrontCustomServiceRecord[]>([]);
 
   // Navigation View State (Hydrated from URL so Reload & Browser Back preserve exact route)
   const [activeView, setActiveView] = useState<StorefrontView>(initialRoute.view);
@@ -663,32 +677,49 @@ export function App() {
             initF.inStockOnly ||
             initF.sortBy !== "featured";
 
-          const [cats, bans, promos, deliv, initialProds, homeCatalogRes, initialProdDetail] =
-            await Promise.all([
-              fetchPublicCategories(),
-              fetchPublicBanners(),
-              fetchPublicPromotions(),
-              fetchPublicDeliveryConfig(),
-              fetchPublicProducts({
-                category: initF.selectedCategory,
-                search: initF.searchQuery,
-                inStockOnly: initF.inStockOnly,
-                sort: initF.sortBy,
-                limit: 24,
-              }),
-              hasInitialUrlFilters
-                ? fetchPublicProducts({ limit: 24, sort: "featured" })
-                : Promise.resolve(null),
-              initialRoute.view === "product" && initialRoute.productSlug
-                ? fetchPublicProductDetails(initialRoute.productSlug)
-                : Promise.resolve(null),
-            ]);
+          const [
+            cats,
+            bans,
+            promos,
+            deliv,
+            initialProds,
+            homeCatalogRes,
+            initialProdDetail,
+            reviewsRes,
+            doctorsList,
+            servicesList,
+          ] = await Promise.all([
+            fetchPublicCategories(),
+            fetchPublicBanners(),
+            fetchPublicPromotions(),
+            fetchPublicDeliveryConfig(),
+            fetchPublicProducts({
+              category: initF.selectedCategory,
+              search: initF.searchQuery,
+              inStockOnly: initF.inStockOnly,
+              sort: initF.sortBy,
+              limit: 24,
+            }),
+            hasInitialUrlFilters
+              ? fetchPublicProducts({ limit: 24, sort: "featured" })
+              : Promise.resolve(null),
+            initialRoute.view === "product" && initialRoute.productSlug
+              ? fetchPublicProductDetails(initialRoute.productSlug)
+              : Promise.resolve(null),
+            fetchPublicReviews(),
+            fetchPublicDoctors(),
+            fetchPublicCustomServices(),
+          ]);
 
           if (cancelled) return;
           setCategories(cats);
           setBanners(bans);
           setPromotions(promos);
           setDeliveryConfig(deliv);
+          setReviews(reviewsRes.reviews || []);
+          setReviewsSummary(reviewsRes.summary || { count: 0, average_rating: 0 });
+          setDoctors(doctorsList || []);
+          setCustomServices(servicesList || []);
           setProducts(initialProds.items);
           setSearchGenericAlts(initialProds.generic_alternatives || []);
           setSearchMatchedGeneric(initialProds.matched_generic || null);
@@ -767,6 +798,10 @@ export function App() {
       document.title = `Checkout — ${resolvedName}`;
     } else if (activeView === "track") {
       document.title = `Track Order — ${resolvedName}`;
+    } else if (activeView === "doctors") {
+      document.title = `Doctors & Consultation — ${resolvedName}`;
+    } else if (activeView === "services") {
+      document.title = `Lab Tests & Services — ${resolvedName}`;
     } else {
       document.title = baseTitle;
     }
@@ -1677,6 +1712,8 @@ export function App() {
         cartTotalItems={cartCalculations.totalItems}
         cartSubtotalPkr={cartCalculations.subtotalPkr}
         onOpenCartDrawer={() => setCartDrawerOpen(true)}
+        hasDoctors={doctors.length > 0}
+        hasCustomServices={customServices.length > 0}
       />
 
       {/* Subtle Counter Sync Freshness Notice (Only when applicable) */}
@@ -1741,6 +1778,10 @@ export function App() {
                 void handleTrackOrder(undefined, cleaned);
               }
             }}
+            reviews={reviews}
+            reviewsSummary={reviewsSummary}
+            doctors={doctors}
+            customServices={customServices}
             renderProductCard={renderProductCard}
           />
         </main>
@@ -1921,6 +1962,26 @@ export function App() {
           trackedOrder={trackedOrder}
           trackingError={trackingError}
           onSubmitTrack={(e) => void handleTrackOrder(e)}
+          onSelectView={handleSelectView}
+        />
+      )}
+
+      {/* VIEW 4B: OPTIONAL DOCTORS DIRECTORY */}
+      {activeView === "doctors" && (
+        <DoctorsView
+          sf={sf}
+          displayName={displayName}
+          doctors={doctors}
+          onSelectView={handleSelectView}
+        />
+      )}
+
+      {/* VIEW 4C: OPTIONAL CUSTOM SERVICES & DIAGNOSTIC LAB TESTS */}
+      {activeView === "services" && (
+        <CustomServicesView
+          sf={sf}
+          displayName={displayName}
+          services={customServices}
           onSelectView={handleSelectView}
         />
       )}

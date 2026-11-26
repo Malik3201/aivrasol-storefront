@@ -3831,6 +3831,370 @@ export async function handleManageRoutes(
     });
   }
 
+  // ── 14b. Customer Order Reviews Moderation (`/reviews`, `/reviews/publish-all`, `/reviews/:reviewId`) ──
+  if (subPath === "/reviews" && req.method === "GET") {
+    try {
+      const { results } = await env.DB.prepare(
+        `SELECT * FROM storefront_reviews
+         WHERE storefront_id = ? AND pharmacy_id = ?
+         ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'published' THEN 1 ELSE 2 END, created_at DESC
+         LIMIT 150`
+      )
+        .bind(sf.id, sf.pharmacy_id)
+        .all();
+      return new Response(JSON.stringify({ ok: true, reviews: results || [] }), {
+        status: 200,
+        headers,
+      });
+    } catch {
+      return new Response(JSON.stringify({ ok: true, reviews: [] }), { status: 200, headers });
+    }
+  }
+
+  if (subPath === "/reviews/publish-all" && req.method === "POST") {
+    const nowIso = new Date().toISOString();
+    const upd = await env.DB.prepare(
+      `UPDATE storefront_reviews
+       SET status = 'published', published_at = COALESCE(published_at, ?), updated_at = ?
+       WHERE storefront_id = ? AND pharmacy_id = ? AND status = 'pending'`
+    )
+      .bind(nowIso, nowIso, sf.id, sf.pharmacy_id)
+      .run();
+
+    await env.DB.prepare(
+      `UPDATE storefronts SET config_version = COALESCE(config_version, 1) + 1, updated_at = ? WHERE id = ? AND pharmacy_id = ?`
+    )
+      .bind(nowIso, sf.id, sf.pharmacy_id)
+      .run();
+
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        published_count: Number((upd as any)?.meta?.changes || 0),
+      }),
+      { status: 200, headers }
+    );
+  }
+
+  if (subPath.startsWith("/reviews/") && req.method === "PATCH") {
+    const reviewId = decodeURIComponent(subPath.slice("/reviews/".length));
+    const body: any = await req.json();
+    const nowIso = new Date().toISOString();
+    const nextStatus =
+      body.status === "published" || body.status === "hidden" || body.status === "pending"
+        ? body.status
+        : "published";
+    const ownerReply =
+      body.owner_reply !== undefined ? String(body.owner_reply || "").trim().slice(0, 600) || null : undefined;
+
+    if (ownerReply !== undefined) {
+      await env.DB.prepare(
+        `UPDATE storefront_reviews
+         SET status = ?, owner_reply = ?, published_at = CASE WHEN ? = 'published' THEN COALESCE(published_at, ?) ELSE published_at END, updated_at = ?
+         WHERE id = ? AND storefront_id = ? AND pharmacy_id = ?`
+      )
+        .bind(nextStatus, ownerReply, nextStatus, nowIso, nowIso, reviewId, sf.id, sf.pharmacy_id)
+        .run();
+    } else {
+      await env.DB.prepare(
+        `UPDATE storefront_reviews
+         SET status = ?, published_at = CASE WHEN ? = 'published' THEN COALESCE(published_at, ?) ELSE published_at END, updated_at = ?
+         WHERE id = ? AND storefront_id = ? AND pharmacy_id = ?`
+      )
+        .bind(nextStatus, nextStatus, nowIso, nowIso, reviewId, sf.id, sf.pharmacy_id)
+        .run();
+    }
+
+    await env.DB.prepare(
+      `UPDATE storefronts SET config_version = COALESCE(config_version, 1) + 1, updated_at = ? WHERE id = ? AND pharmacy_id = ?`
+    )
+      .bind(nowIso, sf.id, sf.pharmacy_id)
+      .run();
+
+    return new Response(JSON.stringify({ ok: true, id: reviewId, status: nextStatus }), {
+      status: 200,
+      headers,
+    });
+  }
+
+  if (subPath.startsWith("/reviews/") && req.method === "DELETE") {
+    const reviewId = decodeURIComponent(subPath.slice("/reviews/".length));
+    const nowIso = new Date().toISOString();
+    await env.DB.prepare(
+      "DELETE FROM storefront_reviews WHERE id = ? AND storefront_id = ? AND pharmacy_id = ?"
+    )
+      .bind(reviewId, sf.id, sf.pharmacy_id)
+      .run();
+    await env.DB.prepare(
+      `UPDATE storefronts SET config_version = COALESCE(config_version, 1) + 1, updated_at = ? WHERE id = ? AND pharmacy_id = ?`
+    )
+      .bind(nowIso, sf.id, sf.pharmacy_id)
+      .run();
+    return new Response(JSON.stringify({ ok: true, deleted_id: reviewId }), {
+      status: 200,
+      headers,
+    });
+  }
+
+  // ── 14c. Optional In-House Doctors (`/doctors`, `/doctors/:doctorId`) ──
+  if (subPath === "/doctors" && req.method === "GET") {
+    try {
+      const { results } = await env.DB.prepare(
+        `SELECT * FROM storefront_doctors
+         WHERE storefront_id = ? AND pharmacy_id = ?
+         ORDER BY sort_order ASC, name ASC`
+      )
+        .bind(sf.id, sf.pharmacy_id)
+        .all();
+      return new Response(JSON.stringify({ ok: true, doctors: results || [] }), {
+        status: 200,
+        headers,
+      });
+    } catch {
+      return new Response(JSON.stringify({ ok: true, doctors: [] }), { status: 200, headers });
+    }
+  }
+
+  if (subPath === "/doctors" && req.method === "PUT") {
+    const body: any = await req.json();
+    const nowIso = new Date().toISOString();
+    const docId = body.id ? String(body.id).trim() : `sfdoc_${crypto.randomUUID()}`;
+    const name = String(body.name || "").trim();
+    if (!name) {
+      return new Response(
+        JSON.stringify({ ok: false, message: "Doctor name is required." }),
+        { status: 400, headers }
+      );
+    }
+
+    await env.DB.prepare(
+      `INSERT INTO storefront_doctors (
+         id, storefront_id, pharmacy_id, name, qualification, specialization, timings,
+         days_available, consultation_fee_pkr, experience_years, room_or_clinic_note,
+         bio, booking_phone, photo_url, media_id, sort_order, is_active, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         name = excluded.name,
+         qualification = excluded.qualification,
+         specialization = excluded.specialization,
+         timings = excluded.timings,
+         days_available = excluded.days_available,
+         consultation_fee_pkr = excluded.consultation_fee_pkr,
+         experience_years = excluded.experience_years,
+         room_or_clinic_note = excluded.room_or_clinic_note,
+         bio = excluded.bio,
+         booking_phone = excluded.booking_phone,
+         photo_url = excluded.photo_url,
+         media_id = excluded.media_id,
+         sort_order = excluded.sort_order,
+         is_active = excluded.is_active,
+         updated_at = excluded.updated_at`
+    )
+      .bind(
+        docId,
+        sf.id,
+        sf.pharmacy_id,
+        name,
+        body.qualification ? String(body.qualification).trim() : null,
+        body.specialization ? String(body.specialization).trim() : null,
+        body.timings ? String(body.timings).trim() : null,
+        body.days_available ? String(body.days_available).trim() : null,
+        Math.max(0, Number(body.consultation_fee_pkr || 0)),
+        body.experience_years !== undefined && body.experience_years !== "" && body.experience_years !== null
+          ? Math.max(0, Math.floor(Number(body.experience_years)))
+          : null,
+        body.room_or_clinic_note ? String(body.room_or_clinic_note).trim() : null,
+        body.bio ? String(body.bio).trim() : null,
+        body.booking_phone ? String(body.booking_phone).trim() : null,
+        body.photo_url ? String(body.photo_url).trim() : null,
+        body.media_id ? String(body.media_id).trim() : null,
+        Number(body.sort_order || 0),
+        body.is_active === false || body.is_active === 0 ? 0 : 1,
+        nowIso,
+        nowIso
+      )
+      .run();
+
+    await env.DB.prepare(
+      `UPDATE storefronts SET config_version = COALESCE(config_version, 1) + 1, updated_at = ? WHERE id = ? AND pharmacy_id = ?`
+    )
+      .bind(nowIso, sf.id, sf.pharmacy_id)
+      .run();
+
+    const { results } = await env.DB.prepare(
+      "SELECT * FROM storefront_doctors WHERE storefront_id = ? AND pharmacy_id = ? ORDER BY sort_order ASC, name ASC"
+    )
+      .bind(sf.id, sf.pharmacy_id)
+      .all();
+
+    return new Response(JSON.stringify({ ok: true, id: docId, doctors: results || [] }), {
+      status: 200,
+      headers,
+    });
+  }
+
+  if (subPath.startsWith("/doctors/") && req.method === "DELETE") {
+    const docId = decodeURIComponent(subPath.slice("/doctors/".length));
+    const nowIso = new Date().toISOString();
+    await env.DB.prepare(
+      "DELETE FROM storefront_doctors WHERE id = ? AND storefront_id = ? AND pharmacy_id = ?"
+    )
+      .bind(docId, sf.id, sf.pharmacy_id)
+      .run();
+    await env.DB.prepare(
+      `UPDATE storefronts SET config_version = COALESCE(config_version, 1) + 1, updated_at = ? WHERE id = ? AND pharmacy_id = ?`
+    )
+      .bind(nowIso, sf.id, sf.pharmacy_id)
+      .run();
+    return new Response(JSON.stringify({ ok: true, deleted_id: docId }), { status: 200, headers });
+  }
+
+  // ── 14d. Custom Pharmacy Services & Diagnostic Lab Tests (`/services`, `/services/:serviceId`) ──
+  if (subPath === "/services" && req.method === "GET") {
+    try {
+      const { results } = await env.DB.prepare(
+        `SELECT * FROM storefront_custom_services
+         WHERE storefront_id = ? AND pharmacy_id = ?
+         ORDER BY sort_order ASC, title ASC`
+      )
+        .bind(sf.id, sf.pharmacy_id)
+        .all<Record<string, unknown>>();
+      const services = (results || []).map((row) => {
+        let items: any[] = [];
+        try {
+          const parsed = JSON.parse(String(row.items_json || "[]"));
+          if (Array.isArray(parsed)) items = parsed;
+        } catch {
+          items = [];
+        }
+        return { ...row, home_service_available: Number(row.home_service_available || 0) === 1, items };
+      });
+      return new Response(JSON.stringify({ ok: true, services }), { status: 200, headers });
+    } catch {
+      return new Response(JSON.stringify({ ok: true, services: [] }), { status: 200, headers });
+    }
+  }
+
+  if (subPath === "/services" && req.method === "PUT") {
+    const body: any = await req.json();
+    const nowIso = new Date().toISOString();
+    const serviceId = body.id ? String(body.id).trim() : `sfsvc_${crypto.randomUUID()}`;
+    const title = String(body.title || "").trim();
+    if (!title) {
+      return new Response(
+        JSON.stringify({ ok: false, message: "Service title is required." }),
+        { status: 400, headers }
+      );
+    }
+
+    const sanitizedItems = Array.isArray(body.items)
+      ? body.items
+          .filter((it: any) => it && String(it.name || "").trim())
+          .map((it: any) => ({
+            name: String(it.name).trim(),
+            price_pkr: Math.max(0, Number(it.price_pkr || 0)),
+            sample_type: it.sample_type ? String(it.sample_type).trim() : undefined,
+            report_time: it.report_time ? String(it.report_time).trim() : undefined,
+            note: it.note ? String(it.note).trim() : undefined,
+          }))
+      : [];
+
+    const startingPrice =
+      body.starting_price_pkr !== undefined && body.starting_price_pkr !== "" && body.starting_price_pkr !== null
+        ? Math.max(0, Number(body.starting_price_pkr))
+        : sanitizedItems.length > 0
+        ? Math.min(...sanitizedItems.map((i: any) => Number(i.price_pkr || 0)))
+        : null;
+
+    await env.DB.prepare(
+      `INSERT INTO storefront_custom_services (
+         id, storefront_id, pharmacy_id, title, service_type, subtitle, description,
+         image_url, media_id, timings, home_service_available, starting_price_pkr,
+         booking_phone, items_json, sort_order, is_active, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         title = excluded.title,
+         service_type = excluded.service_type,
+         subtitle = excluded.subtitle,
+         description = excluded.description,
+         image_url = excluded.image_url,
+         media_id = excluded.media_id,
+         timings = excluded.timings,
+         home_service_available = excluded.home_service_available,
+         starting_price_pkr = excluded.starting_price_pkr,
+         booking_phone = excluded.booking_phone,
+         items_json = excluded.items_json,
+         sort_order = excluded.sort_order,
+         is_active = excluded.is_active,
+         updated_at = excluded.updated_at`
+    )
+      .bind(
+        serviceId,
+        sf.id,
+        sf.pharmacy_id,
+        title,
+        String(body.service_type || "lab_tests").trim(),
+        body.subtitle ? String(body.subtitle).trim() : null,
+        body.description ? String(body.description).trim() : null,
+        body.image_url ? String(body.image_url).trim() : null,
+        body.media_id ? String(body.media_id).trim() : null,
+        body.timings ? String(body.timings).trim() : null,
+        body.home_service_available ? 1 : 0,
+        startingPrice,
+        body.booking_phone ? String(body.booking_phone).trim() : null,
+        JSON.stringify(sanitizedItems),
+        Number(body.sort_order || 0),
+        body.is_active === false || body.is_active === 0 ? 0 : 1,
+        nowIso,
+        nowIso
+      )
+      .run();
+
+    await env.DB.prepare(
+      `UPDATE storefronts SET config_version = COALESCE(config_version, 1) + 1, updated_at = ? WHERE id = ? AND pharmacy_id = ?`
+    )
+      .bind(nowIso, sf.id, sf.pharmacy_id)
+      .run();
+
+    const { results } = await env.DB.prepare(
+      "SELECT * FROM storefront_custom_services WHERE storefront_id = ? AND pharmacy_id = ? ORDER BY sort_order ASC, title ASC"
+    )
+      .bind(sf.id, sf.pharmacy_id)
+      .all<Record<string, unknown>>();
+
+    const services = (results || []).map((row) => {
+      let items: any[] = [];
+      try {
+        const parsed = JSON.parse(String(row.items_json || "[]"));
+        if (Array.isArray(parsed)) items = parsed;
+      } catch {
+        items = [];
+      }
+      return { ...row, home_service_available: Number(row.home_service_available || 0) === 1, items };
+    });
+
+    return new Response(JSON.stringify({ ok: true, id: serviceId, services }), {
+      status: 200,
+      headers,
+    });
+  }
+
+  if (subPath.startsWith("/services/") && req.method === "DELETE") {
+    const serviceId = decodeURIComponent(subPath.slice("/services/".length));
+    const nowIso = new Date().toISOString();
+    await env.DB.prepare(
+      "DELETE FROM storefront_custom_services WHERE id = ? AND storefront_id = ? AND pharmacy_id = ?"
+    )
+      .bind(serviceId, sf.id, sf.pharmacy_id)
+      .run();
+    await env.DB.prepare(
+      `UPDATE storefronts SET config_version = COALESCE(config_version, 1) + 1, updated_at = ? WHERE id = ? AND pharmacy_id = ?`
+    )
+      .bind(nowIso, sf.id, sf.pharmacy_id)
+      .run();
+    return new Response(JSON.stringify({ ok: true, deleted_id: serviceId }), { status: 200, headers });
+  }
+
   // ── 15. Usage Summary (`/usage`) ──
   if (subPath === "/usage" && req.method === "GET") {
     const [dailyRes, mediaRow] = await Promise.all([

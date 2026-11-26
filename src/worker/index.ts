@@ -87,6 +87,21 @@ export async function injectStorefrontSeoMetadata(
     const canonicalPath = subPath === "/" ? "" : subPath;
     const canonicalUrl = `${originUrl}${canonicalPath}`;
 
+    let reviewAggregate: { count: number; avg: number } | null = null;
+    try {
+      const rv = await env.DB.prepare(
+        `SELECT COUNT(*) AS cnt, AVG(rating) AS avg_r FROM storefront_reviews
+         WHERE storefront_id = ? AND pharmacy_id = ? AND status = 'published'`
+      )
+        .bind(sf.id, sf.pharmacy_id)
+        .first<{ cnt: number; avg_r: number | null }>();
+      if (rv && Number(rv.cnt || 0) > 0 && rv.avg_r) {
+        reviewAggregate = { count: Number(rv.cnt), avg: Number(Number(rv.avg_r).toFixed(1)) };
+      }
+    } catch {
+      reviewAggregate = null;
+    }
+
     const schemaGraph: Array<Record<string, unknown>> = [
       {
         "@type": ["Pharmacy", "MedicalBusiness", "LocalBusiness"],
@@ -98,6 +113,17 @@ export async function injectStorefrontSeoMetadata(
         ...(branding?.logo_url ? { logo: toAbsMediaUrl(branding.logo_url) } : {}),
         ...(sf.contact_phone ? { telephone: sf.contact_phone } : {}),
         ...(sf.contact_email ? { email: sf.contact_email } : {}),
+        ...(reviewAggregate
+          ? {
+              aggregateRating: {
+                "@type": "AggregateRating",
+                ratingValue: reviewAggregate.avg,
+                reviewCount: reviewAggregate.count,
+                bestRating: 5,
+                worstRating: 1,
+              },
+            }
+          : {}),
         priceRange: "PKR",
         address: {
           "@type": "PostalAddress",

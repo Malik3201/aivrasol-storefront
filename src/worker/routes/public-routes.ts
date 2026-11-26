@@ -2038,12 +2038,27 @@ export async function handlePublicRoutes(
 
     const effectiveStatus = resolveEffectiveOrderStatus(ord as any);
 
+    let existingReview: Record<string, unknown> | null = null;
+    try {
+      existingReview = await env.DB.prepare(
+        `SELECT id, rating, comment, customer_name, status, owner_reply, created_at
+         FROM storefront_reviews
+         WHERE storefront_id = ? AND pharmacy_id = ? AND UPPER(order_number) = ?
+         LIMIT 1`
+      )
+        .bind(sf.id, sf.pharmacy_id, orderNumber)
+        .first<Record<string, unknown>>();
+    } catch {
+      existingReview = null;
+    }
+
     return new Response(
       JSON.stringify({
         ok: true,
         order: {
           id: ord.id,
           order_number: ord.order_number,
+          existing_review: existingReview,
           status: effectiveStatus,
           payment_status:
             (ord as any).payment_status ||
@@ -2091,6 +2106,262 @@ export async function handlePublicRoutes(
   }
 
 
+
+  // 12a. GET /api/v1/public/reviews — Published Verified Order Reviews (Edge-Cached)
+  if (pathname === "/api/v1/public/reviews" && req.method === "GET") {
+    const edgeKey = buildTenantEdgeCacheKey(req, tenantEdgeScope);
+    const cached = await getEdgeCachedResponse(edgeKey);
+    if (cached) return cached;
+
+    try {
+      const [rowsRes, summaryRow] = await Promise.all([
+        env.DB.prepare(
+          `SELECT id, order_number, customer_name, rating, comment, owner_reply, published_at, created_at
+           FROM storefront_reviews
+           WHERE storefront_id = ? AND pharmacy_id = ? AND status = 'published'
+           ORDER BY COALESCE(published_at, created_at) DESC
+           LIMIT 30`
+        )
+          .bind(sf.id, sf.pharmacy_id)
+          .all<Record<string, unknown>>(),
+        env.DB.prepare(
+          `SELECT COUNT(*) AS review_count, AVG(rating) AS avg_rating
+           FROM storefront_reviews
+           WHERE storefront_id = ? AND pharmacy_id = ? AND status = 'published'`
+        )
+          .bind(sf.id, sf.pharmacy_id)
+          .first<{ review_count: number; avg_rating: number | null }>(),
+      ]);
+
+      const count = Number(summaryRow?.review_count || 0);
+      const averageRating =
+        count > 0 && summaryRow?.avg_rating ? Number(Number(summaryRow.avg_rating).toFixed(1)) : 0;
+
+      const res = new Response(
+        JSON.stringify({
+          ok: true,
+          reviews: rowsRes.results || [],
+          summary: { count, average_rating: averageRating },
+        }),
+        {
+          status: 200,
+          headers: buildResponseHeaders({
+            req,
+            storefrontId: sf.id,
+            configVersion: sf.config_version,
+            hostname: ctx.normalizedHostname,
+            cacheMaxAgeSec: 180,
+          }),
+        }
+      );
+      putEdgeCachedResponse(edgeKey, res, execCtx);
+      return res;
+    } catch {
+      return new Response(
+        JSON.stringify({ ok: true, reviews: [], summary: { count: 0, average_rating: 0 } }),
+        { status: 200, headers: buildResponseHeaders({ req, storefrontId: sf.id, isPrivate: true }) }
+      );
+    }
+  }
+
+  // 12b. POST /api/v1/public/reviews — Customer Verified Order Feedback Submission (Owner Moderated)
+  if (pathname === "/api/v1/public/reviews" && req.method === "POST") {
+    const privHeaders = buildResponseHeaders({ req, storefrontId: sf.id, isPrivate: true });
+    let body: any;
+    try {
+      body = await req.json();
+    } catch {
+      return new Response(JSON.stringify({ ok: false, error: "invalid_json" }), {
+        status: 400,
+        headers: privHeaders,
+      });
+    }
+
+    const orderNumber = String(body?.order_number || "").trim().toUpperCase();
+    const rating = Math.round(Number(body?.rating || 0));
+    const comment = String(body?.comment || "").trim().slice(0, 800);
+    const customDisplayName = String(body?.customer_name || "").trim().slice(0, 80);
+
+    if (!orderNumber) {
+      return new Response(
+        JSON.stringify({ ok: false, message: "Order reference number is required." }),
+        { status: 400, headers: privHeaders }
+      );
+    }
+    if (!Number.isFinite(rating) || rating < 1 || rating > 5) {
+      return new Response(
+        JSON.stringify({ ok: false, message: "Please select a star rating between 1 and 5." }),
+        { status: 400, headers: privHeaders }
+      );
+    }
+    if (comment.length < 4) {
+      return new Response(
+        JSON.stringify({ ok: false, message: "Please write a short feedback comment (at least 4 characters)." }),
+        { status: 400, headers: privHeaders }
+      );
+    }
+
+    const ord = await env.DB.prepare(
+      `SELECT id, order_number, customer_name
+       FROM storefront_orders
+       WHERE storefront_id = ? AND pharmacy_id = ? AND UPPER(order_number) = ?
+       LIMIT 1`
+    )
+      .bind(sf.id, sf.pharmacy_id, orderNumber)
+      .first<{ id: string; order_number: string; customer_name: string }>();
+
+    if (!ord) {
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          message: "Order reference not found on this pharmacy website.",
+        }),
+        { status: 404, headers: privHeaders }
+      );
+    }
+
+    const displayNameToStore = customDisplayName || ord.customer_name || "Verified Customer";
+    const nowIso = new Date().toISOString();
+    const reviewId = `sfrv_${crypto.randomUUID()}`;
+
+    await env.DB.prepare(
+      `INSERT INTO storefront_reviews (
+         id, storefront_id, pharmacy_id, order_id, order_number,
+         customer_name, rating, comment, status, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+       ON CONFLICT(storefront_id, order_number) DO UPDATE SET
+         customer_name = excluded.customer_name,
+         rating = excluded.rating,
+         comment = excluded.comment,
+         status = 'pending',
+         updated_at = excluded.updated_at`
+    )
+      .bind(
+        reviewId,
+        sf.id,
+        sf.pharmacy_id,
+        ord.id,
+        ord.order_number,
+        displayNameToStore,
+        rating,
+        comment,
+        nowIso,
+        nowIso
+      )
+      .run();
+
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        review: {
+          order_number: ord.order_number,
+          customer_name: displayNameToStore,
+          rating,
+          comment,
+          status: "pending",
+          created_at: nowIso,
+        },
+        message: "Thank you for your feedback! Your review has been sent to the pharmacy owner for publishing.",
+      }),
+      { status: 201, headers: privHeaders }
+    );
+  }
+
+  // 12c. GET /api/v1/public/doctors — Optional In-House Pharmacy Doctors (Edge-Cached)
+  if (pathname === "/api/v1/public/doctors" && req.method === "GET") {
+    const edgeKey = buildTenantEdgeCacheKey(req, tenantEdgeScope);
+    const cached = await getEdgeCachedResponse(edgeKey);
+    if (cached) return cached;
+
+    try {
+      const { results } = await env.DB.prepare(
+        `SELECT id, name, qualification, specialization, timings, days_available,
+                consultation_fee_pkr, experience_years, room_or_clinic_note, bio,
+                booking_phone, photo_url, sort_order
+         FROM storefront_doctors
+         WHERE storefront_id = ? AND pharmacy_id = ? AND is_active = 1
+         ORDER BY sort_order ASC, name ASC`
+      )
+        .bind(sf.id, sf.pharmacy_id)
+        .all<Record<string, unknown>>();
+
+      const res = new Response(
+        JSON.stringify({ ok: true, doctors: results || [] }),
+        {
+          status: 200,
+          headers: buildResponseHeaders({
+            req,
+            storefrontId: sf.id,
+            configVersion: sf.config_version,
+            hostname: ctx.normalizedHostname,
+            cacheMaxAgeSec: 180,
+          }),
+        }
+      );
+      putEdgeCachedResponse(edgeKey, res, execCtx);
+      return res;
+    } catch {
+      return new Response(JSON.stringify({ ok: true, doctors: [] }), {
+        status: 200,
+        headers: buildResponseHeaders({ req, storefrontId: sf.id, isPrivate: true }),
+      });
+    }
+  }
+
+  // 12d. GET /api/v1/public/services — Custom Pharmacy Services & Diagnostic Lab Tests (Edge-Cached)
+  if (pathname === "/api/v1/public/services" && req.method === "GET") {
+    const edgeKey = buildTenantEdgeCacheKey(req, tenantEdgeScope);
+    const cached = await getEdgeCachedResponse(edgeKey);
+    if (cached) return cached;
+
+    try {
+      const { results } = await env.DB.prepare(
+        `SELECT id, title, service_type, subtitle, description, image_url, timings,
+                home_service_available, starting_price_pkr, booking_phone, items_json, sort_order
+         FROM storefront_custom_services
+         WHERE storefront_id = ? AND pharmacy_id = ? AND is_active = 1
+         ORDER BY sort_order ASC, title ASC`
+      )
+        .bind(sf.id, sf.pharmacy_id)
+        .all<Record<string, unknown>>();
+
+      const services = (results || []).map((row) => {
+        let items: any[] = [];
+        try {
+          const parsed = JSON.parse(String(row.items_json || "[]"));
+          if (Array.isArray(parsed)) items = parsed;
+        } catch {
+          items = [];
+        }
+        return {
+          ...row,
+          home_service_available: Number(row.home_service_available || 0) === 1,
+          items,
+        };
+      });
+
+      const res = new Response(
+        JSON.stringify({ ok: true, services }),
+        {
+          status: 200,
+          headers: buildResponseHeaders({
+            req,
+            storefrontId: sf.id,
+            configVersion: sf.config_version,
+            hostname: ctx.normalizedHostname,
+            cacheMaxAgeSec: 180,
+          }),
+        }
+      );
+      putEdgeCachedResponse(edgeKey, res, execCtx);
+      return res;
+    } catch {
+      return new Response(JSON.stringify({ ok: true, services: [] }), {
+        status: 200,
+        headers: buildResponseHeaders({ req, storefrontId: sf.id, isPrivate: true }),
+      });
+    }
+  }
 
   // 13. GET /api/v1/public/sitemap.xml & /api/v1/public/robots.txt (Auto-SEO from R2 Snapshot -> 0 D1 reads!)
   if (pathname === "/api/v1/public/sitemap.xml" && req.method === "GET") {
