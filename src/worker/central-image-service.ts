@@ -20,6 +20,7 @@ import {
   getCentralImageIndex,
   hydrateCatalogDocWithCentralIndex,
   loadStorefrontCatalogDoc,
+  rebuildAndSaveCentralImageIndex,
   saveStorefrontCatalogDoc,
   upsertEntriesInCentralImageIndex,
   type CentralImageIndexEntry,
@@ -803,13 +804,32 @@ export async function bulkUploadVerifiedCentralImages(
   }
 
   if (dbStatements.length > 0) {
-    await env.DB.batch(dbStatements);
+    try {
+      await env.DB.batch(dbStatements);
+    } catch {
+      // Fallback: execute statements individually so 1 bad row never fails an entire 12-item chunk
+      for (const stmt of dbStatements) {
+        try {
+          await stmt.run();
+        } catch (stmtErr: any) {
+          failed.push({
+            name: "db_statement",
+            error: String(stmtErr?.message || "db_write_failed"),
+          });
+        }
+      }
+    }
   }
 
   // 5. Publish ALL newly verified entries ONCE into R2 `central-library/verified-images-index.json`!
   // Zero D1 scans on pharmacy products -> ALL 100-500+ pharmacies instantly display these images!
+  // Wrapped safely so a transient R2 index write hiccup NEVER returns HTTP 500 after D1 succeeded.
   if (newlyVerifiedEntries.length > 0) {
-    await upsertEntriesInCentralImageIndex(env, newlyVerifiedEntries);
+    try {
+      await upsertEntriesInCentralImageIndex(env, newlyVerifiedEntries);
+    } catch (idxErr) {
+      console.warn("[BulkCentralUpload] R2 index update deferred (D1 already saved):", idxErr);
+    }
   }
 
   void insertedMediaHashes;
@@ -846,7 +866,13 @@ export async function batchMatchStorefrontProducts(
     };
   }
 
-  const centralIndex = await getCentralImageIndex(env, { freshFromR2: true });
+  // When starting a fresh batch-match sweep (offset === 0), rebuild the R2 Central Index
+  // directly from D1 so every verified medicine (including any recovered/newly updated rows)
+  // uses the latest matcher normalization keys!
+  const centralIndex =
+    offset === 0
+      ? await rebuildAndSaveCentralImageIndex(env)
+      : await getCentralImageIndex(env, { freshFromR2: true });
   if (centralIndex.doc.entries.length === 0) {
     return {
       processed: 0,

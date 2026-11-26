@@ -1330,8 +1330,19 @@ async function handleManageRoutesInner(
       );
     }
 
-    const bulkRes = await bulkUploadVerifiedCentralImages(env, actor.actorId, items);
-    return new Response(JSON.stringify({ ok: true, ...bulkRes }), { status: 200, headers });
+    try {
+      const bulkRes = await bulkUploadVerifiedCentralImages(env, actor.actorId, items);
+      return new Response(JSON.stringify({ ok: true, ...bulkRes }), { status: 200, headers });
+    } catch (err: any) {
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          error: "bulk_upload_failed",
+          message: String(err?.message || "Unexpected error while uploading image batch."),
+        }),
+        { status: 500, headers }
+      );
+    }
   }
 
   // GET /api/v1/manage/central-library/submissions (Owner submissions review queue)

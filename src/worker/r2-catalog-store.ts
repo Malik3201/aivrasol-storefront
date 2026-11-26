@@ -205,14 +205,30 @@ function compileCentralImageIndex(doc: R2CentralImageIndexDoc): CompiledCentralI
       });
     }
     const keys = new Set<string>();
-    const ck =
-      e.normalized_core_key ||
-      computeNormalizedCoreKey(e.canonical_name) ||
-      computeNormalizedCoreKey(e.brand_name);
-    if (ck) {
-      keys.add(ck);
-      const firstTok = ck.split("_")[0];
+    const liveCk = computeNormalizedCoreKey(e.canonical_name) || computeNormalizedCoreKey(e.brand_name);
+    for (const candidateKey of [liveCk, e.normalized_core_key]) {
+      if (!candidateKey) continue;
+      keys.add(candidateKey);
+      const firstTok = candidateKey.split("_")[0];
       if (firstTok && firstTok.length >= 3) keys.add(firstTok);
+    }
+    if (e.aliases_json) {
+      try {
+        const aliases = JSON.parse(e.aliases_json);
+        if (Array.isArray(aliases)) {
+          for (const al of aliases) {
+            if (typeof al !== "string") continue;
+            const alk = computeNormalizedCoreKey(al);
+            if (alk) {
+              keys.add(alk);
+              const firstTok = alk.split("_")[0];
+              if (firstTok && firstTok.length >= 3) keys.add(firstTok);
+            }
+          }
+        }
+      } catch {
+        // ignore invalid aliases JSON
+      }
     }
     for (const k of keys) {
       const bucket = byCoreKey.get(k);
@@ -247,10 +263,11 @@ export async function rebuildAndSaveCentralImageIndex(
   const entries: CentralImageIndexEntry[] = (res.results || []).map((r) => {
     const canonName = String(r.canonical_name || "");
     const brandName = r.brand_name ? String(r.brand_name) : null;
+    // Always recompute normalized_core_key with the latest matcher logic first
     const coreKey =
-      (r.normalized_core_key ? String(r.normalized_core_key) : null) ||
       computeNormalizedCoreKey(canonName) ||
       computeNormalizedCoreKey(brandName) ||
+      (r.normalized_core_key ? String(r.normalized_core_key) : null) ||
       null;
     return {
       id: String(r.id),

@@ -96,10 +96,19 @@ export function normalizeMedicineText(val?: string | null): string {
  * Strips strength, dosage form, packaging, and formulation tokens to extract the base brand
  */
 export function getCoreMedicineName(rawName: string): string {
-  let cleaned = normalizeMedicineText(rawName);
-  // Remove strength tokens (including gm, g, grams, mg, ml, etc.)
+  // First strip parenthesized pack/count suffixes BEFORE punctuation removal,
+  // e.g. "(20)", "(5)", "(5 S)", "(10's)", "(100S)", "(1x5)", "(60ml)"
+  let preCleaned = String(rawName || "")
+    .replace(/\(\s*\d+\s*(?:['’`]?s|tabs?|caps?|amps?|vials?|ml|x\s*\d+)?\s*\)/gi, " ")
+    .replace(/\b\d+\s*[x×]\s*\d+\b/gi, " ");
+  let cleaned = normalizeMedicineText(preCleaned);
+  // Remove strength tokens (including gm, g, grams, mg, ml, shorthand "2m" before dosage form, etc.)
   cleaned = cleaned.replace(
-    /\b\d+(\.\d+)?(?:\/\d+(\.\d+)?)?\s*(mg|ml|mcg|gm|gms|gram|grams|g|iu|%|mg\/ml|mg\/5ml|iu\/ml)\b/gi,
+    /\b\d+(?:\.\d+)?(?:\/\d+(?:\.\d+)?)?\s*(mg|ml|mcg|gm|gms|gram|grams|g|iu|%|mg\/ml|mg\/5ml|iu\/ml)\b/gi,
+    " "
+  );
+  cleaned = cleaned.replace(
+    /\b\d+(?:\.\d+)?\s*m\b(?=\s*(?:tablet|capsule|injection|syrup|suspension|drops|cream|ointment|gel|sachet))/gi,
     " "
   );
   // Remove dosage form tokens
@@ -112,12 +121,16 @@ export function getCoreMedicineName(rawName: string): string {
     /\b(film[-\s]?coated|fc|fct|sugar[-\s]?free|effervescent|chewable|sublingual|extended[-\s]?release|sustained[-\s]?release|controlled[-\s]?release|modified[-\s]?release|er|sr|cr|xr|mr|dr|retard|plain|advance|forte|fort|extra|cf|plus|ds|junior|kids|pediatric|paed|adult)\b/gi,
     " "
   );
-  // Remove pack count tokens like 12s, 14s, 100s, 12's, 100's, 200s
+  // Remove pack count tokens like 12s, 14s, 100s, 12's, 100's, 200s, "5 s"
   cleaned = cleaned.replace(/\b\d+\s*['’`]?s\b/gi, " ");
-  // Remove common inventory status/version labels
-  cleaned = cleaned.replace(/\b(new|old|imported|local|reg|regular)\b/gi, " ");
+  // Remove common inventory status/version labels & trailing salt/route qualifiers
+  cleaned = cleaned.replace(/\b(new|old|imported|local|reg|regular|hcl|hydrochloride)\b/gi, " ");
   // Remove common pack packaging words
   cleaned = cleaned.replace(/\b(pack|box|bottle|strip|blister)\b/gi, " ");
+  // Remove stray trailing standalone pack count numbers (e.g. "losaan h 20" -> "losaan h")
+  cleaned = cleaned.replace(/\s+\b\d{1,3}\b\s*$/g, " ");
+  // Treat hyphens as word separators so "Losaan-H" matches "Losaan H" and "Co-Eziday" matches "Co Eziday"
+  cleaned = cleaned.replace(/-/g, " ");
   return cleanText(cleaned);
 }
 
@@ -184,6 +197,15 @@ export function extractAndNormalizeStrength(rawText?: string | null): string | n
   const mgMatch = cleaned.match(/\b(\d+(?:\.\d+)?)\s*mg\b/i);
   if (mgMatch) {
     const num = mgMatch[1].toLowerCase();
+    return `${num}mg`;
+  }
+
+  // 4b. Shorthand "2M TAB" / "5M CAP" / "10M INJ" in Pakistani master catalogs -> "2mg"
+  const shortMgMatch = cleaned.match(
+    /\b(\d+(?:\.\d+)?)\s*m\b(?=\s*(?:tab|tabs|tablet|tablets|cap|caps|capsule|capsules|inj|injection|syp|syrup|susp|suspension|drops))/i
+  );
+  if (shortMgMatch) {
+    const num = shortMgMatch[1].toLowerCase();
     return `${num}mg`;
   }
 
@@ -297,6 +319,10 @@ function hasVariantConflict(prodVariant: string | null, canVariant: string | nul
  * Pakistani pharmacies rarely type the strength (e.g. "Disprin", "Arinac Forte", "Ponstan Forte")
  * AND the canonical name itself does not disambiguate multiple strengths (or admin explicitly set allow_strengthless_match).
  */
+function isVolumeOnlyToken(strength: string | null): boolean {
+  return Boolean(strength && /^\d+(?:\.\d+)?ml$/i.test(strength.trim()));
+}
+
 function isStrengthCompatible(
   prodStrength: string | null,
   canStrength: string | null,
@@ -306,6 +332,14 @@ function isStrengthCompatible(
     return prodStrength === canStrength;
   }
   if (!canStrength && !prodStrength) {
+    return true;
+  }
+  // Bottle volume (e.g. "60ml" on "ESEGROW SUSP 60ML") is optional when the other side has no strength/volume
+  // (still strictly rejects 60ml vs 120ml or any mg/mcg/mg-per-5ml mismatch!)
+  if (
+    (isVolumeOnlyToken(canStrength) && !prodStrength) ||
+    (isVolumeOnlyToken(prodStrength) && !canStrength)
+  ) {
     return true;
   }
   // Product has explicit strength (e.g. 200mg) while canonical has none -> never guess
@@ -577,17 +611,24 @@ export function matchMedicineIdentity(
       continue;
     }
 
-    // Core brand/trade name matching
+    // Core brand/trade name matching (also allow route qualifier like "vaginal"/"oral" to match when dosage form already matches)
+    const stripRoute = (s: string) =>
+      s.replace(/\b(vaginal|oral|topical|ophthalmic|otic|nasal|rectal|iv|im)\b/gi, " ").replace(/\s+/g, " ").trim();
     const cleanCanName = cleanText(can.canonical_name);
     const normCanName = normalizeMedicineText(can.canonical_name);
     const coreCanName = getCoreMedicineName(can.canonical_name);
+    const coreCanNoRoute = stripRoute(coreCanName);
+    const coreProdNoRoute = stripRoute(coreProdName);
     const cleanBrand = cleanText(can.brand_name || "");
+    const coreBrand = getCoreMedicineName(can.brand_name || "");
 
     const nameMatches =
       cleanProdName === cleanCanName ||
       normProdName === normCanName ||
       (coreProdName.length > 2 && coreProdName === coreCanName) ||
-      (cleanBrand.length > 2 && coreProdName === cleanBrand);
+      (coreProdNoRoute.length > 2 && coreProdNoRoute === coreCanNoRoute) ||
+      (cleanBrand.length > 2 && coreProdName === cleanBrand) ||
+      (coreBrand.length > 2 && coreProdNoRoute === stripRoute(coreBrand));
 
     if (nameMatches) {
       return {
