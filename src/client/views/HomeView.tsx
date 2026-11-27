@@ -158,11 +158,20 @@ export function HomeView({
       : homeProducts;
 
   const displayedHomeProducts = useMemo(() => {
-    if (featuredTab === "all") return homeProducts.slice(0, 10);
+    const hasRealImg = (p: PublicStorefrontProduct) =>
+      Boolean(p.primary_image_url && p.primary_image_url.trim() && !/placeholder/i.test(p.primary_image_url));
+
+    if (featuredTab === "all") {
+      const withImg = homeProducts.filter(hasRealImg);
+      return (withImg.length > 0 ? withImg : homeProducts).slice(0, 10);
+    }
     const filtered = sourcePool.filter(
       (p) => (p.category_name || "").toLowerCase() === featuredTab.toLowerCase()
     );
-    return (filtered.length > 0 ? filtered : homeProducts).slice(0, 10);
+    const filteredWithImg = filtered.filter(hasRealImg);
+    if (filteredWithImg.length > 0) return filteredWithImg.slice(0, 10);
+    const fallbackWithImg = homeProducts.filter(hasRealImg);
+    return (fallbackWithImg.length > 0 ? fallbackWithImg : filtered.length > 0 ? filtered : homeProducts).slice(0, 10);
   }, [featuredTab, homeProducts, sourcePool]);
 
   const rxWhatsAppUrl = whatsappDigits

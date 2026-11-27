@@ -102,6 +102,7 @@ export function buildTenantEdgeCacheKey(
     url.searchParams.set("__cv", String(tenantScope.centralIndexVersion));
   }
   url.searchParams.set("__h", tenantScope.hostname || "default");
+  url.searchParams.set("__rk", "img1");
   return new Request(url.toString(), { method: "GET" });
 }
 
@@ -244,6 +245,15 @@ export async function getCatalogSnapshotForTenant(
   };
 }
 
+function hasRealProductImage(r: Record<string, unknown>): boolean {
+  const url = typeof r.primary_image_url === "string" ? r.primary_image_url.trim() : "";
+  return url.length > 0 && !/placeholder/i.test(url);
+}
+
+function startsWithLetter(name: unknown): boolean {
+  return /^[A-Za-z]/.test(String(name || "").trim());
+}
+
 /**
  * Helper to filter, sort, and cursor-paginate products directly from an R2 snapshot in memory.
  * Zero D1 reads per search/browse/category/pagination request!
@@ -256,20 +266,24 @@ export function queryProductsFromSnapshot(
     featuredOnly?: boolean;
     popularOnly?: boolean;
     inStockOnly?: boolean;
+    hasImageOnly?: boolean;
     hideOutOfStock?: boolean;
     sortBy?: string;
     cursor?: { sortValue: string; id: string } | null;
     limit: number;
   }
-): { pageRows: Array<Record<string, unknown>>; hasMore: boolean } {
+): { pageRows: Array<Record<string, unknown>>; hasMore: boolean; nextOffset: number | null } {
   const qLower = (options.q || "").trim().toLowerCase();
   const catLower = (options.category || "").trim().toLowerCase();
-  const sortBy = options.sortBy || "name_asc";
+  const sortBy = options.sortBy || "featured";
 
   let rows = snapshot.products.filter((r) => {
     const avail = String(r.availability_status || "in_stock");
     if (options.hideOutOfStock || options.inStockOnly) {
       if (avail !== "in_stock" && avail !== "low_stock") return false;
+    }
+    if (options.hasImageOnly && !hasRealProductImage(r)) {
+      return false;
     }
     if (catLower && String(r.category_name || "General Medicines").trim().toLowerCase() !== catLower) {
       return false;
@@ -299,29 +313,58 @@ export function queryProductsFromSnapshot(
       const pb = Number(b.override_price_pkr ?? b.public_selling_price_pkr ?? 0);
       return pb - pa || String(a.name || "").localeCompare(String(b.name || ""));
     });
-  } else if (sortBy === "featured") {
+  } else if (sortBy === "name_asc") {
+    // Still put real-photo items ahead of placeholder items when browsing A-Z with no search query,
+    // while keeping strict alphabetical order inside each group!
+    if (!qLower) {
+      rows = [...rows].sort((a, b) => {
+        const imgDiff = Number(hasRealProductImage(b)) - Number(hasRealProductImage(a));
+        if (imgDiff !== 0) return imgDiff;
+        const alphaDiff = Number(startsWithLetter(b.name)) - Number(startsWithLetter(a.name));
+        if (alphaDiff !== 0) return alphaDiff;
+        return String(a.name || "").localeCompare(String(b.name || ""));
+      });
+    }
+  } else {
+    // Default "featured" merchandising order:
+    // 1. Products WITH real verified/uploaded photos ALWAYS come first (never generic placeholder visuals!)
+    // 2. In-stock products ahead of out-of-stock
+    // 3. Explicitly featured / popular items
+    // 4. Clean alphabetic medicine names ahead of numeric shorthand entries (e.g., 10 LAKH, 1CC, 3CC)
+    // 5. Alphabetical A-Z
     rows = [...rows].sort((a, b) => {
+      const imgDiff = Number(hasRealProductImage(b)) - Number(hasRealProductImage(a));
+      if (imgDiff !== 0) return imgDiff;
+      const stockDiff = Number(isRowInStock(b)) - Number(isRowInStock(a));
+      if (stockDiff !== 0) return stockDiff;
       const fa = Number(b.is_featured || 0) - Number(a.is_featured || 0);
       if (fa !== 0) return fa;
       const pp = Number(b.is_popular || 0) - Number(a.is_popular || 0);
       if (pp !== 0) return pp;
-      return String(a.name || "").localeCompare(String(b.name || ""));
+      const alphaDiff = Number(startsWithLetter(b.name)) - Number(startsWithLetter(a.name));
+      if (alphaDiff !== 0) return alphaDiff;
+      return (
+        String(a.name || "").localeCompare(String(b.name || "")) ||
+        String(a.id || "").localeCompare(String(b.id || ""))
+      );
     });
-  } else {
-    // Snapshot is already sorted by name ASC, id ASC
-    if (options.cursor) {
-      const { sortValue, id } = options.cursor;
-      rows = rows.filter((r) => {
-        const rn = String(r.name || "");
-        const rid = String(r.id || "");
-        return rn > sortValue || (rn === sortValue && rid > id);
-      });
+  }
+
+  let startIdx = 0;
+  if (options.cursor) {
+    if (options.cursor.sortValue === "__offset__") {
+      const parsed = parseInt(options.cursor.id, 10);
+      if (Number.isFinite(parsed) && parsed > 0) startIdx = parsed;
+    } else {
+      const idx = rows.findIndex((r) => String(r.id || "") === options.cursor!.id);
+      if (idx >= 0) startIdx = idx + 1;
     }
   }
 
-  const hasMore = rows.length > options.limit;
-  const pageRows = hasMore ? rows.slice(0, options.limit) : rows;
-  return { pageRows, hasMore };
+  const sliced = rows.slice(startIdx, startIdx + options.limit);
+  const hasMore = startIdx + options.limit < rows.length;
+  const nextOffset = hasMore ? startIdx + sliced.length : null;
+  return { pageRows: sliced, hasMore, nextOffset };
 }
 
 const GENERIC_PLACEHOLDERS = new Set([

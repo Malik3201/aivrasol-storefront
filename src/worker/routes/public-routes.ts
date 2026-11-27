@@ -792,7 +792,7 @@ export async function handlePublicRoutes(
     const limit = Math.min(48, Math.max(1, Number(url.searchParams.get("limit")) || 20));
 
     const { snapshot, source } = await getCatalogSnapshotForTenant(env, sf, execCtx);
-    const { pageRows, hasMore } = queryProductsFromSnapshot(snapshot, {
+    const { pageRows, hasMore, nextOffset } = queryProductsFromSnapshot(snapshot, {
       q,
       category,
       inStockOnly,
@@ -811,8 +811,7 @@ export async function handlePublicRoutes(
         showStockBadges
       )
     );
-    const last = items[items.length - 1];
-    const nextCursor = hasMore && last ? encodeCursor(last.name, last.id) : null;
+    const nextCursor = hasMore && nextOffset !== null ? encodeCursor("__offset__", String(nextOffset)) : null;
 
     // Also compute same-generic in-stock alternatives if search returned 0 in-stock hits
     let genericAlternatives: PublicStorefrontProduct[] = [];
@@ -883,19 +882,21 @@ export async function handlePublicRoutes(
     const featuredOnly = url.searchParams.get("featured") === "true";
     const popularOnly = url.searchParams.get("popular") === "true";
     const inStockOnly = url.searchParams.get("in_stock") === "true";
-    const sortBy = (url.searchParams.get("sort") || "name_asc").trim();
+    const hasImageOnly = url.searchParams.get("has_image") === "true";
+    const sortBy = (url.searchParams.get("sort") || "featured").trim();
     const cursor = decodeCursor(url.searchParams.get("cursor"));
     const limit = Math.min(48, Math.max(1, Number(url.searchParams.get("limit")) || 24));
 
     const { snapshot, source } = await getCatalogSnapshotForTenant(env, sf, execCtx);
-    const { pageRows, hasMore } = queryProductsFromSnapshot(snapshot, {
+    const { pageRows, hasMore, nextOffset } = queryProductsFromSnapshot(snapshot, {
       category,
       featuredOnly,
       popularOnly,
       inStockOnly,
+      hasImageOnly,
       hideOutOfStock,
       sortBy,
-      cursor: sortBy === "name_asc" ? cursor : null,
+      cursor,
       limit,
     });
 
@@ -908,9 +909,8 @@ export async function handlePublicRoutes(
         showStockBadges
       )
     );
-    const last = items[items.length - 1];
     const nextCursor =
-      hasMore && last && sortBy === "name_asc" ? encodeCursor(last.name, last.id) : null;
+      hasMore && nextOffset !== null ? encodeCursor("__offset__", String(nextOffset)) : null;
 
     const headers = buildResponseHeaders({
       req,
