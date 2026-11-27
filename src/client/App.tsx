@@ -1801,6 +1801,7 @@ export function App() {
             reviewsSummary={reviewsSummary}
             doctors={doctors}
             customServices={customServices}
+            branches={branchesList}
             renderProductCard={renderProductCard}
           />
         </main>

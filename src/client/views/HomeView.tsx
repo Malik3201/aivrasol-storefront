@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import type {
   PublicStorefrontProduct,
   StorefrontBannerRecord,
+  StorefrontBranchRecord,
   StorefrontBrandingRecord,
   StorefrontCategoryRecord,
   StorefrontCustomServiceRecord,
@@ -11,20 +12,19 @@ import type {
   StorefrontReviewRecord,
   StorefrontSettingsRecord,
 } from "../../shared/types";
-import {
-  EDITORIAL_MEDIA,
-  resolveCategory3dIconUrl,
-} from "../design/editorialAssets";
+import { EDITORIAL_MEDIA } from "../design/editorialAssets";
 import { isMeaningfulCategory, sanitizePublicCopy } from "../design/theme";
 import type { StorefrontView } from "../types-ui";
 import {
+  DepartmentEmblemSvg,
+  resolveDepartmentThemes,
+} from "../components/DepartmentCardVisual";
+import { PharmacyLocationMap } from "../components/PharmacyLocationMap";
+import {
   ArrowRightIcon,
   ChevronRightIcon,
-  ClockIcon,
   HealthConcernIcon,
-  MapPinIcon,
   PackageTrackIcon,
-  PhoneIcon,
   PrescriptionIcon,
   ShieldCheckIcon,
   StoreIcon,
@@ -60,6 +60,7 @@ interface HomeViewProps {
   reviewsSummary?: { count: number; average_rating: number };
   doctors?: StorefrontDoctorRecord[];
   customServices?: StorefrontCustomServiceRecord[];
+  branches?: StorefrontBranchRecord[];
   renderProductCard: (prod: PublicStorefrontProduct) => React.ReactNode;
 }
 
@@ -101,9 +102,15 @@ export function HomeView({
   reviewsSummary = { count: 0, average_rating: 0 },
   doctors = [],
   customServices = [],
+  branches = [],
   renderProductCard,
 }: HomeViewProps) {
   const validCategories = categories.filter(isMeaningfulCategory);
+  const topDepartments = useMemo(() => validCategories.slice(0, 8), [validCategories]);
+  const departmentThemes = useMemo(
+    () => resolveDepartmentThemes(topDepartments.map((c) => c.name)),
+    [topDepartments]
+  );
   const whatsappDigits = (sf.whatsapp_phone || sf.contact_phone || "").replace(/[^0-9]/g, "");
 
   const customHeroUrl =
@@ -435,10 +442,11 @@ export function HomeView({
             </button>
           </div>
 
-          <div className="flex sm:grid overflow-x-auto sm:overflow-visible snap-x snap-mandatory no-scrollbar gap-2.5 sm:gap-3 -mx-3.5 px-3.5 sm:mx-0 sm:px-0 pb-1 sm:pb-0 sm:grid-cols-3 lg:grid-cols-6">
-            {validCategories.slice(0, 8).map((cat, idx) => {
+          <div className="flex sm:grid overflow-x-auto sm:overflow-visible snap-x snap-mandatory no-scrollbar gap-3 sm:gap-3.5 -mx-3.5 px-3.5 sm:mx-0 sm:px-0 pb-1.5 sm:pb-0 sm:grid-cols-3 lg:grid-cols-6">
+            {topDepartments.map((cat, idx) => {
               const count = Number(cat.published_product_count || 0);
-              const iconUrl = cat.image_url || resolveCategory3dIconUrl(cat.name);
+              const theme = departmentThemes[idx];
+              const hasCustomImg = Boolean(cat.image_url && cat.image_url.trim());
               return (
                 <button
                   key={cat.id}
@@ -449,24 +457,77 @@ export function HomeView({
                   }}
                   className={`${
                     idx >= 6 ? "sm:hidden" : ""
-                  } snap-start shrink-0 w-[124px] sm:w-auto bg-white rounded-xl border border-[#E5E7EB] hover:border-[var(--sf-primary)] p-3 sm:p-3.5 text-left flex flex-col sm:flex-row lg:flex-col items-start sm:items-center lg:items-start gap-2.5 sm:gap-3 transition active:scale-[0.97] group`}
+                  } snap-start shrink-0 w-[154px] sm:w-auto bg-white rounded-2xl border border-[#E5E7EB] hover:border-[var(--sf-primary)] hover:shadow-[0_10px_24px_-12px_rgba(15,23,42,0.18)] overflow-hidden text-left flex flex-col transition-all duration-200 active:scale-[0.98] group`}
                 >
-                  <div className="w-11 h-11 sm:w-12 sm:h-12 lg:w-14 lg:h-14 rounded-lg bg-[#F6F7F9] p-1.5 flex items-center justify-center shrink-0">
-                    <img
-                      src={iconUrl}
-                      alt={cat.name}
-                      loading="lazy"
-                      decoding="async"
-                      className="w-full h-full object-contain group-hover:scale-105 transition-transform"
-                    />
+                  {/* Visual Department Stage */}
+                  <div
+                    className="relative h-24 sm:h-[104px] w-full flex items-center justify-center overflow-hidden"
+                    style={hasCustomImg ? undefined : { background: theme.stageBg }}
+                  >
+                    {hasCustomImg ? (
+                      <img
+                        src={cat.image_url!}
+                        alt={theme.displayName}
+                        loading="lazy"
+                        decoding="async"
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                      />
+                    ) : (
+                      <>
+                        {/* Subtle decorative halo */}
+                        <span
+                          aria-hidden="true"
+                          className="pointer-events-none absolute -right-4 -top-4 w-20 h-20 rounded-full opacity-40"
+                          style={{ background: theme.accentFill }}
+                        />
+                        <span
+                          aria-hidden="true"
+                          className="pointer-events-none absolute -left-5 -bottom-5 w-16 h-16 rounded-full opacity-30"
+                          style={{ background: theme.accentFill }}
+                        />
+                        <div
+                          className="relative z-10 w-14 h-14 sm:w-[60px] sm:h-[60px] rounded-2xl flex items-center justify-center shadow-[0_6px_18px_-6px_rgba(15,23,42,0.14)] ring-1 ring-black/[0.04] group-hover:scale-110 group-hover:-translate-y-0.5 transition-transform duration-200"
+                          style={{ backgroundColor: theme.ringBg }}
+                        >
+                          <DepartmentEmblemSvg
+                            kind={theme.kind}
+                            stroke={theme.accentStroke}
+                            fill={theme.accentFill}
+                            className="w-8 h-8 sm:w-9 sm:h-9"
+                          />
+                        </div>
+                      </>
+                    )}
+
+                    {count > 0 && (
+                      <span
+                        className="absolute top-2 right-2 px-2 py-0.5 rounded-full text-[10px] font-extrabold tabular-nums shadow-xs border border-black/[0.05]"
+                        style={{
+                          backgroundColor: theme.badgeBg,
+                          color: theme.badgeText,
+                        }}
+                      >
+                        {count}
+                      </span>
+                    )}
                   </div>
-                  <div className="min-w-0 w-full">
-                    <p className="sf-heading text-xs sm:text-[13px] font-bold text-[#111827] group-hover:text-[var(--sf-primary-ink)] line-clamp-2 leading-snug transition-colors">
-                      {cat.name}
-                    </p>
-                    <p className="text-[11px] text-[#6B7280] tabular-nums mt-0.5">
-                      {count > 0 ? `${count} items` : "Shop now"}
-                    </p>
+
+                  {/* Clean Label & Subtitle Footer */}
+                  <div className="p-3 sm:p-3.5 flex-1 flex flex-col justify-between gap-1 bg-white">
+                    <div className="min-w-0">
+                      <p className="sf-heading text-[13px] sm:text-sm font-extrabold text-[#111827] group-hover:text-[var(--sf-primary-ink)] truncate leading-snug transition-colors">
+                        {theme.displayName}
+                      </p>
+                      <p className="text-[11px] text-[#6B7280] truncate mt-0.5">
+                        {theme.subtitle}
+                      </p>
+                    </div>
+                    <div className="pt-1 flex items-center justify-between text-[11px] font-bold">
+                      <span className="text-[#4B5563] tabular-nums">
+                        {count > 0 ? `${count} items` : "Explore"}
+                      </span>
+                      <ChevronRightIcon className="w-3.5 h-3.5 sf-text-brand group-hover:translate-x-0.5 transition-transform shrink-0" />
+                    </div>
                   </div>
                 </button>
               );
@@ -998,56 +1059,18 @@ export function HomeView({
       )}
 
       {/* =================================================================== */}
-      {/* 9. COMPACT RETAIL PHARMACY COUNTER & DIRECT ASSISTANCE BAR          */}
+      {/* 9. PHARMACY LOCATION MAP, DIRECTIONS & COUNTER ASSISTANCE           */}
       {/* =================================================================== */}
-      <section className="max-w-7xl mx-auto px-3.5 sm:px-6 lg:px-8 pt-2 pb-8 sm:pb-10">
-        <div className="bg-white rounded-xl border border-[#E5E7EB] p-4 sm:p-6 flex flex-col md:flex-row md:items-center justify-between gap-4 sm:gap-5">
-          <div className="space-y-1.5 max-w-2xl">
-            <h2 className="sf-heading text-base sm:text-lg font-extrabold text-[#111827]">
-              Visit {displayName} Counter
-            </h2>
-            <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-xs text-[#4B5563]">
-              {sf.address_line && (
-                <span className="inline-flex items-center gap-1.5">
-                  <MapPinIcon className="w-3.5 h-3.5 sf-text-brand shrink-0" />
-                  <span>
-                    {sf.address_line}, {sf.city}
-                  </span>
-                </span>
-              )}
-              <span className="inline-flex items-center gap-1.5">
-                <ClockIcon className="w-3.5 h-3.5 sf-text-brand shrink-0" />
-                <span>{scheduleText}</span>
-              </span>
-              {sf.contact_phone && (
-                <a
-                  href={`tel:${sf.contact_phone}`}
-                  className="inline-flex items-center gap-1.5 font-semibold text-[#111827] hover:underline tabular-nums"
-                >
-                  <PhoneIcon className="w-3.5 h-3.5 sf-text-brand shrink-0" />
-                  <span>{sf.contact_phone}</span>
-                </a>
-              )}
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 shrink-0 w-full md:w-auto">
-            <button
-              type="button"
-              onClick={() => onSelectView("branches")}
-              className="min-h-[42px] sm:min-h-0 sm:h-9 px-3 sm:px-3.5 rounded-lg sf-btn-secondary text-xs font-bold"
-            >
-              Directions &amp; Hours
-            </button>
-            <button
-              type="button"
-              onClick={() => onSelectView("contact")}
-              className="min-h-[42px] sm:min-h-0 sm:h-9 px-3 sm:px-4 rounded-lg sf-btn-primary text-xs font-bold"
-            >
-              Contact Pharmacy
-            </button>
-          </div>
-        </div>
+      <section className="max-w-7xl mx-auto px-3.5 sm:px-6 lg:px-8 pt-2 pb-8 sm:pb-12">
+        <PharmacyLocationMap
+          sf={sf}
+          displayName={displayName}
+          scheduleText={scheduleText}
+          branches={branches}
+          variant="landing"
+          onOpenLocationsPage={() => onSelectView("branches")}
+          onOpenContactPage={() => onSelectView("contact")}
+        />
       </section>
     </div>
   );

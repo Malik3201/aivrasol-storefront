@@ -27,6 +27,7 @@ import {
 } from "../components/Icons";
 import { downloadStorefront80mmInvoicePdf } from "../utils/invoicePdf80mm";
 import { submitOrderReview } from "../api";
+import { PharmacyLocationMap, resolvePharmacyLocationPin } from "../components/PharmacyLocationMap";
 
 interface OrderTrackingViewProps {
   sf: StorefrontPublicContext;
@@ -1102,6 +1103,26 @@ export function InfoPagesView({
         </section>
 
         <div className="max-w-6xl mx-auto px-3.5 sm:px-6 lg:px-8 space-y-8 sm:space-y-12">
+          {/* Section A2: Live Interactive Pharmacy Map & Turn-by-Turn Google Directions */}
+          <section className="space-y-4">
+            <div className="space-y-1">
+              <span className="text-xs font-bold uppercase tracking-[0.14em] text-[#0E5146] block">
+                Interactive Pharmacy Map
+              </span>
+              <h2 className="sf-display text-2xl font-extrabold text-[#111827]">
+                Find {displayName} on Google Maps
+              </h2>
+            </div>
+
+            <PharmacyLocationMap
+              sf={sf}
+              displayName={displayName}
+              scheduleText={scheduleSummary}
+              branches={normalizedBranches}
+              variant="locations"
+            />
+          </section>
+
           {/* Section B: Detailed Architectural Branch Cards */}
           <section className="space-y-5">
             <div className="space-y-1">
@@ -1134,18 +1155,14 @@ export function InfoPagesView({
                   branchPhone ||
                   ""
                 ).replace(/[^0-9]/g, "");
-                const hasCoords =
-                  b.latitude !== null &&
-                  b.latitude !== undefined &&
-                  b.longitude !== null &&
-                  b.longitude !== undefined;
-                const mapsHref = hasCoords
-                  ? `https://www.google.com/maps/search/?api=1&query=${b.latitude},${b.longitude}`
-                  : branchAddress
-                    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-                      `${displayName}, ${branchAddress}, ${branchCity}`
-                    )}`
-                    : null;
+                const branchPin = resolvePharmacyLocationPin({
+                  sf,
+                  displayName,
+                  branch: b,
+                  branches: normalizedBranches,
+                });
+                const mapsHref = branchPin.openMapsUrl;
+                const directionsHref = branchPin.directionsUrl;
 
                 return (
                   <div
@@ -1253,6 +1270,18 @@ export function InfoPagesView({
                         </a>
                       )}
 
+                      {directionsHref && (
+                        <a
+                          href={directionsHref}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="min-h-[42px] sm:min-h-0 sm:h-10 px-3 sm:px-4 rounded-xl sf-btn-primary text-xs font-bold inline-flex items-center justify-center gap-1.5"
+                        >
+                          <MapPinIcon className="w-3.5 h-3.5 shrink-0" />
+                          <span>Get Directions</span>
+                        </a>
+                      )}
+
                       {mapsHref && (
                         <a
                           href={mapsHref}
@@ -1260,7 +1289,7 @@ export function InfoPagesView({
                           rel="noreferrer"
                           className="col-span-2 sm:col-span-1 min-h-[42px] sm:min-h-0 sm:h-10 px-3 sm:px-4 rounded-xl sf-btn-soft text-xs font-bold inline-flex items-center justify-center gap-1.5"
                         >
-                          <span>Open in Maps</span>
+                          <span>Open in Google Maps</span>
                           <ExternalLinkIcon className="w-3.5 h-3.5 shrink-0" />
                         </a>
                       )}

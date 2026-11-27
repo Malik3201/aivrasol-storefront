@@ -107,6 +107,18 @@ export async function injectStorefrontSeoMetadata(
           addressLocality: sf.city || "Lahore",
           addressCountry: sf.country || "PK",
         },
+        ...(sf.latitude !== null &&
+        sf.latitude !== undefined &&
+        sf.longitude !== null &&
+        sf.longitude !== undefined
+          ? {
+              geo: {
+                "@type": "GeoCoordinates",
+                latitude: Number(sf.latitude),
+                longitude: Number(sf.longitude),
+              },
+            }
+          : {}),
         areaServed: {
           "@type": "City",
           name: sf.city || "Lahore",

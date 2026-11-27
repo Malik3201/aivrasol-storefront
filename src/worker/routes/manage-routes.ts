@@ -1982,7 +1982,25 @@ async function handleManageRoutesInner(
       .bind(nowIso, sf.id, sf.pharmacy_id)
       .run();
 
-    // Also allow updating pharmacy contact info if provided
+    // Also allow updating pharmacy contact & GPS coordinates if provided
+    const parsedLat =
+      body.latitude !== undefined && body.latitude !== null && body.latitude !== ""
+        ? Number(body.latitude)
+        : null;
+    const parsedLng =
+      body.longitude !== undefined && body.longitude !== null && body.longitude !== ""
+        ? Number(body.longitude)
+        : null;
+    const hasValidCoords =
+      parsedLat !== null &&
+      parsedLng !== null &&
+      Number.isFinite(parsedLat) &&
+      Number.isFinite(parsedLng) &&
+      parsedLat >= -90 &&
+      parsedLat <= 90 &&
+      parsedLng >= -180 &&
+      parsedLng <= 180;
+
     if (
       body.contact_phone !== undefined ||
       body.whatsapp_phone !== undefined ||
@@ -1990,7 +2008,8 @@ async function handleManageRoutesInner(
       body.address_line !== undefined ||
       body.city !== undefined ||
       body.drug_sale_license_no !== undefined ||
-      body.pharmacist_name !== undefined
+      body.pharmacist_name !== undefined ||
+      hasValidCoords
     ) {
       await env.DB.prepare(
         `UPDATE storefronts
@@ -1999,6 +2018,8 @@ async function handleManageRoutesInner(
              contact_email = COALESCE(?, contact_email),
              address_line = COALESCE(?, address_line),
              city = COALESCE(?, city),
+             latitude = COALESCE(?, latitude),
+             longitude = COALESCE(?, longitude),
              drug_sale_license_no = COALESCE(?, drug_sale_license_no),
              pharmacist_name = COALESCE(?, pharmacist_name),
              config_version = config_version + 1,
@@ -2011,6 +2032,8 @@ async function handleManageRoutesInner(
           body.contact_email ?? null,
           body.address_line ?? null,
           body.city ?? null,
+          hasValidCoords ? parsedLat : null,
+          hasValidCoords ? parsedLng : null,
           body.drug_sale_license_no ?? null,
           body.pharmacist_name ?? null,
           nowIso,
@@ -2049,6 +2072,161 @@ async function handleManageRoutesInner(
       status: 200,
       headers,
     });
+  }
+
+  // ── 8b. PUT /api/v1/manage/storefronts/:id/location (Exact Pharmacy Map Pin & Contact Address) ──
+  if (subPath === "/location" && req.method === "PUT") {
+    const body: any = await req.json();
+    const nowIso = new Date().toISOString();
+
+    const clearCoords = Boolean(body.clear_coordinates);
+    let nextLat: number | null | undefined = undefined;
+    let nextLng: number | null | undefined = undefined;
+
+    if (clearCoords) {
+      nextLat = null;
+      nextLng = null;
+    } else if (
+      body.latitude !== undefined ||
+      body.longitude !== undefined
+    ) {
+      const latRaw = body.latitude;
+      const lngRaw = body.longitude;
+      if (
+        (latRaw === null || latRaw === "") &&
+        (lngRaw === null || lngRaw === "")
+      ) {
+        nextLat = null;
+        nextLng = null;
+      } else {
+        const latNum = Number(latRaw);
+        const lngNum = Number(lngRaw);
+        if (
+          !Number.isFinite(latNum) ||
+          !Number.isFinite(lngNum) ||
+          latNum < -90 ||
+          latNum > 90 ||
+          lngNum < -180 ||
+          lngNum > 180
+        ) {
+          return new Response(
+            JSON.stringify({
+              ok: false,
+              error: "invalid_coordinates",
+              message: "Latitude must be between -90 and 90, and Longitude between -180 and 180.",
+            }),
+            { status: 400, headers }
+          );
+        }
+        nextLat = Number(latNum.toFixed(6));
+        nextLng = Number(lngNum.toFixed(6));
+      }
+    }
+
+    const nextAddress =
+      body.address_line !== undefined ? String(body.address_line || "").trim() || null : sf.address_line;
+    const nextCity =
+      body.city !== undefined && String(body.city || "").trim()
+        ? String(body.city).trim()
+        : sf.city;
+    const nextPhone =
+      body.contact_phone !== undefined ? String(body.contact_phone || "").trim() || null : sf.contact_phone;
+    const nextWhatsapp =
+      body.whatsapp_phone !== undefined ? String(body.whatsapp_phone || "").trim() || null : sf.whatsapp_phone;
+    const resolvedLat = nextLat !== undefined ? nextLat : sf.latitude;
+    const resolvedLng = nextLng !== undefined ? nextLng : sf.longitude;
+
+    await env.DB.prepare(
+      `UPDATE storefronts
+       SET address_line = ?,
+           city = ?,
+           contact_phone = ?,
+           whatsapp_phone = ?,
+           latitude = ?,
+           longitude = ?,
+           config_version = COALESCE(config_version, 1) + 1,
+           updated_at = ?
+       WHERE id = ? AND pharmacy_id = ?`
+    )
+      .bind(
+        nextAddress,
+        nextCity,
+        nextPhone,
+        nextWhatsapp,
+        resolvedLat,
+        resolvedLng,
+        nowIso,
+        sf.id,
+        sf.pharmacy_id
+      )
+      .run();
+
+    // Keep the main pharmacy branch synchronized with the exact primary store pin & address
+    await env.DB.prepare(
+      `UPDATE storefront_branches
+       SET address_line = COALESCE(?, address_line),
+           city = COALESCE(?, city),
+           phone = COALESCE(?, phone),
+           whatsapp_phone = COALESCE(?, whatsapp_phone),
+           latitude = ?,
+           longitude = ?,
+           updated_at = ?
+       WHERE storefront_id = ? AND pharmacy_id = ? AND is_main = 1`
+    )
+      .bind(
+        nextAddress,
+        nextCity,
+        nextPhone,
+        nextWhatsapp,
+        resolvedLat,
+        resolvedLng,
+        nowIso,
+        sf.id,
+        sf.pharmacy_id
+      )
+      .run();
+
+    await writeStorefrontAuditLog(env.DB, {
+      storefrontId: sf.id,
+      pharmacyId: sf.pharmacy_id,
+      action: "storefront_location_updated",
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      actorEmail: actor.actorEmail,
+      entityType: "storefront",
+      entityId: sf.id,
+      summary:
+        resolvedLat !== null && resolvedLng !== null
+          ? `Updated exact pharmacy GPS pin (${resolvedLat}, ${resolvedLng}) in ${nextCity}.`
+          : `Updated pharmacy address in ${nextCity}.`,
+      metadata: {
+        address_line: nextAddress,
+        city: nextCity,
+        latitude: resolvedLat,
+        longitude: resolvedLng,
+      },
+    });
+
+    const updatedStorefront = await env.DB.prepare(
+      "SELECT * FROM storefronts WHERE id = ? AND pharmacy_id = ? LIMIT 1"
+    )
+      .bind(sf.id, sf.pharmacy_id)
+      .first<StorefrontRecord>();
+
+    const { results: updatedBranches } = await env.DB.prepare(
+      "SELECT * FROM storefront_branches WHERE storefront_id = ? AND pharmacy_id = ? ORDER BY is_main DESC, name ASC"
+    )
+      .bind(sf.id, sf.pharmacy_id)
+      .all();
+
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        storefront: updatedStorefront,
+        branches: updatedBranches || [],
+      }),
+      { status: 200, headers }
+    );
   }
 
   // ── 9. PUT /api/v1/manage/storefronts/:id/settings ──
@@ -3879,12 +4057,33 @@ async function handleManageRoutesInner(
         ? body.delivery_enabled !== false
         : body.delivery_supported !== false;
 
+    const branchLatRaw = body.latitude;
+    const branchLngRaw = body.longitude;
+    const branchLatNum =
+      branchLatRaw !== undefined && branchLatRaw !== null && branchLatRaw !== ""
+        ? Number(branchLatRaw)
+        : null;
+    const branchLngNum =
+      branchLngRaw !== undefined && branchLngRaw !== null && branchLngRaw !== ""
+        ? Number(branchLngRaw)
+        : null;
+    const branchHasValidCoords =
+      branchLatNum !== null &&
+      branchLngNum !== null &&
+      Number.isFinite(branchLatNum) &&
+      Number.isFinite(branchLngNum) &&
+      branchLatNum >= -90 &&
+      branchLatNum <= 90 &&
+      branchLngNum >= -180 &&
+      branchLngNum <= 180;
+
     await env.DB.prepare(
       `INSERT INTO storefront_branches (
          id, storefront_id, pharmacy_id, pos_branch_id, branch_code, name,
          is_main, status, phone, whatsapp_phone, address_line, city,
+         latitude, longitude,
          pickup_enabled, delivery_enabled, opening_hours_json, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(storefront_id, pos_branch_id) DO UPDATE SET
          name = excluded.name,
          status = excluded.status,
@@ -3892,6 +4091,8 @@ async function handleManageRoutesInner(
          whatsapp_phone = excluded.whatsapp_phone,
          address_line = excluded.address_line,
          city = excluded.city,
+         latitude = COALESCE(excluded.latitude, storefront_branches.latitude),
+         longitude = COALESCE(excluded.longitude, storefront_branches.longitude),
          pickup_enabled = excluded.pickup_enabled,
          delivery_enabled = excluded.delivery_enabled,
          opening_hours_json = excluded.opening_hours_json,
@@ -3910,12 +4111,20 @@ async function handleManageRoutesInner(
         body.whatsapp_phone || sf.whatsapp_phone || null,
         body.address_line || sf.address_line || null,
         body.city || sf.city || "Lahore",
+        branchHasValidCoords ? Number(branchLatNum!.toFixed(6)) : null,
+        branchHasValidCoords ? Number(branchLngNum!.toFixed(6)) : null,
         resolvedPickup ? 1 : 0,
         resolvedDelivery ? 1 : 0,
         hoursJson,
         nowIso,
         nowIso
       )
+      .run();
+
+    await env.DB.prepare(
+      "UPDATE storefronts SET config_version = COALESCE(config_version, 1) + 1, updated_at = ? WHERE id = ?"
+    )
+      .bind(nowIso, sf.id)
       .run();
 
     const { results } = await env.DB.prepare(
