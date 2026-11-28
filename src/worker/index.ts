@@ -12,11 +12,12 @@ import {
   extractRequestHostname,
   resolveTenantBundleCached,
 } from "./domain-resolver";
-import { getCatalogSnapshotForTenant } from "./edge-cache-and-snapshots";
+import { getCatalogSnapshotForTenant, findProductInSnapshot } from "./edge-cache-and-snapshots";
 import type { StorefrontWorkerEnv, WorkerExecutionContext } from "./env";
 import { handleManageRoutes } from "./routes/manage-routes";
 import { handlePublicRoutes } from "./routes/public-routes";
 import { handleSyncRoutes } from "./routes/sync-routes";
+import { runScheduledMaintenance } from "./scheduled";
 import { buildResponseHeaders, checkRateLimit } from "./security";
 
 function escapeHtmlAttr(str: string): string {
@@ -169,9 +170,7 @@ export async function injectStorefrontSeoMetadata(
     if (prodMatch) {
       const slug = decodeURIComponent(prodMatch[1]);
       const { snapshot } = await getCatalogSnapshotForTenant(env, sf);
-      const prod = snapshot.products.find(
-        (p) => String(p.slug || "") === slug || String(p.id || "") === slug
-      ) as Record<string, any> | undefined;
+      const prod = findProductInSnapshot(snapshot, slug) as Record<string, any> | undefined;
 
       if (prod) {
         const effPrice =
@@ -300,7 +299,11 @@ export async function handleWorkerRequest(
       ? "manage"
       : "public";
     const maxPerMinute = bucketGroup === "public" ? 240 : bucketGroup === "manage" ? 180 : 120;
-    const rl = checkRateLimit(`${clientIp}:${bucketGroup}`, maxPerMinute, 60_000);
+    let rl = checkRateLimit(`${clientIp}:${bucketGroup}`, maxPerMinute, 60_000);
+    // Tighter per-IP guard on checkout writes (each order costs ~10–15 D1 rows written).
+    if (rl.allowed && req.method === "POST" && pathname === "/api/v1/public/orders") {
+      rl = checkRateLimit(`${clientIp}:public-orders`, 10, 60_000);
+    }
     if (!rl.allowed) {
       const headers = buildResponseHeaders({ req, isPrivate: true });
       headers.set("Retry-After", String(Math.ceil((rl.resetAtMs - Date.now()) / 1000)));
@@ -328,8 +331,10 @@ export async function handleWorkerRequest(
         d1Available = false;
       }
       try {
-        if (env.MEDIA_BUCKET && typeof env.MEDIA_BUCKET.list === "function") {
-          await env.MEDIA_BUCKET.list({ limit: 1 });
+        // Free-tier: never call MEDIA_BUCKET.list() here (Class A op on every health ping).
+        // A HEAD on a fixed key is a cheap Class B op and still proves the binding works.
+        if (env.MEDIA_BUCKET && typeof (env.MEDIA_BUCKET as any).head === "function") {
+          await (env.MEDIA_BUCKET as any).head("__healthcheck__");
           r2Available = true;
         } else if (env.MEDIA_BUCKET) {
           r2Available = true;
@@ -364,6 +369,33 @@ export async function handleWorkerRequest(
 
     // Serve static frontend assets if bound in Cloudflare Workers Static Assets
     if (env.ASSETS) {
+      // Free-tier: SEO-injected HTML is edge-cached per tenant + config_version + path so repeat
+      // deep-link hits skip tenant resolution, catalog loading and HTML rewriting entirely.
+      const htmlCache =
+        req.method === "GET" && typeof caches !== "undefined"
+          ? (caches as unknown as { default?: Cache }).default
+          : undefined;
+      let htmlCacheKey: Request | null = null;
+      if (htmlCache) {
+        try {
+          const rawHost = extractRequestHostname(req, env);
+          const bundle = await resolveTenantBundleCached(env.DB, rawHost, env.PLATFORM_BASE_DOMAIN);
+          const sfRow = bundle.ctx.ok ? bundle.ctx.storefront : null;
+          if (sfRow) {
+            const keyUrl = new URL(req.url);
+            keyUrl.searchParams.set("__html", "1");
+            keyUrl.searchParams.set("__sf", sfRow.id);
+            keyUrl.searchParams.set("__v", String(sfRow.config_version || 1));
+            keyUrl.searchParams.set("__h", rawHost || "default");
+            htmlCacheKey = new Request(keyUrl.toString(), { method: "GET" });
+            const hit = await htmlCache.match(htmlCacheKey);
+            if (hit) return hit;
+          }
+        } catch {
+          htmlCacheKey = null;
+        }
+      }
+
       const assetRes = await env.ASSETS.fetch(req);
       const ct = assetRes.headers.get("content-type") || "";
       if (ct.includes("text/html")) {
@@ -371,8 +403,18 @@ export async function handleWorkerRequest(
         const seoHtml = await injectStorefrontSeoMetadata(rawHtml, req, env);
         const headers = new Headers(assetRes.headers);
         headers.set("Vary", "Host, Origin, X-Storefront-Host");
-        headers.set("Cache-Control", "no-cache, no-store, must-revalidate");
-        return new Response(seoHtml, { status: assetRes.status, headers });
+        // Browser revalidates every minute; the edge copy (below) lives 10 minutes and rotates on config_version.
+        headers.set("Cache-Control", "public, max-age=60, must-revalidate");
+        const htmlRes = new Response(seoHtml, { status: assetRes.status, headers });
+        if (htmlCache && htmlCacheKey && assetRes.status === 200) {
+          const storeHeaders = new Headers(headers);
+          storeHeaders.set("Cache-Control", "public, max-age=600");
+          const put = htmlCache
+            .put(htmlCacheKey, new Response(seoHtml, { status: 200, headers: storeHeaders }))
+            .catch(() => {});
+          if (execCtx && typeof execCtx.waitUntil === "function") execCtx.waitUntil(put);
+        }
+        return htmlRes;
       }
       return assetRes;
     }
@@ -405,5 +447,18 @@ export default {
     ctx?: WorkerExecutionContext
   ): Promise<Response> {
     return handleWorkerRequest(req, env, ctx);
+  },
+  // Daily maintenance (wrangler.toml [triggers] crons): bounded pruning of idempotency,
+  // sync events, audit and usage rows so D1 storage and index sizes stay flat long-term.
+  async scheduled(
+    _event: unknown,
+    env: StorefrontWorkerEnv,
+    ctx: WorkerExecutionContext
+  ): Promise<void> {
+    const task = runScheduledMaintenance(env, ctx).catch((err) =>
+      console.error("[StorefrontWorker] scheduled maintenance failed:", err)
+    );
+    if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(task);
+    else await task;
   },
 };

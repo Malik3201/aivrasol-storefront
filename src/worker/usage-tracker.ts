@@ -78,12 +78,49 @@ interface BufferedPublicUsageBucket {
 }
 
 const publicUsageBuffer = new Map<string, BufferedPublicUsageBucket>();
-const PUBLIC_USAGE_FLUSH_INTERVAL_MS = 180_000;
-const PUBLIC_USAGE_FLUSH_REQ_THRESHOLD = 50;
+// Flush the whole isolate buffer at most once per 15 minutes or every 500 buffered hits
+// (whichever comes first). Counts accumulated in an isolate that is evicted before flushing are
+// dropped — acceptable for approximate telemetry, and it keeps public D1 writes near zero.
+const PUBLIC_USAGE_FLUSH_INTERVAL_MS = 15 * 60_000;
+const PUBLIC_USAGE_FLUSH_REQ_THRESHOLD = 500;
+let publicUsageBufferedHits = 0;
+let publicUsageLastFlushAt = Date.now();
+let publicUsageFlushInFlight: Promise<void> | null = null;
+
+type WaitUntilCtx = { waitUntil(promise: Promise<unknown>): void } | undefined | null;
+
+/** Runs a background task without blocking the response (waitUntil when available). */
+export function runInBackground(task: Promise<unknown>, execCtx?: WaitUntilCtx): void {
+  const safe = task.catch(() => {});
+  if (execCtx && typeof execCtx.waitUntil === "function") {
+    try {
+      execCtx.waitUntil(safe);
+    } catch {
+      // ignore — promise already has a catch handler
+    }
+  }
+}
+
+async function flushPublicUsageBuffer(db: D1Database): Promise<void> {
+  if (publicUsageBuffer.size === 0) return;
+  const buckets = Array.from(publicUsageBuffer.values());
+  publicUsageBuffer.clear();
+  for (const b of buckets) {
+    await recordStorefrontUsage(db, {
+      storefrontId: b.storefrontId,
+      pharmacyId: b.pharmacyId,
+      publicRequests: b.publicRequests,
+      searchRequests: b.searchRequests,
+      d1RowsReadEst: b.d1RowsRead,
+      d1RowsWrittenEst: 1,
+    });
+  }
+}
 
 /**
- * Buffers high-volume public storefront telemetry in isolate memory and flushes at most once
- * every 3 minutes or 50 hits — cutting public D1 `rows_written` by ~98% for 100+ pharmacies!
+ * Buffers high-volume public storefront telemetry in isolate memory. NEVER awaits D1 inside the
+ * request: flushes run via `ctx.waitUntil` (or fire-and-forget) at most once per isolate per
+ * 15 minutes or every 500 hits. The returned promise resolves immediately.
  */
 export async function recordBufferedPublicUsage(
   db: D1Database,
@@ -93,7 +130,8 @@ export async function recordBufferedPublicUsage(
     publicRequests?: number;
     searchRequests?: number;
     d1RowsRead?: number;
-  }
+  },
+  execCtx?: WaitUntilCtx
 ): Promise<void> {
   const key = `${input.storefrontId}:${input.pharmacyId}`;
   const now = Date.now();
@@ -105,25 +143,37 @@ export async function recordBufferedPublicUsage(
     d1RowsRead: 0,
     lastFlushAt: now,
   };
-  existing.publicRequests += input.publicRequests ?? 1;
+  const hits = input.publicRequests ?? 1;
+  existing.publicRequests += hits;
   existing.searchRequests += input.searchRequests ?? 0;
   existing.d1RowsRead += Math.max(0, Math.round(input.d1RowsRead ?? 0));
   publicUsageBuffer.set(key, existing);
+  publicUsageBufferedHits += Math.max(1, hits);
 
   if (
-    existing.publicRequests >= PUBLIC_USAGE_FLUSH_REQ_THRESHOLD ||
-    now - existing.lastFlushAt >= PUBLIC_USAGE_FLUSH_INTERVAL_MS
+    !publicUsageFlushInFlight &&
+    (publicUsageBufferedHits >= PUBLIC_USAGE_FLUSH_REQ_THRESHOLD ||
+      now - publicUsageLastFlushAt >= PUBLIC_USAGE_FLUSH_INTERVAL_MS)
   ) {
-    publicUsageBuffer.delete(key);
-    await recordStorefrontUsage(db, {
-      storefrontId: existing.storefrontId,
-      pharmacyId: existing.pharmacyId,
-      publicRequests: existing.publicRequests,
-      searchRequests: existing.searchRequests,
-      d1RowsReadEst: existing.d1RowsRead,
-      d1RowsWrittenEst: 1,
+    publicUsageBufferedHits = 0;
+    publicUsageLastFlushAt = now;
+    const flush = flushPublicUsageBuffer(db).finally(() => {
+      publicUsageFlushInFlight = null;
     });
+    publicUsageFlushInFlight = flush;
+    runInBackground(flush, execCtx);
   }
+}
+
+/**
+ * Non-blocking variant of `recordStorefrontUsage` for request paths (orders etc.).
+ */
+export function recordStorefrontUsageDeferred(
+  db: D1Database,
+  input: UsageIncrementInput,
+  execCtx?: WaitUntilCtx
+): void {
+  runInBackground(recordStorefrontUsage(db, input), execCtx);
 }
 
 /**

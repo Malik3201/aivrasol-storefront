@@ -32,7 +32,7 @@ import {
   toUrlSlug,
   validateStorefrontSlug,
 } from "../../shared/validation";
-import type { D1Database, StorefrontWorkerEnv } from "../env";
+import type { D1Database, D1PreparedStatement, StorefrontWorkerEnv } from "../env";
 import {
   buildResponseHeaders,
   sha256Hex,
@@ -44,8 +44,9 @@ import {
   recordStorefrontUsage,
   writeStorefrontAuditLog,
 } from "../usage-tracker";
-import { recalculateStorefrontCatalogCounts } from "./sync-routes";
+import { invalidateOrderNotifCache, recalculateStorefrontCatalogCounts } from "./sync-routes";
 import {
+  runWithCentralIndexBatch,
   getCentralLibraryOverview,
   listCanonicalMedicines,
   upsertCanonicalMedicine,
@@ -176,18 +177,420 @@ async function loadAndAuthorizeStorefront(
   return { storefront: sf };
 }
 
+// ============================================================================
+// Free-tier helpers: Cache API (colo-local, free) + shared read builders
+// ============================================================================
+const MANAGE_CACHE_ORIGIN = "https://manage-cache.aivrasol.internal";
+const ADMIN_SCAN_CACHE_TTL_SECONDS = 600; // overview / platform-status
+const BY_PHARMACY_CACHE_TTL_SECONDS = 60;
+
+function getEdgeCache(): { match: (k: Request) => Promise<Response | undefined>; put: (k: Request, r: Response) => Promise<void>; delete: (k: Request) => Promise<boolean> } | null {
+  try {
+    if (typeof caches === "undefined") return null;
+    const c = (caches as any).default;
+    return c && typeof c.match === "function" && typeof c.put === "function" ? c : null;
+  } catch {
+    return null;
+  }
+}
+
+function manageCacheKey(path: string): Request {
+  return new Request(`${MANAGE_CACHE_ORIGIN}${path}`, { method: "GET" });
+}
+
+async function edgeCacheGet(
+  path: string,
+  validate?: (h: Headers) => boolean
+): Promise<string | null> {
+  const cache = getEdgeCache();
+  if (!cache) return null;
+  try {
+    const hit = await cache.match(manageCacheKey(path));
+    if (!hit) return null;
+    if (validate && !validate(hit.headers)) return null;
+    return await hit.text();
+  } catch {
+    return null;
+  }
+}
+
+async function edgeCachePut(
+  path: string,
+  body: string,
+  ttlSeconds: number,
+  meta: Record<string, string> = {}
+): Promise<void> {
+  const cache = getEdgeCache();
+  if (!cache) return;
+  try {
+    await cache.put(
+      manageCacheKey(path),
+      new Response(body, {
+        headers: {
+          "content-type": "application/json; charset=utf-8",
+          "cache-control": `public, max-age=${ttlSeconds}`,
+          ...meta,
+        },
+      })
+    );
+  } catch {
+    // Non-fatal
+  }
+}
+
+async function edgeCacheDelete(path: string): Promise<void> {
+  const cache = getEdgeCache();
+  if (!cache) return;
+  try {
+    await cache.delete(manageCacheKey(path));
+  } catch {
+    // Non-fatal
+  }
+}
+
+function byPharmacyCachePath(storefrontId: string, window: string): string {
+  return `/by-pharmacy/${encodeURIComponent(storefrontId)}?w=${window}`;
+}
+
+function sfOrdersVersion(sf: unknown): number | null {
+  const v = (sf as any)?.orders_version;
+  return v === undefined || v === null || !Number.isFinite(Number(v)) ? null : Number(v);
+}
+
+function parseOrdersVersionParam(url: URL): number | null {
+  const raw = url.searchParams.get("v");
+  if (raw === null || raw.trim() === "") return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? Math.floor(n) : null;
+}
+
+type ManageSf = Pick<StorefrontRecord, "id" | "pharmacy_id">;
+
+async function buildManageProductsList(
+  env: StorefrontWorkerEnv,
+  sf: ManageSf,
+  opts: { statusFilter?: string; categoryFilter?: string; search?: string; limit: number }
+): Promise<{ products: R2CatalogProductRecord[]; summary: Record<string, number> }> {
+  const statusFilter = (opts.statusFilter || "").trim();
+  const categoryFilter = (opts.categoryFilter || "").trim().toLowerCase();
+  const search = (opts.search || "").trim().toLowerCase();
+
+  const { doc } = await loadStorefrontCatalogDoc(env, sf.id, sf.pharmacy_id, {
+    hydrateCentralImages: true,
+  });
+
+  let rows = doc.products.filter((p) => {
+    if (statusFilter && statusFilter !== "all" && p.publish_status !== statusFilter) {
+      return false;
+    }
+    if (
+      categoryFilter &&
+      categoryFilter !== "all" &&
+      String(p.category_name || "General Medicines").trim().toLowerCase() !== categoryFilter
+    ) {
+      return false;
+    }
+    if (search) {
+      const matchName = p.name.toLowerCase().includes(search);
+      const matchGen = (p.generic_name || "").toLowerCase().includes(search);
+      const matchSku = (p.sku_code || "").toLowerCase().includes(search);
+      const matchBrand = (p.brand_name || "").toLowerCase().includes(search);
+      if (!matchName && !matchGen && !matchSku && !matchBrand) return false;
+    }
+    return true;
+  });
+
+  rows = [...rows].sort((a, b) => {
+    const sCmp = String(a.publish_status || "").localeCompare(String(b.publish_status || ""));
+    return sCmp !== 0 ? sCmp : a.name.localeCompare(b.name);
+  });
+
+  return {
+    products: rows.slice(0, opts.limit),
+    summary: {
+      total_products: doc.products.length,
+      published_count: Number(doc.published_count || 0),
+      shared_matched_count: Number(doc.shared_matched_count || 0),
+      owner_override_count: Number(doc.owner_override_count || 0),
+    },
+  };
+}
+
+async function buildManageOrdersList(
+  env: StorefrontWorkerEnv,
+  sf: ManageSf,
+  opts: { statusFilter?: string; search?: string; limit: number }
+): Promise<any[]> {
+  const statusFilter = (opts.statusFilter || "").trim();
+  const search = (opts.search || "").trim().toLowerCase();
+
+  let sql = `
+      SELECT *
+      FROM storefront_orders
+      WHERE storefront_id = ? AND pharmacy_id = ?
+    `;
+  const params: unknown[] = [sf.id, sf.pharmacy_id];
+
+  if (statusFilter && statusFilter !== "all") {
+    if (statusFilter === "pending") {
+      sql += ` AND status = 'pending_confirmation'`;
+    } else if (statusFilter === "delivered") {
+      sql += ` AND status = 'completed' AND (fulfillment_outcome = 'delivered' OR (fulfillment_outcome IS NULL AND fulfillment_type = 'delivery'))`;
+    } else if (statusFilter === "collected") {
+      sql += ` AND status = 'completed' AND (fulfillment_outcome = 'collected' OR (fulfillment_outcome IS NULL AND fulfillment_type = 'pickup'))`;
+    } else if (statusFilter === "returned") {
+      sql += ` AND status = 'completed' AND fulfillment_outcome = 'returned'`;
+    } else {
+      sql += ` AND status = ?`;
+      params.push(statusFilter);
+    }
+  }
+  if (search) {
+    const pattern = `%${search}%`;
+    sql += ` AND (LOWER(order_number) LIKE ? OR LOWER(customer_name) LIKE ? OR LOWER(customer_phone) LIKE ?)`;
+    params.push(pattern, pattern, pattern);
+  }
+
+  sql += ` ORDER BY created_at DESC LIMIT ?`;
+  params.push(opts.limit);
+
+  const { results: orders } = await env.DB.prepare(sql)
+    .bind(...params)
+    .all<Record<string, any>>();
+  const orderRows = orders || [];
+
+  // Batched IN-chunk loads (was N+1: 2 queries per order → up to 400 queries for 200 orders)
+  const itemsByOrder = new Map<string, any[]>();
+  const historyByOrder = new Map<string, any[]>();
+  const orderIds = orderRows.map((o) => String(o.id)).filter(Boolean);
+  const IN_CHUNK = 40;
+  for (let i = 0; i < orderIds.length; i += IN_CHUNK) {
+    const chunk = orderIds.slice(i, i + IN_CHUNK);
+    const ph = chunk.map(() => "?").join(", ");
+    const [itemsRes, historyRes] = await Promise.all([
+      env.DB.prepare(
+        `SELECT * FROM storefront_order_items
+         WHERE storefront_id = ? AND pharmacy_id = ? AND order_id IN (${ph})
+         ORDER BY created_at ASC`
+      )
+        .bind(sf.id, sf.pharmacy_id, ...chunk)
+        .all<Record<string, any>>(),
+      env.DB.prepare(
+        `SELECT * FROM storefront_order_status_history
+         WHERE storefront_id = ? AND pharmacy_id = ? AND order_id IN (${ph})
+         ORDER BY created_at ASC`
+      )
+        .bind(sf.id, sf.pharmacy_id, ...chunk)
+        .all<Record<string, any>>(),
+    ]);
+    for (const it of itemsRes.results || []) {
+      const k = String(it.order_id);
+      const list = itemsByOrder.get(k) || [];
+      list.push(it);
+      itemsByOrder.set(k, list);
+    }
+    for (const h of historyRes.results || []) {
+      const k = String(h.order_id);
+      const list = historyByOrder.get(k) || [];
+      list.push(h);
+      historyByOrder.set(k, list);
+    }
+  }
+
+  const enriched: any[] = [];
+  for (const ord of orderRows) {
+    const outcome = ord.fulfillment_outcome ? String(ord.fulfillment_outcome).trim() : "";
+    const displayStatus =
+      outcome === "delivered" || outcome === "collected" || outcome === "returned"
+        ? outcome
+        : ord.status === "completed"
+        ? ord.fulfillment_type === "pickup"
+          ? "collected"
+          : "delivered"
+        : ord.status;
+
+    const effectivePaymentStatus =
+      ord.payment_status || (ord.payment_method === "cod" ? "pending_cod" : "unpaid");
+    const codPaid = Number(ord.cod_paid_amount_pkr || 0);
+    const codBalance =
+      ord.cod_balance_due_pkr !== null && ord.cod_balance_due_pkr !== undefined
+        ? Number(ord.cod_balance_due_pkr)
+        : ord.payment_method === "cod" && effectivePaymentStatus !== "paid"
+        ? Math.max(0, Number(ord.total_pkr || 0) - codPaid)
+        : 0;
+    let codCollections: any[] = [];
+    if (typeof ord.cod_collections_json === "string" && ord.cod_collections_json.trim()) {
+      try {
+        const parsed = JSON.parse(ord.cod_collections_json);
+        if (Array.isArray(parsed)) codCollections = parsed;
+      } catch {
+        codCollections = [];
+      }
+    }
+
+    enriched.push({
+      ...ord,
+      status: displayStatus,
+      pos_invoice_number: ord.pos_invoice_number || ord.pos_order_ref || null,
+      payment_status: effectivePaymentStatus,
+      cod_paid_amount_pkr: codPaid,
+      cod_balance_due_pkr: codBalance,
+      cod_collections: codCollections,
+      requires_prescription: Number(ord.requires_prescription) === 1,
+      items: (itemsByOrder.get(String(ord.id)) || []).map((it: any) => ({
+        ...it,
+        product_name: it.product_name_snapshot,
+        unit_label: it.selling_unit_name || it.unit_label_snapshot,
+      })),
+      history: historyByOrder.get(String(ord.id)) || [],
+    });
+  }
+  return enriched;
+}
+
+// In-isolate cache for owner-portal notification polls, valid only while orders_version is unchanged.
+const MANAGE_NOTIF_CACHE_TTL_MS = 60_000;
+const MANAGE_NOTIF_CACHE_TTL_UNVERSIONED_MS = 15_000;
+const manageNotifCache = new Map<
+  string,
+  { expiresAt: number; ordersVersion: number | null; payload: Record<string, unknown> }
+>();
+
+async function buildManageOrderNotifications(
+  env: StorefrontWorkerEnv,
+  sf: ManageSf & { orders_version?: number | null }
+): Promise<Record<string, unknown>> {
+  const ordersVersion = sfOrdersVersion(sf);
+  const cacheKey = `${sf.id}:${sf.pharmacy_id}`;
+  const cached = manageNotifCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now() && cached.ordersVersion === ordersVersion) {
+    return cached.payload;
+  }
+
+  // Query ONLY active/open orders using partial index `idx_storefront_orders_open_poll`
+  // (avoids scanning historical completed/cancelled/rejected orders).
+  const openRes = await env.DB.prepare(
+    `SELECT id, order_number, customer_name, customer_phone, fulfillment_type,
+            total_pkr, status, COALESCE(payment_status, 'unpaid') AS payment_status,
+            COALESCE(pos_handoff_status, 'pending') AS pos_handoff_status,
+            created_at, updated_at
+     FROM storefront_orders
+     WHERE storefront_id = ? AND pharmacy_id = ?
+       AND status NOT IN ('completed', 'cancelled', 'rejected')
+     ORDER BY created_at DESC
+     LIMIT 50`
+  )
+    .bind(sf.id, sf.pharmacy_id)
+    .all<Record<string, unknown>>();
+
+  const openRows = openRes.results || [];
+  const activeCount = openRows.length;
+  let pendingNewCount = 0;
+  let latestUpdatedAt: string | null = null;
+  for (const r of openRows) {
+    if (r.status === "pending_confirmation") pendingNewCount++;
+    const upd = r.updated_at ? String(r.updated_at) : null;
+    if (upd && (!latestUpdatedAt || upd > latestUpdatedAt)) latestUpdatedAt = upd;
+  }
+  const recentOrders = openRows.slice(0, 6);
+
+  const payload: Record<string, unknown> = {
+    ok: true,
+    storefront_id: sf.id,
+    pharmacy_id: sf.pharmacy_id,
+    active_attention_count: activeCount,
+    new_unacknowledged_count: pendingNewCount,
+    pending_confirmation_count: pendingNewCount,
+    latest_updated_at: latestUpdatedAt,
+    recent_orders: recentOrders,
+    ...(ordersVersion !== null ? { orders_version: ordersVersion } : {}),
+  };
+  manageNotifCache.set(cacheKey, {
+    expiresAt:
+      Date.now() +
+      (ordersVersion !== null ? MANAGE_NOTIF_CACHE_TTL_MS : MANAGE_NOTIF_CACHE_TTL_UNVERSIONED_MS),
+    ordersVersion,
+    payload,
+  });
+  return payload;
+}
+
+async function listManageReviews(env: StorefrontWorkerEnv, sf: ManageSf): Promise<unknown[]> {
+  try {
+    const { results } = await env.DB.prepare(
+      `SELECT * FROM storefront_reviews
+       WHERE storefront_id = ? AND pharmacy_id = ?
+       ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'published' THEN 1 ELSE 2 END, created_at DESC
+       LIMIT 150`
+    )
+      .bind(sf.id, sf.pharmacy_id)
+      .all();
+    return results || [];
+  } catch {
+    return [];
+  }
+}
+
+async function listManageDoctors(env: StorefrontWorkerEnv, sf: ManageSf): Promise<unknown[]> {
+  try {
+    const { results } = await env.DB.prepare(
+      `SELECT * FROM storefront_doctors
+       WHERE storefront_id = ? AND pharmacy_id = ?
+       ORDER BY sort_order ASC, name ASC`
+    )
+      .bind(sf.id, sf.pharmacy_id)
+      .all();
+    return results || [];
+  } catch {
+    return [];
+  }
+}
+
+async function listManageServices(env: StorefrontWorkerEnv, sf: ManageSf): Promise<unknown[]> {
+  try {
+    const { results } = await env.DB.prepare(
+      `SELECT * FROM storefront_custom_services
+       WHERE storefront_id = ? AND pharmacy_id = ?
+       ORDER BY sort_order ASC, title ASC`
+    )
+      .bind(sf.id, sf.pharmacy_id)
+      .all<Record<string, unknown>>();
+    return (results || []).map((row) => {
+      let items: any[] = [];
+      try {
+        const parsed = JSON.parse(String(row.items_json || "[]"));
+        if (Array.isArray(parsed)) items = parsed;
+      } catch {
+        items = [];
+      }
+      return { ...row, home_service_available: Number(row.home_service_available || 0) === 1, items };
+    });
+  } catch {
+    return [];
+  }
+}
+
 export async function handleManageRoutes(
   req: Request,
   env: StorefrontWorkerEnv,
   pathname: string
 ): Promise<Response> {
-  const response = await handleManageRoutesInner(req, env, pathname);
+  // Coalesce central image index publishes: N verifications in one request → 1 R2 index write + 1 version bump
+  const response =
+    req.method !== "GET" && pathname.startsWith("/api/v1/manage/central-library/")
+      ? await runWithCentralIndexBatch(env, () => handleManageRoutesInner(req, env, pathname))
+      : await handleManageRoutesInner(req, env, pathname);
   if (req.method !== "GET" && response.status >= 200 && response.status < 300) {
     const sfMatch = pathname.match(/^\/api\/v1\/manage\/storefronts\/([^/]+)/);
-    if (sfMatch?.[1]) {
+    if (sfMatch?.[1] && sfMatch[1] !== "by-pharmacy") {
       const sfId = decodeURIComponent(sfMatch[1]);
       invalidateTenantBundleCache(sfId);
       invalidateCategoryMetaCache(sfId);
+      // Drop the 60s by-pharmacy edge-cache entry so the owner sees their own edit immediately
+      await Promise.all([
+        edgeCacheDelete(byPharmacyCachePath(sfId, "30")),
+        edgeCacheDelete(byPharmacyCachePath(sfId, "all")),
+      ]);
     }
   }
   return response;
@@ -218,6 +621,12 @@ async function handleManageRoutesInner(
         JSON.stringify({ ok: false, error: "forbidden", message: "Super Admin access required." }),
         { status: 403, headers }
       );
+    }
+
+    // Free-tier: cache the probe result for 10 minutes in the colo Cache API
+    const cachedStatus = await edgeCacheGet("/platform-status");
+    if (cachedStatus) {
+      return new Response(cachedStatus, { status: 200, headers });
     }
 
     let d1Available = false;
@@ -251,8 +660,9 @@ async function handleManageRoutesInner(
     let r2Available = false;
     let r2Error: string | null = null;
     try {
-      if (env.MEDIA_BUCKET && typeof env.MEDIA_BUCKET.list === "function") {
-        await env.MEDIA_BUCKET.list({ limit: 1 });
+      // Class B HEAD probe (list() is a Class A op on R2)
+      if (env.MEDIA_BUCKET && typeof env.MEDIA_BUCKET.head === "function") {
+        await env.MEDIA_BUCKET.head("__health_probe_nonexistent__");
         r2Available = true;
       } else if (env.MEDIA_BUCKET && typeof env.MEDIA_BUCKET.get === "function") {
         await env.MEDIA_BUCKET.get("__health_probe_nonexistent__");
@@ -262,8 +672,7 @@ async function handleManageRoutesInner(
       r2Error = e?.message || "R2 probe failed";
     }
 
-    return new Response(
-      JSON.stringify({
+    const platformStatusBody = JSON.stringify({
         ok: true,
         worker: { status: "connected", version: "2.1.0", origin: url.origin },
         d1: {
@@ -287,9 +696,12 @@ async function handleManageRoutesInner(
         active_websites: activeWebsites,
         total_websites: totalWebsites,
         checked_at: new Date().toISOString(),
-      }),
-      { status: 200, headers }
-    );
+    });
+    // Only cache healthy results so a transient outage is re-probed on the next call
+    if (d1Available && d1SchemaMigrated && r2Available) {
+      await edgeCachePut("/platform-status", platformStatusBody, ADMIN_SCAN_CACHE_TTL_SECONDS);
+    }
+    return new Response(platformStatusBody, { status: 200, headers });
   }
 
   // ── 1. GET /api/v1/manage/overview (Super Admin only) ──
@@ -299,6 +711,12 @@ async function handleManageRoutesInner(
         JSON.stringify({ ok: false, error: "forbidden_super_admin_only" }),
         { status: 403, headers }
       );
+    }
+
+    // Free-tier: full-table aggregates (storefronts, storefront_orders, storefront_media) are cached 10 min
+    const cachedOverview = await edgeCacheGet("/overview");
+    if (cachedOverview) {
+      return new Response(cachedOverview, { status: 200, headers });
     }
 
     const today = getTodayUtcDateString();
@@ -356,8 +774,7 @@ async function handleManageRoutesInner(
       Number(usageTodayRow?.sync_requests || 0) +
       Number(usageTodayRow?.manage_requests || 0);
 
-    return new Response(
-      JSON.stringify({
+    const overviewBody = JSON.stringify({
         ok: true,
         overview: {
           total_storefronts: Number(countsRow?.total_storefronts || 0),
@@ -398,9 +815,9 @@ async function handleManageRoutesInner(
             },
           },
         },
-      }),
-      { status: 200, headers }
-    );
+    });
+    await edgeCachePut("/overview", overviewBody, ADMIN_SCAN_CACHE_TTL_SECONDS);
+    return new Response(overviewBody, { status: 200, headers });
   }
 
   // ── 2. GET /api/v1/manage/storefronts/check-slug ──
@@ -488,10 +905,35 @@ async function handleManageRoutesInner(
 
     sql += ` ORDER BY s.created_at DESC`;
 
-    const { results } = await env.DB.prepare(sql).bind(...params).all<Record<string, unknown>>();
+    // Optional pagination (`limit`, `offset`). Without `limit` the full list is returned (backward compatible);
+    // with `limit` the correlated sub-queries only run for the requested page.
+    const limitParam = url.searchParams.get("limit");
+    const pageLimit =
+      limitParam !== null && limitParam.trim() !== ""
+        ? Math.min(200, Math.max(1, Math.floor(Number(limitParam)) || 50))
+        : null;
+    const pageOffset = Math.max(0, Math.floor(Number(url.searchParams.get("offset")) || 0));
+    if (pageLimit !== null) {
+      sql += ` LIMIT ? OFFSET ?`;
+      params.push(pageLimit + 1, pageOffset);
+    }
+
+    const { results: rawResults } = await env.DB.prepare(sql).bind(...params).all<Record<string, unknown>>();
+    const hasMore = pageLimit !== null && rawResults.length > pageLimit;
+    const results = pageLimit !== null ? rawResults.slice(0, pageLimit) : rawResults;
     return new Response(
       JSON.stringify({
         ok: true,
+        ...(pageLimit !== null
+          ? {
+              pagination: {
+                limit: pageLimit,
+                offset: pageOffset,
+                has_more: hasMore,
+                next_offset: hasMore ? pageOffset + pageLimit : null,
+              },
+            }
+          : {}),
         storefronts: results.map((r) => ({
           ...r,
           website_enabled: Number(r.website_enabled) === 1,
@@ -970,65 +1412,142 @@ async function handleManageRoutesInner(
     }
 
     const sf = loaded.storefront;
-    const [
-      branding,
-      settings,
-      domainsRes,
-      cursorsRes,
-      categoriesRes,
-      bannersRes,
-      promotionsRes,
-      zonesRes,
-      branchesRes,
-      ordersSummaryRow,
-      mediaRes,
-    ] = await Promise.all([
-      env.DB.prepare("SELECT * FROM storefront_branding WHERE storefront_id = ? LIMIT 1")
-        .bind(sf.id)
-        .first<StorefrontBrandingRecord>(),
-      env.DB.prepare("SELECT * FROM storefront_settings WHERE storefront_id = ? LIMIT 1")
-        .bind(sf.id)
-        .first<StorefrontSettingsRecord>(),
-      env.DB.prepare("SELECT * FROM storefront_domains WHERE storefront_id = ? ORDER BY is_primary DESC, created_at ASC")
-        .bind(sf.id)
-        .all<StorefrontDomainRecord>(),
-      env.DB.prepare("SELECT * FROM storefront_sync_cursors WHERE storefront_id = ?")
-        .bind(sf.id)
-        .all(),
-      env.DB.prepare("SELECT * FROM storefront_categories WHERE storefront_id = ? ORDER BY sort_order ASC, name ASC")
-        .bind(sf.id)
-        .all<StorefrontCategoryRecord>(),
-      env.DB.prepare("SELECT * FROM storefront_banners WHERE storefront_id = ? ORDER BY sort_order ASC, created_at DESC")
-        .bind(sf.id)
-        .all<StorefrontBannerRecord>(),
-      env.DB.prepare("SELECT * FROM storefront_promotions WHERE storefront_id = ? ORDER BY created_at DESC")
-        .bind(sf.id)
-        .all(),
-      env.DB.prepare("SELECT * FROM storefront_delivery_zones WHERE storefront_id = ? ORDER BY sort_order ASC, zone_name ASC")
-        .bind(sf.id)
-        .all(),
-      env.DB.prepare("SELECT * FROM storefront_branches WHERE storefront_id = ? ORDER BY is_main DESC, name ASC")
-        .bind(sf.id)
-        .all<StorefrontBranchRecord>(),
-      env.DB.prepare(
-        `SELECT
-           COUNT(*) AS total_orders,
-           SUM(CASE WHEN status = 'pending_confirmation' THEN 1 ELSE 0 END) AS pending_orders,
-           SUM(CASE WHEN status IN ('confirmed', 'preparing', 'ready_for_pickup', 'out_for_delivery') THEN 1 ELSE 0 END) AS active_orders,
-           SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed_orders,
-           COALESCE(SUM(CASE WHEN status != 'cancelled' AND status != 'rejected' THEN total_pkr ELSE 0 END), 0) AS total_order_value_pkr
-         FROM storefront_orders
-         WHERE storefront_id = ? AND pharmacy_id = ?`
-      )
-        .bind(sf.id, sf.pharmacy_id)
-        .first<Record<string, number>>(),
-      env.DB.prepare("SELECT * FROM storefront_media WHERE storefront_id = ? ORDER BY created_at DESC LIMIT 40")
-        .bind(sf.id)
-        .all(),
-    ]);
 
-    const domains = domainsRes.results || [];
-    const setupProgress = computeSetupProgress(sf, branding, settings, domains);
+    // Orders summary window: default last 30 days (index range on created_at) — `?orders_window=all`
+    // restores the legacy all-time COUNT/SUM. Pending/active counts are always all-time (open-orders partial index).
+    const ordersWindowAll = (url.searchParams.get("orders_window") || "").trim().toLowerCase() === "all";
+    const windowKey = ordersWindowAll ? "all" : "30";
+    const cachePath = byPharmacyCachePath(sf.id, windowKey);
+    const cv = String(sf.config_version ?? "");
+    const ov = String(sfOrdersVersion(sf) ?? "");
+    const upd = String(sf.updated_at ?? "");
+
+    let cachedParts: Record<string, any> | null = null;
+    const cachedText = await edgeCacheGet(
+      cachePath,
+      (h) => h.get("x-cv") === cv && h.get("x-ov") === ov && h.get("x-upd") === upd
+    );
+    if (cachedText) {
+      try {
+        cachedParts = JSON.parse(cachedText);
+      } catch {
+        cachedParts = null;
+      }
+    }
+
+    if (!cachedParts) {
+      const windowStartIso = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
+      const ordersSummaryPromise = ordersWindowAll
+        ? env.DB.prepare(
+            `SELECT
+               COUNT(*) AS total_orders,
+               SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed_orders,
+               COALESCE(SUM(CASE WHEN status != 'cancelled' AND status != 'rejected' THEN total_pkr ELSE 0 END), 0) AS total_order_value_pkr
+             FROM storefront_orders
+             WHERE storefront_id = ? AND pharmacy_id = ?`
+          )
+            .bind(sf.id, sf.pharmacy_id)
+            .first<Record<string, number>>()
+        : env.DB.prepare(
+            `SELECT
+               COUNT(*) AS total_orders,
+               SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed_orders,
+               COALESCE(SUM(CASE WHEN status != 'cancelled' AND status != 'rejected' THEN total_pkr ELSE 0 END), 0) AS total_order_value_pkr
+             FROM storefront_orders
+             WHERE storefront_id = ? AND created_at >= ? AND pharmacy_id = ?`
+          )
+            .bind(sf.id, windowStartIso, sf.pharmacy_id)
+            .first<Record<string, number>>();
+
+      const [
+        branding,
+        settings,
+        domainsRes,
+        cursorsRes,
+        categoriesRes,
+        bannersRes,
+        promotionsRes,
+        zonesRes,
+        branchesRes,
+        ordersSummaryRow,
+        openOrdersRow,
+        mediaRes,
+      ] = await Promise.all([
+        env.DB.prepare("SELECT * FROM storefront_branding WHERE storefront_id = ? LIMIT 1")
+          .bind(sf.id)
+          .first<StorefrontBrandingRecord>(),
+        env.DB.prepare("SELECT * FROM storefront_settings WHERE storefront_id = ? LIMIT 1")
+          .bind(sf.id)
+          .first<StorefrontSettingsRecord>(),
+        env.DB.prepare("SELECT * FROM storefront_domains WHERE storefront_id = ? ORDER BY is_primary DESC, created_at ASC")
+          .bind(sf.id)
+          .all<StorefrontDomainRecord>(),
+        env.DB.prepare("SELECT * FROM storefront_sync_cursors WHERE storefront_id = ?")
+          .bind(sf.id)
+          .all(),
+        env.DB.prepare("SELECT * FROM storefront_categories WHERE storefront_id = ? ORDER BY sort_order ASC, name ASC")
+          .bind(sf.id)
+          .all<StorefrontCategoryRecord>(),
+        env.DB.prepare("SELECT * FROM storefront_banners WHERE storefront_id = ? ORDER BY sort_order ASC, created_at DESC")
+          .bind(sf.id)
+          .all<StorefrontBannerRecord>(),
+        env.DB.prepare("SELECT * FROM storefront_promotions WHERE storefront_id = ? ORDER BY created_at DESC")
+          .bind(sf.id)
+          .all(),
+        env.DB.prepare("SELECT * FROM storefront_delivery_zones WHERE storefront_id = ? ORDER BY sort_order ASC, zone_name ASC")
+          .bind(sf.id)
+          .all(),
+        env.DB.prepare("SELECT * FROM storefront_branches WHERE storefront_id = ? ORDER BY is_main DESC, name ASC")
+          .bind(sf.id)
+          .all<StorefrontBranchRecord>(),
+        ordersSummaryPromise,
+        env.DB.prepare(
+          `SELECT
+             COUNT(*) AS open_orders,
+             SUM(CASE WHEN status = 'pending_confirmation' THEN 1 ELSE 0 END) AS pending_orders
+           FROM storefront_orders
+           WHERE storefront_id = ? AND pharmacy_id = ?
+             AND status NOT IN ('completed', 'cancelled', 'rejected')`
+        )
+          .bind(sf.id, sf.pharmacy_id)
+          .first<Record<string, number>>(),
+        env.DB.prepare("SELECT * FROM storefront_media WHERE storefront_id = ? ORDER BY created_at DESC LIMIT 40")
+          .bind(sf.id)
+          .all(),
+      ]);
+
+      const pendingOrders = Number(openOrdersRow?.pending_orders || 0);
+      const openOrders = Number(openOrdersRow?.open_orders || 0);
+      cachedParts = {
+        branding,
+        settings,
+        domains: domainsRes.results || [],
+        categories: categoriesRes.results || [],
+        banners: bannersRes.results || [],
+        promotions: promotionsRes.results || [],
+        delivery_zones: zonesRes.results || [],
+        branches: branchesRes.results || [],
+        media: mediaRes.results || [],
+        orders_summary: {
+          total_orders: Number(ordersSummaryRow?.total_orders || 0),
+          pending_orders: pendingOrders,
+          active_orders: Math.max(0, openOrders - pendingOrders),
+          completed_orders: Number(ordersSummaryRow?.completed_orders || 0),
+          total_order_value_pkr: Number(ordersSummaryRow?.total_order_value_pkr || 0),
+          window_days: ordersWindowAll ? null : 30,
+        },
+        sync_cursors: cursorsRes.results || [],
+      };
+      await edgeCachePut(cachePath, JSON.stringify(cachedParts), BY_PHARMACY_CACHE_TTL_SECONDS, {
+        "x-cv": cv,
+        "x-ov": ov,
+        "x-upd": upd,
+      });
+    }
+
+    const parts = cachedParts as Record<string, any>;
+    const domains = (parts.domains || []) as StorefrontDomainRecord[];
+    const setupProgress = computeSetupProgress(sf, parts.branding || null, parts.settings || null, domains);
 
     return new Response(
       JSON.stringify({
@@ -1040,23 +1559,17 @@ async function handleManageRoutesInner(
           pilot_access: Number(sf.pilot_access) === 1,
           website_url: `https://${sf.primary_domain}`,
         },
-        branding,
-        settings,
+        branding: parts.branding ?? null,
+        settings: parts.settings ?? null,
         domains,
-        categories: categoriesRes.results || [],
-        banners: bannersRes.results || [],
-        promotions: promotionsRes.results || [],
-        delivery_zones: zonesRes.results || [],
-        branches: branchesRes.results || [],
-        media: mediaRes.results || [],
-        orders_summary: {
-          total_orders: Number(ordersSummaryRow?.total_orders || 0),
-          pending_orders: Number(ordersSummaryRow?.pending_orders || 0),
-          active_orders: Number(ordersSummaryRow?.active_orders || 0),
-          completed_orders: Number(ordersSummaryRow?.completed_orders || 0),
-          total_order_value_pkr: Number(ordersSummaryRow?.total_order_value_pkr || 0),
-        },
-        sync_cursors: cursorsRes.results || [],
+        categories: parts.categories || [],
+        banners: parts.banners || [],
+        promotions: parts.promotions || [],
+        delivery_zones: parts.delivery_zones || [],
+        branches: parts.branches || [],
+        media: parts.media || [],
+        orders_summary: parts.orders_summary,
+        sync_cursors: parts.sync_cursors || [],
         setup_progress: setupProgress,
       }),
       { status: 200, headers }
@@ -1073,10 +1586,27 @@ async function handleManageRoutesInner(
         { status: 403, headers }
       );
     }
-    const centralCompiled = await rebuildAndSaveCentralImageIndex(env);
-    const { results: sfRows } = await env.DB.prepare(
-      `SELECT id, pharmacy_id, slug, pharmacy_name FROM storefronts ORDER BY created_at ASC`
-    ).all<{ id: string; pharmacy_id: string; slug: string; pharmacy_name: string }>();
+    // Paginated: ≤10 storefronts per request (Worker CPU/subrequest limits + bounded D1/R2 ops per call).
+    // `cursor` (query param or JSON body) is an opaque offset; the first page (no cursor) also rebuilds the
+    // central index, later pages reuse it. Loop on `next_cursor` until it is null.
+    const WARM_PAGE_SIZE = 10;
+    let warmBody: any = {};
+    try {
+      warmBody = await req.json();
+    } catch {
+      warmBody = {};
+    }
+    const rawCursor = url.searchParams.get("cursor") ?? (warmBody?.cursor != null ? String(warmBody.cursor) : "");
+    const warmOffset = Math.max(0, Math.floor(Number(rawCursor) || 0));
+    const centralCompiled =
+      warmOffset === 0 ? await rebuildAndSaveCentralImageIndex(env) : await getCentralImageIndex(env);
+    const { results: sfPageRows } = await env.DB.prepare(
+      `SELECT id, pharmacy_id, slug, pharmacy_name FROM storefronts ORDER BY created_at ASC, id ASC LIMIT ? OFFSET ?`
+    )
+      .bind(WARM_PAGE_SIZE + 1, warmOffset)
+      .all<{ id: string; pharmacy_id: string; slug: string; pharmacy_name: string }>();
+    const warmHasMore = (sfPageRows || []).length > WARM_PAGE_SIZE;
+    const sfRows = (sfPageRows || []).slice(0, WARM_PAGE_SIZE);
 
     const migrated: Array<{
       storefront_id: string;
@@ -1117,6 +1647,9 @@ async function handleManageRoutesInner(
         central_verified_images: centralCompiled.doc.total_verified,
         storefronts_warmed: migrated.length,
         storefronts: migrated,
+        cursor: String(warmOffset),
+        next_cursor: warmHasMore ? String(warmOffset + WARM_PAGE_SIZE) : null,
+        page_size: WARM_PAGE_SIZE,
       }),
       { status: 200, headers }
     );
@@ -2711,45 +3244,59 @@ async function handleManageRoutesInner(
 
   // ── 11. Product Catalog & Publishing Management (`/products`, `/products/publishing`) — R2-First (0 D1 product reads/writes!) ──
   if (subPath === "/products" && req.method === "GET") {
-    const statusFilter = (url.searchParams.get("publish_status") || "").trim();
-    const categoryFilter = (url.searchParams.get("category") || "").trim().toLowerCase();
-    const search = (url.searchParams.get("q") || "").trim().toLowerCase();
     const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit")) || 100));
-
-    const { doc } = await loadStorefrontCatalogDoc(env, sf.id, sf.pharmacy_id, {
-      hydrateCentralImages: true,
+    const { products } = await buildManageProductsList(env, sf, {
+      statusFilter: url.searchParams.get("publish_status") || "",
+      categoryFilter: url.searchParams.get("category") || "",
+      search: url.searchParams.get("q") || "",
+      limit,
     });
 
-    let rows = doc.products.filter((p) => {
-      if (statusFilter && statusFilter !== "all" && p.publish_status !== statusFilter) {
-        return false;
-      }
-      if (
-        categoryFilter &&
-        categoryFilter !== "all" &&
-        String(p.category_name || "General Medicines").trim().toLowerCase() !== categoryFilter
-      ) {
-        return false;
-      }
-      if (search) {
-        const matchName = p.name.toLowerCase().includes(search);
-        const matchGen = (p.generic_name || "").toLowerCase().includes(search);
-        const matchSku = (p.sku_code || "").toLowerCase().includes(search);
-        const matchBrand = (p.brand_name || "").toLowerCase().includes(search);
-        if (!matchName && !matchGen && !matchSku && !matchBrand) return false;
-      }
-      return true;
-    });
-
-    rows = [...rows].sort((a, b) => {
-      const sCmp = String(a.publish_status || "").localeCompare(String(b.publish_status || ""));
-      return sCmp !== 0 ? sCmp : a.name.localeCompare(b.name);
-    });
-
-    return new Response(JSON.stringify({ ok: true, products: rows.slice(0, limit) }), {
+    return new Response(JSON.stringify({ ok: true, products }), {
       status: 200,
       headers,
     });
+  }
+
+  // ── 11b. GET /api/v1/manage/storefronts/:id/dashboard — Owner Portal "My Website" aggregate ──
+  // Replaces 6 parallel portal calls (products, orders, notifications, reviews, doctors, services)
+  // with ONE Worker request + ONE storefront auth row. Old endpoints remain unchanged.
+  if (subPath === "/dashboard" && req.method === "GET") {
+    const productsLimit = Math.min(
+      200,
+      Math.max(1, Number(url.searchParams.get("products_limit")) || 100)
+    );
+    const ordersLimit = Math.min(200, Math.max(1, Number(url.searchParams.get("orders_limit")) || 100));
+    const [productsRes, orders, notifications, reviews, doctors, services] = await Promise.all([
+      buildManageProductsList(env, sf, { limit: productsLimit }).catch(() => ({
+        products: [] as R2CatalogProductRecord[],
+        summary: {} as Record<string, number>,
+      })),
+      buildManageOrdersList(env, sf, { limit: ordersLimit }),
+      buildManageOrderNotifications(env, sf),
+      listManageReviews(env, sf),
+      listManageDoctors(env, sf),
+      listManageServices(env, sf),
+    ]);
+    const ordersVersion = sfOrdersVersion(sf);
+
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        storefront_id: sf.id,
+        pharmacy_id: sf.pharmacy_id,
+        ...(ordersVersion !== null ? { orders_version: ordersVersion } : {}),
+        products: productsRes.products,
+        products_summary: productsRes.summary,
+        orders,
+        order_notifications: notifications,
+        reviews,
+        doctors,
+        services,
+        generated_at: new Date().toISOString(),
+      }),
+      { status: 200, headers }
+    );
   }
 
   // POST `/products/:posProdId/assign-image` — Manage product image source (owner override, shared pick, revert)
@@ -3456,14 +4003,22 @@ async function handleManageRoutesInner(
 
     let removedCount = 0;
     let freedBytes = 0;
-    for (const row of unreferenced.results || []) {
-      await env.DB.prepare(
-        "DELETE FROM storefront_media WHERE id = ? AND storefront_id = ? AND pharmacy_id = ?"
-      )
-        .bind(row.id, sf.id, sf.pharmacy_id)
-        .run();
-      removedCount++;
-      freedBytes += Number(row.byte_size || 0);
+    const cleanupRows = unreferenced.results || [];
+    // Batched deletes: 1 D1 round-trip per 50 rows instead of 1 per row
+    const DELETE_CHUNK = 50;
+    for (let i = 0; i < cleanupRows.length; i += DELETE_CHUNK) {
+      const chunk = cleanupRows.slice(i, i + DELETE_CHUNK);
+      await env.DB.batch(
+        chunk.map((row) =>
+          env.DB.prepare(
+            "DELETE FROM storefront_media WHERE id = ? AND storefront_id = ? AND pharmacy_id = ?"
+          ).bind(row.id, sf.id, sf.pharmacy_id)
+        )
+      );
+      for (const row of chunk) {
+        removedCount++;
+        freedBytes += Number(row.byte_size || 0);
+      }
     }
 
     return new Response(
@@ -3478,148 +4033,31 @@ async function handleManageRoutesInner(
 
   // ── 14b. Online Orders Management & Notification Summary (`/orders`, `/orders/notifications`, `/orders/:orderId`) ──
   if (subPath === "/orders/notifications" && req.method === "GET") {
-    // Query ONLY active/open orders using partial index `idx_storefront_orders_open_poll`
-    // (avoids scanning historical completed/cancelled/rejected orders).
-    const openRes = await env.DB.prepare(
-      `SELECT id, order_number, customer_name, customer_phone, fulfillment_type,
-              total_pkr, status, COALESCE(payment_status, 'unpaid') AS payment_status,
-              COALESCE(pos_handoff_status, 'pending') AS pos_handoff_status,
-              created_at, updated_at
-       FROM storefront_orders
-       WHERE storefront_id = ? AND pharmacy_id = ?
-         AND status NOT IN ('completed', 'cancelled', 'rejected')
-       ORDER BY created_at DESC
-       LIMIT 50`
-    )
-      .bind(sf.id, sf.pharmacy_id)
-      .all<Record<string, unknown>>();
-
-    const openRows = openRes.results || [];
-    const activeCount = openRows.length;
-    let pendingNewCount = 0;
-    let latestUpdatedAt: string | null = null;
-    for (const r of openRows) {
-      if (r.status === "pending_confirmation") pendingNewCount++;
-      const upd = r.updated_at ? String(r.updated_at) : null;
-      if (upd && (!latestUpdatedAt || upd > latestUpdatedAt)) latestUpdatedAt = upd;
+    // `?v=<orders_version>` short-circuit: storefront row (already loaded for auth) is the only D1 read.
+    const currentOrdersVersion = sfOrdersVersion(sf);
+    const clientOrdersVersion = parseOrdersVersionParam(url);
+    if (
+      currentOrdersVersion !== null &&
+      clientOrdersVersion !== null &&
+      clientOrdersVersion === currentOrdersVersion
+    ) {
+      return new Response(
+        JSON.stringify({ ok: true, unchanged: true, orders_version: currentOrdersVersion }),
+        { status: 200, headers }
+      );
     }
-    const recentOrders = openRows.slice(0, 6);
 
-    return new Response(
-      JSON.stringify({
-        ok: true,
-        storefront_id: sf.id,
-        pharmacy_id: sf.pharmacy_id,
-        active_attention_count: activeCount,
-        new_unacknowledged_count: pendingNewCount,
-        pending_confirmation_count: pendingNewCount,
-        latest_updated_at: latestUpdatedAt,
-        recent_orders: recentOrders,
-      }),
-      { status: 200, headers }
-    );
+    const payload = await buildManageOrderNotifications(env, sf);
+    return new Response(JSON.stringify(payload), { status: 200, headers });
   }
 
   if (subPath === "/orders" && req.method === "GET") {
-    const statusFilter = (url.searchParams.get("status") || "").trim();
-    const search = (url.searchParams.get("q") || "").trim().toLowerCase();
     const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit")) || 80));
-
-    let sql = `
-      SELECT *
-      FROM storefront_orders
-      WHERE storefront_id = ? AND pharmacy_id = ?
-    `;
-    const params: unknown[] = [sf.id, sf.pharmacy_id];
-
-    if (statusFilter && statusFilter !== "all") {
-      if (statusFilter === "pending") {
-        sql += ` AND status = 'pending_confirmation'`;
-      } else if (statusFilter === "delivered") {
-        sql += ` AND status = 'completed' AND (fulfillment_outcome = 'delivered' OR (fulfillment_outcome IS NULL AND fulfillment_type = 'delivery'))`;
-      } else if (statusFilter === "collected") {
-        sql += ` AND status = 'completed' AND (fulfillment_outcome = 'collected' OR (fulfillment_outcome IS NULL AND fulfillment_type = 'pickup'))`;
-      } else if (statusFilter === "returned") {
-        sql += ` AND status = 'completed' AND fulfillment_outcome = 'returned'`;
-      } else {
-        sql += ` AND status = ?`;
-        params.push(statusFilter);
-      }
-    }
-    if (search) {
-      const pattern = `%${search}%`;
-      sql += ` AND (LOWER(order_number) LIKE ? OR LOWER(customer_name) LIKE ? OR LOWER(customer_phone) LIKE ?)`;
-      params.push(pattern, pattern, pattern);
-    }
-
-    sql += ` ORDER BY created_at DESC LIMIT ?`;
-    params.push(limit);
-
-    const { results: orders } = await env.DB.prepare(sql)
-      .bind(...params)
-      .all<Record<string, any>>();
-
-    const enriched: any[] = [];
-    for (const ord of orders || []) {
-      const [itemsRes, historyRes] = await Promise.all([
-        env.DB.prepare(
-          "SELECT * FROM storefront_order_items WHERE storefront_id = ? AND pharmacy_id = ? AND order_id = ? ORDER BY created_at ASC"
-        )
-          .bind(sf.id, sf.pharmacy_id, ord.id)
-          .all(),
-        env.DB.prepare(
-          "SELECT * FROM storefront_order_status_history WHERE storefront_id = ? AND pharmacy_id = ? AND order_id = ? ORDER BY created_at ASC"
-        )
-          .bind(sf.id, sf.pharmacy_id, ord.id)
-          .all(),
-      ]);
-
-      const outcome = ord.fulfillment_outcome ? String(ord.fulfillment_outcome).trim() : "";
-      const displayStatus =
-        outcome === "delivered" || outcome === "collected" || outcome === "returned"
-          ? outcome
-          : ord.status === "completed"
-          ? ord.fulfillment_type === "pickup"
-            ? "collected"
-            : "delivered"
-          : ord.status;
-
-      const effectivePaymentStatus =
-        ord.payment_status || (ord.payment_method === "cod" ? "pending_cod" : "unpaid");
-      const codPaid = Number(ord.cod_paid_amount_pkr || 0);
-      const codBalance =
-        ord.cod_balance_due_pkr !== null && ord.cod_balance_due_pkr !== undefined
-          ? Number(ord.cod_balance_due_pkr)
-          : ord.payment_method === "cod" && effectivePaymentStatus !== "paid"
-          ? Math.max(0, Number(ord.total_pkr || 0) - codPaid)
-          : 0;
-      let codCollections: any[] = [];
-      if (typeof ord.cod_collections_json === "string" && ord.cod_collections_json.trim()) {
-        try {
-          const parsed = JSON.parse(ord.cod_collections_json);
-          if (Array.isArray(parsed)) codCollections = parsed;
-        } catch {
-          codCollections = [];
-        }
-      }
-
-      enriched.push({
-        ...ord,
-        status: displayStatus,
-        pos_invoice_number: ord.pos_invoice_number || ord.pos_order_ref || null,
-        payment_status: effectivePaymentStatus,
-        cod_paid_amount_pkr: codPaid,
-        cod_balance_due_pkr: codBalance,
-        cod_collections: codCollections,
-        requires_prescription: Number(ord.requires_prescription) === 1,
-        items: (itemsRes.results || []).map((it: any) => ({
-          ...it,
-          product_name: it.product_name_snapshot,
-          unit_label: it.selling_unit_name || it.unit_label_snapshot,
-        })),
-        history: historyRes.results || [],
-      });
-    }
+    const enriched = await buildManageOrdersList(env, sf, {
+      statusFilter: url.searchParams.get("status") || "",
+      search: url.searchParams.get("q") || "",
+      limit,
+    });
 
     return new Response(JSON.stringify({ ok: true, orders: enriched }), {
       status: 200,
@@ -3737,36 +4175,38 @@ async function handleManageRoutesInner(
       ? String(body.note).trim()
       : `Updated order status to '${nextStatusNorm}' (payment: '${nextPaymentStatus}').`;
 
-    await env.DB.prepare(
-      `UPDATE storefront_orders
-       SET status = ?,
-           fulfillment_outcome = ?,
-           payment_status = ?,
-           pos_handoff_status = ?,
-           pos_order_ref = COALESCE(?, pos_order_ref),
-           updated_at = ?
-       WHERE id = ? AND storefront_id = ? AND pharmacy_id = ?`
-    )
-      .bind(
+    // Free-tier: UPDATE + status history + audit in ONE D1 batch (single transaction / round-trip).
+    // `orders_version` is bumped by the storefront_orders AFTER UPDATE trigger (migration 0012).
+    // The audit row is kept here on purpose: owner-portal status edits are manual overrides.
+    const posRefOverride = body.pos_order_ref || body.pos_invoice_number || null;
+    const auditSummary = `Order ${ord.order_number} status changed from '${currentDisplayStatus}' to '${nextStatusNorm}' (payment: ${nextPaymentStatus}).`;
+    const patchStatements: D1PreparedStatement[] = [
+      env.DB.prepare(
+        `UPDATE storefront_orders
+         SET status = ?,
+             fulfillment_outcome = ?,
+             payment_status = ?,
+             pos_handoff_status = ?,
+             pos_order_ref = COALESCE(?, pos_order_ref),
+             updated_at = ?
+         WHERE id = ? AND storefront_id = ? AND pharmacy_id = ?`
+      ).bind(
         dbStatus,
         fulfillmentOutcome,
         nextPaymentStatus,
         nextHandoff,
-        body.pos_order_ref || body.pos_invoice_number || null,
+        posRefOverride,
         nowIso,
         ord.id,
         sf.id,
         sf.pharmacy_id
-      )
-      .run();
-
-    await env.DB.prepare(
-      `INSERT INTO storefront_order_status_history (
-         id, storefront_id, pharmacy_id, order_id, from_status, to_status,
-         actor_type, actor_id, note, created_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-      .bind(
+      ),
+      env.DB.prepare(
+        `INSERT INTO storefront_order_status_history (
+           id, storefront_id, pharmacy_id, order_id, from_status, to_status,
+           actor_type, actor_id, note, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
         `sfosh_${crypto.randomUUID()}`,
         sf.id,
         sf.pharmacy_id,
@@ -3777,32 +4217,44 @@ async function handleManageRoutesInner(
         actor.actorEmail || actor.actorId,
         note,
         nowIso
-      )
-      .run();
+      ),
+      env.DB.prepare(
+        `INSERT INTO storefront_audit_logs (
+           id, storefront_id, pharmacy_id, action, actor_type, actor_id, actor_email,
+           entity_type, entity_id, summary, metadata_json, ip_address, created_at
+         ) VALUES (?, ?, ?, 'order_status_updated', ?, ?, ?, 'order', ?, ?, ?, NULL, ?)`
+      ).bind(
+        `sfa_${crypto.randomUUID()}`,
+        sf.id,
+        sf.pharmacy_id,
+        actor.actorType,
+        actor.actorId ?? null,
+        actor.actorEmail ?? null,
+        ord.id,
+        auditSummary,
+        JSON.stringify({
+          order_number: ord.order_number,
+          from_status: currentDisplayStatus,
+          to_status: nextStatusNorm,
+          payment_status: nextPaymentStatus,
+        }),
+        nowIso
+      ),
+    ];
+    await env.DB.batch(patchStatements);
+    invalidateOrderNotifCache(sf.id, sf.pharmacy_id);
+    manageNotifCache.delete(`${sf.id}:${sf.pharmacy_id}`);
 
-    await writeStorefrontAuditLog(env.DB, {
-      storefrontId: sf.id,
-      pharmacyId: sf.pharmacy_id,
-      action: "order_status_updated",
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      actorEmail: actor.actorEmail,
-      entityType: "order",
-      entityId: ord.id,
-      summary: `Order ${ord.order_number} status changed from '${currentDisplayStatus}' to '${nextStatusNorm}' (payment: ${nextPaymentStatus}).`,
-      metadata: {
-        order_number: ord.order_number,
-        from_status: currentDisplayStatus,
-        to_status: nextStatusNorm,
-        payment_status: nextPaymentStatus,
-      },
-    });
-
-    const updatedOrd = await env.DB.prepare(
-      "SELECT * FROM storefront_orders WHERE id = ? AND storefront_id = ? LIMIT 1"
-    )
-      .bind(ord.id, sf.id)
-      .first<Record<string, any>>();
+    // Reconstruct the updated row in memory (identical to re-SELECT, saves 1 D1 read)
+    const updatedOrd: Record<string, any> = {
+      ...ord,
+      status: dbStatus,
+      fulfillment_outcome: fulfillmentOutcome,
+      payment_status: nextPaymentStatus,
+      pos_handoff_status: nextHandoff,
+      pos_order_ref: posRefOverride ?? ord.pos_order_ref ?? null,
+      updated_at: nowIso,
+    };
 
     return new Response(
       JSON.stringify({

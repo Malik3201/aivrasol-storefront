@@ -337,46 +337,78 @@ export interface ResolvedTenantBundle {
   reviewSummary: { count: number; avg: number } | null;
 }
 
-const TENANT_BUNDLE_CACHE_TTL_MS = 30_000;
-const TENANT_BUNDLE_CACHE_MAX = 120;
+// Isolate-level cache (0ms) backed by the colo-wide Cloudflare Cache API (~1ms, 0 D1 reads),
+// so a cold isolate does not re-run 4-6 D1 queries per pharmacy hostname.
+// Setting/branding edits become visible within TENANT_BUNDLE_CACHE_TTL_MS (5 min) on other
+// isolates/colos; edits made through this Worker evict the local isolate + colo entries instantly.
+const TENANT_BUNDLE_CACHE_TTL_MS = 5 * 60_000;
+const TENANT_BUNDLE_NEGATIVE_TTL_MS = 60_000;
+const TENANT_BUNDLE_CACHE_MAX = 1000;
+const TENANT_BUNDLE_EDGE_TTL_SEC = 300;
+const TENANT_BUNDLE_EDGE_NEGATIVE_TTL_SEC = 60;
+const TENANT_BUNDLE_EDGE_PREFIX = "https://cache.internal/tenant-bundle/";
 const tenantBundleCache = new Map<
   string,
   { expiresAt: number; bundle: ResolvedTenantBundle }
 >();
+const tenantBundleInflight = new Map<string, Promise<ResolvedTenantBundle>>();
+
+function getEdgeCacheOrNull(): Cache | null {
+  try {
+    if (typeof caches === "undefined") return null;
+    const c = (caches as unknown as { default?: Cache }).default;
+    return c && typeof c.match === "function" && typeof c.put === "function" ? c : null;
+  } catch {
+    return null;
+  }
+}
+
+function tenantBundleEdgeKey(cacheKey: string): Request {
+  return new Request(`${TENANT_BUNDLE_EDGE_PREFIX}${encodeURIComponent(cacheKey)}`, {
+    method: "GET",
+  });
+}
 
 /**
- * Evicts cached tenant metadata from this Worker isolate immediately whenever branding,
- * settings, status, sync version, or reviews change — guaranteeing fast & fresh updates.
+ * Evicts cached tenant metadata from this Worker isolate (and this colo's Cache API copy)
+ * immediately whenever branding, settings, status, sync version, or reviews change.
  */
 export function invalidateTenantBundleCache(storefrontId?: string): void {
+  const edge = getEdgeCacheOrNull();
+  const evictEdge = (key: string) => {
+    if (!edge) return;
+    try {
+      void edge.delete(tenantBundleEdgeKey(key)).catch(() => false);
+    } catch {
+      // ignore
+    }
+  };
   if (!storefrontId) {
+    for (const k of tenantBundleCache.keys()) evictEdge(k);
     tenantBundleCache.clear();
     return;
   }
   for (const [k, entry] of tenantBundleCache.entries()) {
     if (entry.bundle.ctx.storefront?.id === storefrontId) {
       tenantBundleCache.delete(k);
+      evictEdge(k);
     }
   }
 }
 
-/**
- * Blazing-fast cached tenant resolver + settings/branding/branches/review bundle.
- * - Isolate warm hit: 0ms latency, 0 D1 reads!
- * - Cold miss: single parallel D1 read (~4 rows total) cached for 30s across all public routes.
- */
-export async function resolveTenantBundleCached(
+function putTenantBundleIsolate(cacheKey: string, bundle: ResolvedTenantBundle, ttlMs: number): void {
+  if (tenantBundleCache.size >= TENANT_BUNDLE_CACHE_MAX && !tenantBundleCache.has(cacheKey)) {
+    const firstKey = tenantBundleCache.keys().next().value;
+    if (firstKey) tenantBundleCache.delete(firstKey);
+  }
+  tenantBundleCache.set(cacheKey, { expiresAt: Date.now() + ttlMs, bundle });
+}
+
+async function loadTenantBundleFromD1(
   db: D1Database,
   rawHostname: string,
-  baseDomain: string = PLATFORM_PRIMARY_BASE_DOMAIN
+  baseDomain: string
 ): Promise<ResolvedTenantBundle> {
-  const cacheKey = `${rawHostname.toLowerCase()}|${baseDomain.toLowerCase()}`;
-  const now = Date.now();
-  const cached = tenantBundleCache.get(cacheKey);
-  if (cached && cached.expiresAt > now) {
-    return cached.bundle;
-  }
-
   const ctx = await resolveTenantByHostname(db, rawHostname, baseDomain);
   let settings: StorefrontSettingsRecord | null = null;
   let branding: StorefrontBrandingRecord | null = null;
@@ -401,6 +433,8 @@ export async function resolveTenantBundleCached(
           )
           .bind(sf.id, sf.pharmacy_id)
           .all<StorefrontBranchRecord>(),
+        // Review aggregate is computed once per bundle miss (5-min colo cache) and reused by
+        // SEO JSON-LD, /reviews and /bootstrap — no per-request COUNT/AVG scans.
         db
           .prepare(
             `SELECT COUNT(*) AS cnt, AVG(rating) AS avg_r FROM storefront_reviews
@@ -428,16 +462,90 @@ export async function resolveTenantBundleCached(
     }
   }
 
-  const bundle: ResolvedTenantBundle = { ctx, settings, branding, branches, reviewSummary };
-  if (tenantBundleCache.size >= TENANT_BUNDLE_CACHE_MAX && !tenantBundleCache.has(cacheKey)) {
-    const firstKey = tenantBundleCache.keys().next().value;
-    if (firstKey) tenantBundleCache.delete(firstKey);
+  return { ctx, settings, branding, branches, reviewSummary };
+}
+
+/**
+ * Blazing-fast cached tenant resolver + settings/branding/branches/review bundle.
+ * - Isolate warm hit: 0ms latency, 0 D1 reads!
+ * - Colo Cache API hit: ~1ms, 0 D1 reads (shared by every isolate in the data center).
+ * - Cold miss: single parallel D1 read, deduped across concurrent requests (single-flight).
+ */
+export async function resolveTenantBundleCached(
+  db: D1Database,
+  rawHostname: string,
+  baseDomain: string = PLATFORM_PRIMARY_BASE_DOMAIN,
+  execCtx?: { waitUntil(promise: Promise<unknown>): void }
+): Promise<ResolvedTenantBundle> {
+  const cacheKey = `${rawHostname.toLowerCase()}|${baseDomain.toLowerCase()}`;
+  const cached = tenantBundleCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.bundle;
   }
-  tenantBundleCache.set(cacheKey, {
-    expiresAt: now + TENANT_BUNDLE_CACHE_TTL_MS,
-    bundle,
-  });
-  return bundle;
+
+  const inflight = tenantBundleInflight.get(cacheKey);
+  if (inflight) return inflight;
+
+  const p = (async (): Promise<ResolvedTenantBundle> => {
+    const edge = getEdgeCacheOrNull();
+    const edgeKey = edge ? tenantBundleEdgeKey(cacheKey) : null;
+
+    if (edge && edgeKey) {
+      try {
+        const hit = await edge.match(edgeKey);
+        if (hit) {
+          const bundle = (await hit.json()) as ResolvedTenantBundle;
+          if (bundle && bundle.ctx) {
+            putTenantBundleIsolate(
+              cacheKey,
+              bundle,
+              bundle.ctx.storefront ? TENANT_BUNDLE_CACHE_TTL_MS : TENANT_BUNDLE_NEGATIVE_TTL_MS
+            );
+            return bundle;
+          }
+        }
+      } catch {
+        // Fall through to D1
+      }
+    }
+
+    const bundle = await loadTenantBundleFromD1(db, rawHostname, baseDomain);
+    const positive = Boolean(bundle.ctx.storefront) || bundle.ctx.resolutionStatus === "redirect";
+    putTenantBundleIsolate(
+      cacheKey,
+      bundle,
+      positive ? TENANT_BUNDLE_CACHE_TTL_MS : TENANT_BUNDLE_NEGATIVE_TTL_MS
+    );
+
+    if (edge && edgeKey) {
+      try {
+        const ttl = positive ? TENANT_BUNDLE_EDGE_TTL_SEC : TENANT_BUNDLE_EDGE_NEGATIVE_TTL_SEC;
+        const putPromise = edge
+          .put(
+            edgeKey,
+            new Response(JSON.stringify(bundle), {
+              status: 200,
+              headers: {
+                "Content-Type": "application/json; charset=utf-8",
+                "Cache-Control": `public, max-age=${ttl}`,
+              },
+            })
+          )
+          .catch(() => {});
+        if (execCtx && typeof execCtx.waitUntil === "function") execCtx.waitUntil(putPromise);
+      } catch {
+        // Non-fatal
+      }
+    }
+    return bundle;
+  })();
+
+  tenantBundleInflight.set(cacheKey, p);
+  try {
+    return await p;
+  } finally {
+    if (tenantBundleInflight.get(cacheKey) === p) tenantBundleInflight.delete(cacheKey);
+  }
 }
 
 /**

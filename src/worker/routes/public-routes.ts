@@ -31,12 +31,14 @@ import {
   buildPublicResolutionPayloadFromBundle,
   extractRequestHostname,
   resolveTenantBundleCached,
+  type ResolvedTenantBundle,
 } from "../domain-resolver";
 import type { StorefrontWorkerEnv, WorkerExecutionContext } from "../env";
-import { buildResponseHeaders } from "../security";
+import { buildResponseHeaders, checkRateLimit } from "../security";
 import {
   recordBufferedPublicUsage,
-  recordStorefrontUsage,
+  recordStorefrontUsageDeferred,
+  runInBackground,
   writeStorefrontAuditLog,
 } from "../usage-tracker";
 import { invalidateOrderNotifCache } from "./sync-routes";
@@ -44,6 +46,7 @@ import {
   buildTenantEdgeCacheKey,
   cleanGenericSaltText,
   findGenericAlternativesInSnapshot,
+  findProductInSnapshot,
   getCatalogSnapshotForTenant,
   getEdgeCachedResponse,
   putEdgeCachedResponse,
@@ -325,7 +328,528 @@ function decodeBase64ToBytes(input: string): Uint8Array {
   return bytes;
 }
 
+// ============================================================================
+// Public response finalization: browser caching + scoped ETag / 304 revalidation
+// ============================================================================
+
+function fnv1aHash(input: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36);
+}
+
+const PUBLIC_JSON_BROWSER_MAX_AGE_SEC = 60;
+const PUBLIC_JSON_BROWSER_SWR_SEC = 600;
+
+/**
+ * - Public cacheable JSON: `Cache-Control: public, max-age=60, s-maxage=<edge>, stale-while-revalidate=600`.
+ * - Tenant ETag (`W/"sf:<id>:v<config_version>:<host>"`) is extended with a hash of the endpoint
+ *   path + query, and `If-None-Match` is answered with `304 Not Modified` (0 bytes).
+ */
+function finalizePublicResponse(req: Request, res: Response): Response {
+  if ((req.method !== "GET" && req.method !== "HEAD") || res.status !== 200) return res;
+  const cc = res.headers.get("Cache-Control") || "";
+  if (!cc.startsWith("public")) return res;
+
+  const headers = new Headers(res.headers);
+  const ct = headers.get("Content-Type") || "";
+  if (ct.includes("application/json")) {
+    const sMaxAge = /s-maxage=(\d+)/.exec(cc)?.[1] || "300";
+    headers.set(
+      "Cache-Control",
+      `public, max-age=${PUBLIC_JSON_BROWSER_MAX_AGE_SEC}, s-maxage=${sMaxAge}, stale-while-revalidate=${PUBLIC_JSON_BROWSER_SWR_SEC}`
+    );
+  }
+
+  const baseEtag = headers.get("ETag");
+  if (baseEtag && baseEtag.startsWith('W/"sf:')) {
+    const url = new URL(req.url);
+    const scopedEtag = baseEtag.includes(":p")
+      ? baseEtag
+      : baseEtag.replace(/"$/, `:p${fnv1aHash(`${url.pathname}?${url.search}`)}"`);
+    headers.set("ETag", scopedEtag);
+    const inm = req.headers.get("If-None-Match");
+    if (inm && inm.split(",").some((t) => t.trim() === scopedEtag || t.trim() === "*")) {
+      try {
+        void res.body?.cancel();
+      } catch {
+        // ignore
+      }
+      headers.delete("Content-Length");
+      return new Response(null, { status: 304, headers });
+    }
+  }
+
+  return new Response(req.method === "HEAD" ? null : res.body, { status: res.status, headers });
+}
+
 export async function handlePublicRoutes(
+  req: Request,
+  env: StorefrontWorkerEnv,
+  pathname: string,
+  execCtx?: WorkerExecutionContext
+): Promise<Response> {
+  // Media is served BEFORE tenant resolution so shared artwork never touches D1 / tenant bundle.
+  if (pathname.startsWith("/api/v1/public/media/") && (req.method === "GET" || req.method === "HEAD")) {
+    return await handlePublicMediaRoute(req, env, pathname, execCtx);
+  }
+  const res = await handlePublicRoutesInner(req, env, pathname, execCtx);
+  return finalizePublicResponse(req, res);
+}
+
+// ============================================================================
+// GET/HEAD /api/v1/public/media/:mediaId — Shared & Tenant-Scoped Media Serving
+// ============================================================================
+
+const CONTENT_ADDRESSED_KEY_RE = /[a-f0-9]{32,}/i;
+
+function buildMediaCacheControl(r2Key: string, isShared: boolean): string {
+  if (CONTENT_ADDRESSED_KEY_RE.test(r2Key)) {
+    return "public, max-age=31536000, immutable";
+  }
+  // Media ids are never reused for different bytes (re-uploads create new ids), but the keys are
+  // not content-addressed, so cap browser caching at 7 days; shared artwork may live longer at the edge.
+  return isShared
+    ? "public, max-age=604800, s-maxage=2592000, immutable"
+    : "public, max-age=604800, s-maxage=604800";
+}
+
+async function handlePublicMediaRoute(
+  req: Request,
+  env: StorefrontWorkerEnv,
+  pathname: string,
+  execCtx?: WorkerExecutionContext
+): Promise<Response> {
+  const mediaId = decodeURIComponent(pathname.slice("/api/v1/public/media/".length));
+
+  const sharedEdgeKey = new Request(
+    `https://media-edge.aivrasol.internal/shared-media/${encodeURIComponent(mediaId)}`,
+    { method: "GET" }
+  );
+  if (req.method === "GET") {
+    const sharedHit = await getEdgeCachedResponse(sharedEdgeKey);
+    if (sharedHit) return sharedHit;
+  }
+
+  let bundle: ResolvedTenantBundle | null = null;
+  const getBundle = async (): Promise<ResolvedTenantBundle> => {
+    if (!bundle) {
+      bundle = await resolveTenantBundleCached(
+        env.DB,
+        extractRequestHostname(req, env),
+        env.PLATFORM_BASE_DOMAIN,
+        execCtx
+      );
+    }
+    return bundle;
+  };
+
+  // Fast 0-D1, 0-tenant lookup for shared verified medicine artwork via the in-memory/R2 Central Image Index
+  let mediaRow: Record<string, unknown> | null = null;
+  if (mediaId.startsWith("sfm_shared_")) {
+    try {
+      const centralIdx = await getCentralImageIndex(env, { allowRebuild: false });
+      const fastMeta = centralIdx.byMediaId.get(mediaId);
+      if (fastMeta && fastMeta.r2_object_key) {
+        mediaRow = {
+          id: mediaId,
+          storefront_id: "sf_central_library",
+          pharmacy_id: "pharmacy_central_platform",
+          r2_object_key: fastMeta.r2_object_key,
+          public_url: fastMeta.public_url,
+          content_type: fastMeta.content_type || "image/webp",
+          is_shared: 1,
+        };
+      }
+    } catch {
+      mediaRow = null;
+    }
+  }
+
+  let tenantEdgeKey: Request | null = null;
+  if (!mediaRow) {
+    const ctx = (await getBundle()).ctx;
+    tenantEdgeKey = new Request(
+      `https://media-edge.aivrasol.internal/tenant-media/${encodeURIComponent(ctx.storefront?.id || "anon")}/${encodeURIComponent(mediaId)}`,
+      { method: "GET" }
+    );
+    if (req.method === "GET" && ctx.storefront?.id) {
+      const tenantHit = await getEdgeCachedResponse(tenantEdgeKey);
+      if (tenantHit) return tenantHit;
+    }
+
+    mediaRow = await env.DB.prepare(
+      `SELECT id, storefront_id, pharmacy_id, r2_object_key, public_url, content_type, byte_size, is_shared
+       FROM storefront_media
+       WHERE id = ?
+       LIMIT 1`
+    )
+      .bind(mediaId)
+      .first<Record<string, unknown>>();
+  }
+
+  if (!mediaRow) {
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        error: "media_not_found",
+        message: "Media asset does not exist.",
+      }),
+      {
+        status: 404,
+        headers: buildResponseHeaders({ req, isPrivate: true }),
+      }
+    );
+  }
+
+  const r2Key = String(mediaRow.r2_object_key);
+  const isShared = Number(mediaRow.is_shared || 0) === 1;
+
+  // Strict Cross-Tenant Check for Private Assets:
+  // If NOT shared, must have an active resolved storefront that owns this media
+  if (!isShared) {
+    const ctx = (await getBundle()).ctx;
+    if (
+      !ctx.ok ||
+      !ctx.storefront ||
+      String(mediaRow.storefront_id) !== ctx.storefront.id ||
+      String(mediaRow.pharmacy_id) !== ctx.storefront.pharmacy_id ||
+      !r2Key.startsWith(`storefronts/${ctx.storefront.id}/`)
+    ) {
+      return new Response(
+        JSON.stringify({ ok: false, error: "cross_tenant_media_blocked" }),
+        { status: 403, headers: buildResponseHeaders({ req, isPrivate: true }) }
+      );
+    }
+  }
+
+  const tenantCtx = (bundle as ResolvedTenantBundle | null)?.ctx || null;
+
+  if (env.MEDIA_BUCKET) {
+    const obj = await env.MEDIA_BUCKET.get(r2Key);
+    if (obj) {
+      const headers = buildResponseHeaders({
+        req,
+        storefrontId: isShared ? undefined : tenantCtx?.storefront?.id,
+        configVersion: tenantCtx?.storefront?.config_version,
+        hostname: tenantCtx?.normalizedHostname,
+        cacheMaxAgeSec: 604800,
+      });
+      headers.set("Content-Type", String(mediaRow.content_type || "image/webp"));
+      headers.set("Cache-Control", buildMediaCacheControl(r2Key, isShared));
+      if (obj.etag && isShared) headers.set("ETag", `"${obj.etag}"`);
+      if (req.method === "HEAD") {
+        return new Response(null, { status: 200, headers });
+      }
+      const buf = await obj.arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      const isBinaryImage =
+        (bytes.length >= 4 &&
+          bytes[0] === 0x52 &&
+          bytes[1] === 0x49 &&
+          bytes[2] === 0x46 &&
+          bytes[3] === 0x46) || // RIFF (WebP)
+        (bytes.length >= 4 && bytes[0] === 0x89 && bytes[1] === 0x50) || // PNG
+        (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8); // JPEG
+
+      let finalBody: BodyInit = buf;
+      if (!isBinaryImage) {
+        try {
+          const textVal = new TextDecoder().decode(bytes);
+          if (
+            textVal.startsWith("data:") ||
+            (textVal.length > 16 && /^[A-Za-z0-9+/=\s]+$/.test(textVal.slice(0, 120)))
+          ) {
+            finalBody = decodeBase64ToBytes(textVal.trim()) as unknown as BodyInit;
+          }
+        } catch {
+          finalBody = buf;
+        }
+      }
+      const mediaResp = new Response(finalBody, { status: 200, headers });
+      const storeKey = isShared ? sharedEdgeKey : tenantEdgeKey;
+      if (storeKey) putEdgeCachedResponse(storeKey, mediaResp, execCtx);
+      return mediaResp;
+    }
+  }
+
+  return new Response(
+    JSON.stringify({
+      ok: true,
+      media: mediaRow,
+    }),
+    {
+      status: 200,
+      headers: buildResponseHeaders({
+        req,
+        storefrontId: tenantCtx?.storefront?.id,
+        configVersion: tenantCtx?.storefront?.config_version,
+        hostname: tenantCtx?.normalizedHostname,
+        cacheMaxAgeSec: 300,
+      }),
+    }
+  );
+}
+
+// ============================================================================
+// Reusable public payload builders (shared by individual endpoints and /bootstrap)
+// ============================================================================
+
+type PublicStorefront = NonNullable<ResolvedTenantBundle["ctx"]["storefront"]>;
+
+function safeParseJsonObject(raw: unknown): Record<string, unknown> {
+  if (typeof raw !== "string" || !raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function buildPublicSettingsBody(
+  sf: PublicStorefront,
+  settings: StorefrontSettingsRecord | null,
+  branding: StorefrontBrandingRecord | null,
+  staleThresholdHours: number
+): Record<string, unknown> {
+  const openingHours = safeParseJsonObject(settings?.opening_hours_json);
+  const socialLinks = safeParseJsonObject(settings?.social_links_json);
+  return {
+    ok: true,
+    storefront_id: sf.id,
+    pharmacy_id: sf.pharmacy_id,
+    pharmacy_name: sf.pharmacy_name,
+    slug: sf.slug,
+    primary_domain: sf.primary_domain,
+    last_sync_at: sf.last_sync_at,
+    stock_sync_stale: isSyncTimestampStale(sf.last_sync_at, staleThresholdHours),
+    contact: {
+      phone: sf.contact_phone,
+      whatsapp: sf.whatsapp_phone,
+      email: sf.contact_email,
+      support_phone: sf.support_phone,
+      address_line: sf.address_line,
+      city: sf.city,
+      region: sf.region,
+      country: sf.country,
+      latitude: sf.latitude,
+      longitude: sf.longitude,
+    },
+    regulatory: {
+      drug_sale_license_no: sf.drug_sale_license_no,
+      pharmacist_name: sf.pharmacist_name,
+      pharmacist_reg_no: sf.pharmacist_reg_no,
+      legal_disclaimer_text: settings?.legal_disclaimer_text,
+      pharmacist_supervision_note: settings?.pharmacist_supervision_note,
+      emergency_notice_text: settings?.emergency_notice_text,
+    },
+    branding,
+    settings: {
+      announcement_bar_enabled: Number(settings?.announcement_bar_enabled) === 1,
+      announcement_bar_text: settings?.announcement_bar_text,
+      featured_categories_enabled: Number(settings?.featured_categories_enabled) === 1,
+      require_rx_for_prescription_items: Number(settings?.require_rx_for_prescription_items) === 1,
+      prescription_upload_enabled: Number(settings?.prescription_upload_enabled) === 1,
+      whatsapp_order_assist_enabled: Number(settings?.whatsapp_order_assist_enabled) === 1,
+      maintenance_mode: Number(settings?.maintenance_mode || 0) === 1,
+      maintenance_message: settings?.maintenance_message || null,
+      seo_title: settings?.seo_title || `${sf.pharmacy_name} — Online Pharmacy`,
+      seo_description: settings?.seo_description,
+      opening_hours: openingHours,
+      social_links: socialLinks,
+    },
+  };
+}
+
+async function loadPublicBanners(
+  env: StorefrontWorkerEnv,
+  sf: PublicStorefront
+): Promise<StorefrontBannerRecord[]> {
+  const { results } = await env.DB.prepare(
+    `SELECT id, storefront_id, pharmacy_id, title, subtitle, badge_text,
+            cta_label, cta_url, image_url, bg_gradient, placement, sort_order, is_active, starts_at, ends_at
+     FROM storefront_banners
+     WHERE storefront_id = ? AND pharmacy_id = ? AND is_active = 1
+     ORDER BY sort_order ASC, created_at DESC`
+  )
+    .bind(sf.id, sf.pharmacy_id)
+    .all<StorefrontBannerRecord>();
+  return results || [];
+}
+
+async function loadPublicPromotions(
+  env: StorefrontWorkerEnv,
+  sf: PublicStorefront
+): Promise<StorefrontPromotionRecord[]> {
+  const nowIso = new Date().toISOString();
+  const { results } = await env.DB.prepare(
+    `SELECT *
+     FROM storefront_promotions
+     WHERE storefront_id = ? AND pharmacy_id = ? AND is_active = 1
+       AND (starts_at IS NULL OR starts_at = '' OR starts_at <= ?)
+       AND (ends_at IS NULL OR ends_at = '' OR ends_at >= ?)
+     ORDER BY created_at DESC`
+  )
+    .bind(sf.id, sf.pharmacy_id, nowIso, nowIso)
+    .all<StorefrontPromotionRecord>();
+  return results || [];
+}
+
+async function buildDeliveryConfigBody(
+  env: StorefrontWorkerEnv,
+  sf: PublicStorefront,
+  settings: StorefrontSettingsRecord | null
+): Promise<Record<string, unknown>> {
+  const zonesRes = await env.DB.prepare(
+    `SELECT id, zone_name, city, areas_json, delivery_fee_pkr, min_order_pkr,
+            free_delivery_above_pkr, estimated_minutes, sort_order
+     FROM storefront_delivery_zones
+     WHERE storefront_id = ? AND pharmacy_id = ? AND is_active = 1
+     ORDER BY sort_order ASC, zone_name ASC`
+  )
+    .bind(sf.id, sf.pharmacy_id)
+    .all();
+  return {
+    delivery_enabled: Number(settings?.delivery_enabled ?? 1) === 1,
+    pickup_enabled: Number(settings?.pickup_enabled ?? 1) === 1,
+    min_order_amount_pkr: Number(settings?.min_order_amount_pkr ?? 300),
+    standard_delivery_fee_pkr: Number(settings?.standard_delivery_fee_pkr ?? 150),
+    free_delivery_threshold_pkr: Number(settings?.free_delivery_threshold_pkr ?? 2000),
+    estimated_delivery_minutes: Number(settings?.estimated_delivery_minutes ?? 45),
+    estimated_pickup_minutes: Number(settings?.estimated_pickup_minutes ?? 15),
+    delivery_radius_km: Number(settings?.delivery_radius_km ?? 10),
+    cod_enabled: Number(settings?.cod_enabled ?? 1) === 1,
+    bank_transfer_enabled: Number(settings?.bank_transfer_enabled ?? 0) === 1,
+    prescription_upload_enabled: Number(settings?.prescription_upload_enabled ?? 1) === 1,
+    zones: zonesRes.results || [],
+  };
+}
+
+function buildOpeningHoursBody(
+  sf: PublicStorefront,
+  settings: StorefrontSettingsRecord | null,
+  branches: StorefrontBranchRecord[]
+): Record<string, unknown> {
+  return {
+    ok: true,
+    storefront_id: sf.id,
+    timezone: sf.timezone,
+    opening_hours: safeParseJsonObject(settings?.opening_hours_json),
+    branches: (branches || []).map((b) => ({
+      ...b,
+      opening_hours: safeParseJsonObject(b.opening_hours_json),
+    })),
+  };
+}
+
+async function loadPublicReviewRows(
+  env: StorefrontWorkerEnv,
+  sf: PublicStorefront
+): Promise<Array<Record<string, unknown>>> {
+  const rowsRes = await env.DB.prepare(
+    `SELECT id, order_number, customer_name, rating, comment, owner_reply, published_at, created_at
+     FROM storefront_reviews
+     WHERE storefront_id = ? AND pharmacy_id = ? AND status = 'published'
+     ORDER BY COALESCE(published_at, created_at) DESC
+     LIMIT 30`
+  )
+    .bind(sf.id, sf.pharmacy_id)
+    .all<Record<string, unknown>>();
+  return rowsRes.results || [];
+}
+
+function reviewSummaryFromBundle(
+  bundle: ResolvedTenantBundle,
+  fallbackRowsCount: number
+): { count: number; average_rating: number } {
+  if (bundle.reviewSummary && bundle.reviewSummary.count > 0) {
+    return { count: bundle.reviewSummary.count, average_rating: bundle.reviewSummary.avg };
+  }
+  if (fallbackRowsCount > 0) {
+    // Bundle aggregate unavailable (e.g. reviews published moments ago) — never report 0 with rows present
+    return { count: fallbackRowsCount, average_rating: 0 };
+  }
+  return { count: 0, average_rating: 0 };
+}
+
+async function loadPublicDoctors(
+  env: StorefrontWorkerEnv,
+  sf: PublicStorefront
+): Promise<Array<Record<string, unknown>>> {
+  const { results } = await env.DB.prepare(
+    `SELECT id, name, qualification, specialization, timings, days_available,
+            consultation_fee_pkr, experience_years, room_or_clinic_note, bio,
+            booking_phone, photo_url, sort_order
+     FROM storefront_doctors
+     WHERE storefront_id = ? AND pharmacy_id = ? AND is_active = 1
+     ORDER BY sort_order ASC, name ASC`
+  )
+    .bind(sf.id, sf.pharmacy_id)
+    .all<Record<string, unknown>>();
+  return results || [];
+}
+
+async function loadPublicServices(
+  env: StorefrontWorkerEnv,
+  sf: PublicStorefront
+): Promise<Array<Record<string, unknown>>> {
+  const { results } = await env.DB.prepare(
+    `SELECT id, title, service_type, subtitle, description, image_url, timings,
+            home_service_available, starting_price_pkr, booking_phone, items_json, sort_order
+     FROM storefront_custom_services
+     WHERE storefront_id = ? AND pharmacy_id = ? AND is_active = 1
+     ORDER BY sort_order ASC, title ASC`
+  )
+    .bind(sf.id, sf.pharmacy_id)
+    .all<Record<string, unknown>>();
+  return (results || []).map((row) => {
+    let items: any[] = [];
+    try {
+      const parsed = JSON.parse(String(row.items_json || "[]"));
+      if (Array.isArray(parsed)) items = parsed;
+    } catch {
+      items = [];
+    }
+    return {
+      ...row,
+      home_service_available: Number(row.home_service_available || 0) === 1,
+      items,
+    };
+  });
+}
+
+/** Looks up an order by its (uppercase) number, falling back to UPPER() only for legacy rows. */
+async function findOrderByNumber<T>(
+  env: StorefrontWorkerEnv,
+  columns: string,
+  storefrontId: string,
+  pharmacyId: string,
+  orderNumberUpper: string
+): Promise<T | null> {
+  const exact = await env.DB.prepare(
+    `SELECT ${columns} FROM storefront_orders
+     WHERE storefront_id = ? AND pharmacy_id = ? AND order_number = ?
+     LIMIT 1`
+  )
+    .bind(storefrontId, pharmacyId, orderNumberUpper)
+    .first<T>();
+  if (exact) return exact;
+  return await env.DB.prepare(
+    `SELECT ${columns} FROM storefront_orders
+     WHERE storefront_id = ? AND pharmacy_id = ? AND UPPER(order_number) = ?
+     LIMIT 1`
+  )
+    .bind(storefrontId, pharmacyId, orderNumberUpper)
+    .first<T>();
+}
+
+const ORDER_CREATE_MAX_PER_MINUTE = 10;
+
+async function handlePublicRoutesInner(
   req: Request,
   env: StorefrontWorkerEnv,
   pathname: string,
@@ -336,7 +860,8 @@ export async function handlePublicRoutes(
   const bundle = await resolveTenantBundleCached(
     env.DB,
     rawHost,
-    env.PLATFORM_BASE_DOMAIN
+    env.PLATFORM_BASE_DOMAIN,
+    execCtx
   );
   const ctx = bundle.ctx;
 
@@ -380,157 +905,21 @@ export async function handlePublicRoutes(
     return res;
   }
 
-  // 1b. GET/HEAD /api/v1/public/media/:mediaId — Public Shared & Tenant-Scoped Media Serving (Edge-Cached + Zero-D1 Shared Lookup)
-  if (pathname.startsWith("/api/v1/public/media/") && (req.method === "GET" || req.method === "HEAD")) {
-    const mediaId = decodeURIComponent(pathname.slice("/api/v1/public/media/".length));
-
-    // Zero-D1 / Zero-R2 Edge Cache check for shared verified artwork & tenant-scoped media
-    const sharedEdgeKey = new Request(
-      `https://media-edge.aivrasol.internal/shared-media/${encodeURIComponent(mediaId)}`,
-      { method: "GET" }
-    );
-    const tenantEdgeKey = new Request(
-      `https://media-edge.aivrasol.internal/tenant-media/${encodeURIComponent(ctx.storefront?.id || "anon")}/${encodeURIComponent(mediaId)}`,
-      { method: "GET" }
-    );
-
-    if (req.method === "GET") {
-      const sharedHit = await getEdgeCachedResponse(sharedEdgeKey);
-      if (sharedHit) return sharedHit;
-      if (ctx.storefront?.id) {
-        const tenantHit = await getEdgeCachedResponse(tenantEdgeKey);
-        if (tenantHit) return tenantHit;
-      }
-    }
-
-    // Fast 0-D1 lookup for shared verified medicine artwork via in-memory/R2 Central Image Index
-    let mediaRow: Record<string, unknown> | null = null;
-    if (mediaId.startsWith("sfm_shared_")) {
-      try {
-        const centralIdx = await getCentralImageIndex(env);
-        const fastMeta = centralIdx.byMediaId.get(mediaId);
-        if (fastMeta && fastMeta.r2_object_key) {
-          mediaRow = {
-            id: mediaId,
-            storefront_id: "sf_central_library",
-            pharmacy_id: "pharmacy_central_platform",
-            r2_object_key: fastMeta.r2_object_key,
-            public_url: fastMeta.public_url,
-            content_type: fastMeta.content_type || "image/webp",
-            is_shared: 1,
-          };
-        }
-      } catch {
-        mediaRow = null;
-      }
-    }
-
-    if (!mediaRow) {
-      mediaRow = await env.DB.prepare(
-        `SELECT id, storefront_id, pharmacy_id, r2_object_key, public_url, content_type, byte_size, is_shared
-         FROM storefront_media
-         WHERE id = ?
-         LIMIT 1`
-      )
-        .bind(mediaId)
-        .first<Record<string, unknown>>();
-    }
-
-    if (!mediaRow) {
-      return new Response(
-        JSON.stringify({
-          ok: false,
-          error: "media_not_found",
-          message: "Media asset does not exist.",
-        }),
-        {
-          status: 404,
-          headers: buildResponseHeaders({ req, isPrivate: true }),
-        }
-      );
-    }
-
-    const r2Key = String(mediaRow.r2_object_key);
-    const isShared = Number(mediaRow.is_shared || 0) === 1;
-
-    // Strict Cross-Tenant Check for Private Assets:
-    // If NOT shared, must have an active resolved storefront that owns this media
-    if (!isShared) {
-      if (
-        !ctx.ok ||
-        !ctx.storefront ||
-        String(mediaRow.storefront_id) !== ctx.storefront.id ||
-        String(mediaRow.pharmacy_id) !== ctx.storefront.pharmacy_id ||
-        !r2Key.startsWith(`storefronts/${ctx.storefront.id}/`)
-      ) {
-        return new Response(
-          JSON.stringify({ ok: false, error: "cross_tenant_media_blocked" }),
-          { status: 403, headers: buildResponseHeaders({ req, isPrivate: true }) }
-        );
-      }
-    }
-
-    if (env.MEDIA_BUCKET) {
-      const obj = await env.MEDIA_BUCKET.get(r2Key);
-      if (obj) {
-        const headers = buildResponseHeaders({
-          req,
-          storefrontId: ctx.storefront?.id,
-          configVersion: ctx.storefront?.config_version,
-          hostname: ctx.normalizedHostname,
-          cacheMaxAgeSec: isShared ? 604800 : 86400, // 7 days for shared verified artwork
-        });
-        headers.set("Content-Type", String(mediaRow.content_type || "image/webp"));
-        if (isShared) {
-          headers.set("Cache-Control", "public, max-age=604800, s-maxage=2592000, immutable");
-        }
-        if (req.method === "HEAD") {
-          return new Response(null, { status: 200, headers });
-        }
-        const buf = await obj.arrayBuffer();
-        const bytes = new Uint8Array(buf);
-        const isBinaryImage =
-          (bytes.length >= 4 &&
-            bytes[0] === 0x52 &&
-            bytes[1] === 0x49 &&
-            bytes[2] === 0x46 &&
-            bytes[3] === 0x46) || // RIFF (WebP)
-          (bytes.length >= 4 && bytes[0] === 0x89 && bytes[1] === 0x50) || // PNG
-          (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8); // JPEG
-
-        let finalBody: BodyInit = buf;
-        if (!isBinaryImage) {
-          try {
-            const textVal = new TextDecoder().decode(bytes);
-            if (
-              textVal.startsWith("data:") ||
-              (textVal.length > 16 && /^[A-Za-z0-9+/=\s]+$/.test(textVal.slice(0, 120)))
-            ) {
-              finalBody = decodeBase64ToBytes(textVal.trim()) as unknown as BodyInit;
-            }
-          } catch {
-            finalBody = buf;
-          }
-        }
-        const mediaResp = new Response(finalBody, { status: 200, headers });
-        putEdgeCachedResponse(isShared ? sharedEdgeKey : tenantEdgeKey, mediaResp, execCtx);
-        return mediaResp;
-      }
-    }
-
+  // 1c'. Bootstrap for non-active tenants (not found / suspended / inactive / redirect):
+  // return just the resolution payload so the client can render the branded status screen.
+  if (pathname === "/api/v1/public/bootstrap" && req.method === "GET" && (!ctx.ok || !ctx.storefront)) {
     return new Response(
       JSON.stringify({
-        ok: true,
-        media: mediaRow,
+        ok: false,
+        bootstrap_version: 1,
+        resolution: buildPublicResolutionPayloadFromBundle(bundle),
       }),
       {
-        status: 200,
+        status: ctx.httpStatus,
         headers: buildResponseHeaders({
           req,
-          storefrontId: ctx.storefront?.id,
-          configVersion: ctx.storefront?.config_version,
           hostname: ctx.normalizedHostname,
-          cacheMaxAgeSec: 300,
+          isPrivate: true,
         }),
       }
     );
@@ -565,22 +954,95 @@ export async function handlePublicRoutes(
   const hideOutOfStock = Number(settings?.hide_out_of_stock) === 1;
   const staleThresholdHours = Number(settings?.stale_stock_threshold_hours || 24);
 
-  // Include global Central Image Index version in Edge Cache scope so newly uploaded central
-  // images appear immediately across all pharmacy storefronts without manual cache purges!
-  let centralIndexVersion = 0;
-  try {
-    const cIdx = await getCentralImageIndex(env);
-    centralIndexVersion = cIdx.doc.version || 0;
-  } catch {
-    centralIndexVersion = 0;
-  }
-
+  // The global central index version is no longer part of edge keys — pharmacies whose images
+  // change get a `config_version` bump instead, so one upload no longer purges every tenant.
   const tenantEdgeScope = {
     storefrontId: sf.id,
     configVersion: Number(sf.config_version || 1),
-    centralIndexVersion,
     hostname: ctx.normalizedHostname || sf.primary_domain || "default",
   };
+
+  const mapRow = (r: Record<string, unknown>) =>
+    mapPublicProductRow(r, showExactStock, sf.last_sync_at, staleThresholdHours, showStockBadges);
+
+  // 1c. GET /api/v1/public/bootstrap — ONE edge-cached request for the whole storefront shell:
+  // resolution + settings + categories + banners + promotions + delivery config + opening hours +
+  // doctors + services + reviews (summary + first page) + first page of featured products.
+  if (pathname === "/api/v1/public/bootstrap" && req.method === "GET") {
+    const edgeKey = buildTenantEdgeCacheKey(req, tenantEdgeScope);
+    const cached = await getEdgeCachedResponse(edgeKey);
+    if (cached) return cached;
+
+    const [snapshotRes, banners, promotions, deliveryConfig, doctors, services, reviewRows] =
+      await Promise.all([
+        getCatalogSnapshotForTenant(env, sf, execCtx),
+        loadPublicBanners(env, sf).catch(() => [] as StorefrontBannerRecord[]),
+        loadPublicPromotions(env, sf).catch(() => [] as StorefrontPromotionRecord[]),
+        buildDeliveryConfigBody(env, sf, settings).catch(() => null),
+        loadPublicDoctors(env, sf).catch(() => [] as Array<Record<string, unknown>>),
+        loadPublicServices(env, sf).catch(() => [] as Array<Record<string, unknown>>),
+        loadPublicReviewRows(env, sf).catch(() => [] as Array<Record<string, unknown>>),
+      ]);
+
+    const { snapshot, source } = snapshotRes;
+    const firstPage = queryProductsFromSnapshot(snapshot, {
+      hideOutOfStock,
+      sortBy: "featured",
+      cursor: null,
+      limit: 24,
+    });
+    const firstPageItems = firstPage.pageRows.map(mapRow);
+
+    void recordBufferedPublicUsage(
+      env.DB,
+      { storefrontId: sf.id, pharmacyId: sf.pharmacy_id, publicRequests: 1, d1RowsRead: 0 },
+      execCtx
+    );
+
+    const headers = buildResponseHeaders({
+      req,
+      storefrontId: sf.id,
+      configVersion: sf.config_version,
+      hostname: ctx.normalizedHostname,
+      cacheMaxAgeSec: 150, // => s-maxage=300 at the edge
+    });
+    headers.set("X-Catalog-Source", source);
+
+    const res = new Response(
+      JSON.stringify({
+        ok: true,
+        bootstrap_version: 1,
+        storefront_id: sf.id,
+        config_version: Number(sf.config_version || 1),
+        resolution: buildPublicResolutionPayloadFromBundle(bundle),
+        settings: buildPublicSettingsBody(sf, settings, bundle.branding, staleThresholdHours),
+        categories: snapshot.categories,
+        banners,
+        promotions,
+        delivery_config: deliveryConfig,
+        opening_hours: buildOpeningHoursBody(sf, settings, bundle.branches || []),
+        doctors,
+        services,
+        reviews: {
+          reviews: reviewRows,
+          summary: reviewSummaryFromBundle(bundle, reviewRows.length),
+        },
+        products: {
+          items: firstPageItems,
+          next_cursor:
+            firstPage.hasMore && firstPage.nextOffset !== null
+              ? encodeCursor("__offset__", String(firstPage.nextOffset))
+              : null,
+          has_more: firstPage.hasMore,
+          last_sync_at: sf.last_sync_at,
+          stock_sync_stale: isSyncTimestampStale(sf.last_sync_at, staleThresholdHours),
+        },
+      }),
+      { status: 200, headers }
+    );
+    putEdgeCachedResponse(edgeKey, res, execCtx);
+    return res;
+  }
 
   // 2. GET /api/v1/public/settings (Edge-Cached + Isolate-Cached -> 0 D1 reads/writes!)
   if (pathname === "/api/v1/public/settings" && req.method === "GET") {
@@ -588,7 +1050,6 @@ export async function handlePublicRoutes(
     const cached = await getEdgeCachedResponse(edgeKey);
     if (cached) return cached;
 
-    const branding = bundle.branding;
     await recordBufferedPublicUsage(env.DB, {
       storefrontId: sf.id,
       pharmacyId: sf.pharmacy_id,
@@ -596,66 +1057,8 @@ export async function handlePublicRoutes(
       d1RowsRead: 0,
     });
 
-    let openingHours: Record<string, unknown> = {};
-    try {
-      openingHours = settings?.opening_hours_json ? JSON.parse(settings.opening_hours_json) : {};
-    } catch {
-      openingHours = {};
-    }
-
-    let socialLinks: Record<string, unknown> = {};
-    try {
-      socialLinks = settings?.social_links_json ? JSON.parse(settings.social_links_json) : {};
-    } catch {
-      socialLinks = {};
-    }
-
     const res = new Response(
-      JSON.stringify({
-        ok: true,
-        storefront_id: sf.id,
-        pharmacy_id: sf.pharmacy_id,
-        pharmacy_name: sf.pharmacy_name,
-        slug: sf.slug,
-        primary_domain: sf.primary_domain,
-        last_sync_at: sf.last_sync_at,
-        stock_sync_stale: isSyncTimestampStale(sf.last_sync_at, staleThresholdHours),
-        contact: {
-          phone: sf.contact_phone,
-          whatsapp: sf.whatsapp_phone,
-          email: sf.contact_email,
-          support_phone: sf.support_phone,
-          address_line: sf.address_line,
-          city: sf.city,
-          region: sf.region,
-          country: sf.country,
-          latitude: sf.latitude,
-          longitude: sf.longitude,
-        },
-        regulatory: {
-          drug_sale_license_no: sf.drug_sale_license_no,
-          pharmacist_name: sf.pharmacist_name,
-          pharmacist_reg_no: sf.pharmacist_reg_no,
-          legal_disclaimer_text: settings?.legal_disclaimer_text,
-          pharmacist_supervision_note: settings?.pharmacist_supervision_note,
-          emergency_notice_text: settings?.emergency_notice_text,
-        },
-        branding,
-        settings: {
-          announcement_bar_enabled: Number(settings?.announcement_bar_enabled) === 1,
-          announcement_bar_text: settings?.announcement_bar_text,
-          featured_categories_enabled: Number(settings?.featured_categories_enabled) === 1,
-          require_rx_for_prescription_items: Number(settings?.require_rx_for_prescription_items) === 1,
-          prescription_upload_enabled: Number(settings?.prescription_upload_enabled) === 1,
-          whatsapp_order_assist_enabled: Number(settings?.whatsapp_order_assist_enabled) === 1,
-          maintenance_mode: Number(settings?.maintenance_mode || 0) === 1,
-          maintenance_message: settings?.maintenance_message || null,
-          seo_title: settings?.seo_title || `${sf.pharmacy_name} — Online Pharmacy`,
-          seo_description: settings?.seo_description,
-          opening_hours: openingHours,
-          social_links: socialLinks,
-        },
-      }),
+      JSON.stringify(buildPublicSettingsBody(sf, settings, bundle.branding, staleThresholdHours)),
       {
         status: 200,
         headers: buildResponseHeaders({
@@ -1868,14 +2271,18 @@ export async function handlePublicRoutes(
 
     invalidateOrderNotifCache(sf.id, sf.pharmacy_id);
 
-    await recordStorefrontUsage(env.DB, {
-      storefrontId: sf.id,
-      pharmacyId: sf.pharmacy_id,
-      publicRequests: 1,
-      ordersCreated: 1,
-      d1RowsReadEst: validatedLines.length + 2,
-      d1RowsWrittenEst: validatedLines.length + 3,
-    });
+    recordStorefrontUsageDeferred(
+      env.DB,
+      {
+        storefrontId: sf.id,
+        pharmacyId: sf.pharmacy_id,
+        publicRequests: 1,
+        ordersCreated: 1,
+        d1RowsReadEst: validatedLines.length + 2,
+        d1RowsWrittenEst: validatedLines.length + 3,
+      },
+      execCtx
+    );
 
     await writeStorefrontAuditLog(env.DB, {
       storefrontId: sf.id,
@@ -2405,6 +2812,9 @@ export async function handlePublicRoutes(
 
   // 13. GET /api/v1/public/sitemap.xml & /api/v1/public/robots.txt (Auto-SEO from R2 Snapshot -> 0 D1 reads!)
   if (pathname === "/api/v1/public/sitemap.xml" && req.method === "GET") {
+    const sitemapEdgeKey = buildTenantEdgeCacheKey(req, tenantEdgeScope);
+    const cachedSitemap = await getEdgeCachedResponse(sitemapEdgeKey);
+    if (cachedSitemap) return cachedSitemap;
     const baseUrl = `https://${sf.primary_domain}`;
     const { snapshot } = await getCatalogSnapshotForTenant(env, sf, execCtx);
     const todayStr = new Date().toISOString().slice(0, 10);
@@ -2452,10 +2862,15 @@ export async function handlePublicRoutes(
       cacheMaxAgeSec: 3600,
     });
     headers.set("Content-Type", "application/xml; charset=utf-8");
-    return new Response(xml, { status: 200, headers });
+    const sitemapRes = new Response(xml, { status: 200, headers });
+    putEdgeCachedResponse(sitemapEdgeKey, sitemapRes, execCtx);
+    return sitemapRes;
   }
 
   if (pathname === "/api/v1/public/robots.txt" && req.method === "GET") {
+    const robotsEdgeKey = buildTenantEdgeCacheKey(req, tenantEdgeScope);
+    const cachedRobots = await getEdgeCachedResponse(robotsEdgeKey);
+    if (cachedRobots) return cachedRobots;
     const txt = `User-agent: *\nAllow: /\nDisallow: /api/v1/manage/\nDisallow: /api/v1/sync/\nDisallow: /checkout\nSitemap: https://${sf.primary_domain}/sitemap.xml\n`;
     const headers = buildResponseHeaders({
       req,
@@ -2464,7 +2879,9 @@ export async function handlePublicRoutes(
       cacheMaxAgeSec: 3600,
     });
     headers.set("Content-Type", "text/plain; charset=utf-8");
-    return new Response(txt, { status: 200, headers });
+    const robotsRes = new Response(txt, { status: 200, headers });
+    putEdgeCachedResponse(robotsEdgeKey, robotsRes, execCtx);
+    return robotsRes;
   }
 
   return new Response(

@@ -21,6 +21,7 @@ import {
   fetchPublicPromotions,
   fetchPublicReviews,
   fetchStorefrontResolution,
+  fetchPublicBootstrap,
   getEffectiveTargetHost,
   submitPublicOrder,
   trackPublicOrder,
@@ -649,7 +650,10 @@ export function App() {
     async function bootstrap() {
       setLoading(true);
       try {
-        const { data } = await fetchStorefrontResolution();
+        // One edge-cached /bootstrap request seeds every startup fetcher's cache; falls back to
+        // the legacy /resolve flow automatically on older Worker deploys.
+        const boot = await fetchPublicBootstrap();
+        const { data } = boot ?? (await fetchStorefrontResolution());
         if (cancelled) return;
         setResolution(data);
 

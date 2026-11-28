@@ -34,6 +34,56 @@ function unwrapEnv(dbOrEnv: D1Database | StorefrontWorkerEnv): StorefrontWorkerE
   return "DB" in dbOrEnv ? dbOrEnv : null;
 }
 
+// ============================================================================
+// Central Image Index publish coalescing (free-tier)
+// ----------------------------------------------------------------------------
+// `upsertEntriesInCentralImageIndex` (owned by r2-catalog-store) rewrites the whole R2 index object
+// (1 Class A op) and bumps the GLOBAL index version, which makes every tenant re-hydrate its catalog
+// on the next read. When several canonical medicines are verified within the same request / batch
+// action we must publish ONCE, not once per medicine.
+//
+// `runWithCentralIndexBatch(env, fn)` opens a batching scope: every propagation inside `fn` is queued
+// (deduped by canonical id) and flushed as a single upsert + single version bump when the outermost
+// scope exits. Outside a scope, propagation publishes immediately (unchanged behaviour), so a single
+// approval still becomes visible right away. manage-routes wraps every non-GET
+// `/api/v1/manage/central-library/*` request in this scope.
+// ============================================================================
+let centralIndexBatchDepth = 0;
+let pendingCentralIndexEntries = new Map<string, CentralImageIndexEntry>();
+
+async function publishCentralIndexEntries(
+  env: StorefrontWorkerEnv,
+  entries: CentralImageIndexEntry[]
+): Promise<void> {
+  if (entries.length === 0) return;
+  if (centralIndexBatchDepth > 0) {
+    for (const e of entries) pendingCentralIndexEntries.set(e.id, e);
+    return;
+  }
+  await upsertEntriesInCentralImageIndex(env, entries);
+}
+
+export async function runWithCentralIndexBatch<T>(
+  env: StorefrontWorkerEnv,
+  fn: () => Promise<T>
+): Promise<T> {
+  centralIndexBatchDepth++;
+  try {
+    return await fn();
+  } finally {
+    centralIndexBatchDepth--;
+    if (centralIndexBatchDepth === 0 && pendingCentralIndexEntries.size > 0) {
+      const toPublish = Array.from(pendingCentralIndexEntries.values());
+      pendingCentralIndexEntries = new Map();
+      try {
+        await upsertEntriesInCentralImageIndex(env, toPublish);
+      } catch (err) {
+        console.warn("[CentralIndexBatch] Deferred index publish failed (D1 already saved):", err);
+      }
+    }
+  }
+}
+
 export interface CentralLibraryOverview {
   total_canonical_medicines: number;
   verified_shared_images: number;
@@ -399,7 +449,8 @@ export async function matchAndPropagateCanonicalMedicine(
   };
 
   if (env) {
-    await upsertEntriesInCentralImageIndex(env, [entry]);
+    // Coalesced: inside runWithCentralIndexBatch() this is queued and published once per batch.
+    await publishCentralIndexEntries(env, [entry]);
   }
 
   return { matchedCount: 1 };
@@ -826,7 +877,7 @@ export async function bulkUploadVerifiedCentralImages(
   // Wrapped safely so a transient R2 index write hiccup NEVER returns HTTP 500 after D1 succeeded.
   if (newlyVerifiedEntries.length > 0) {
     try {
-      await upsertEntriesInCentralImageIndex(env, newlyVerifiedEntries);
+      await publishCentralIndexEntries(env, newlyVerifiedEntries);
     } catch (idxErr) {
       console.warn("[BulkCentralUpload] R2 index update deferred (D1 already saved):", idxErr);
     }

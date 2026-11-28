@@ -133,15 +133,7 @@ function normalizeProductMedia(p: PublicStorefrontProduct): PublicStorefrontProd
   };
 }
 
-export async function fetchStorefrontResolution(): Promise<{
-  httpStatus: number;
-  data: DomainResolutionResponse;
-}> {
-  const res = await fetch(buildPublicUrl("/api/v1/public/resolve"), {
-    headers: buildHeaders(),
-    cache: "no-store",
-  });
-  const data = (await res.json()) as DomainResolutionResponse;
+function normalizeResolutionBranding(data: DomainResolutionResponse): DomainResolutionResponse {
   if (data?.branding) {
     const resolvedHero = resolvePublicAssetUrl(
       (data.branding as any).hero_banner_url || data.branding.hero_image_url
@@ -154,7 +146,117 @@ export async function fetchStorefrontResolution(): Promise<{
       favicon_url: resolvePublicAssetUrl(data.branding.favicon_url),
     };
   }
+  return data;
+}
+
+export async function fetchStorefrontResolution(): Promise<{
+  httpStatus: number;
+  data: DomainResolutionResponse;
+}> {
+  // Free-tier: no `cache: "no-store"` — the Worker sends short public max-age + edge s-maxage.
+  const res = await fetch(buildPublicUrl("/api/v1/public/resolve"), {
+    headers: buildHeaders(),
+  });
+  const data = normalizeResolutionBranding((await res.json()) as DomainResolutionResponse);
   return { httpStatus: res.status, data };
+}
+
+/**
+ * ONE edge-cached request for the whole storefront shell (resolution, categories, banners,
+ * promotions, delivery config, opening hours, doctors, services, reviews, first product page).
+ * Seeds the in-memory client cache under the exact URLs the individual fetchers use, so the
+ * existing startup code is served locally instead of making ~10 separate Worker requests.
+ * Returns null when the Worker does not support /bootstrap (older deploys) → caller falls back.
+ */
+export async function fetchPublicBootstrap(): Promise<{
+  httpStatus: number;
+  data: DomainResolutionResponse;
+} | null> {
+  try {
+    const res = await fetch(buildPublicUrl("/api/v1/public/bootstrap"), {
+      headers: buildHeaders(),
+    });
+    if (res.status === 404 || res.status === 405) return null;
+    const body: any = await res.json().catch(() => null);
+    if (!body || !body.resolution) return null;
+    const data = normalizeResolutionBranding(body.resolution as DomainResolutionResponse);
+    if (!res.ok || !body.ok) {
+      return { httpStatus: res.status, data };
+    }
+
+    const ttl = 180_000;
+    if (Array.isArray(body.categories)) {
+      writeCache(buildPublicUrl("/api/v1/public/categories"), body.categories, ttl);
+    }
+    if (Array.isArray(body.banners)) {
+      writeCache(
+        buildPublicUrl("/api/v1/public/banners"),
+        body.banners.map((b: StorefrontBannerRecord) => ({
+          ...b,
+          image_url: resolvePublicAssetUrl(b.image_url),
+        })),
+        ttl
+      );
+    }
+    if (Array.isArray(body.promotions)) {
+      writeCache(buildPublicUrl("/api/v1/public/promotions"), body.promotions, 120_000);
+    }
+    if (body.delivery_config !== undefined) {
+      writeCache(buildPublicUrl("/api/v1/public/delivery-config"), body.delivery_config || null, ttl);
+    }
+    if (body.opening_hours) {
+      writeCache(buildPublicUrl("/api/v1/public/opening-hours"), body.opening_hours, ttl);
+    }
+    if (Array.isArray(body.doctors)) {
+      writeCache(
+        buildPublicUrl("/api/v1/public/doctors"),
+        body.doctors.map((d: StorefrontDoctorRecord) => ({
+          ...d,
+          photo_url: resolvePublicAssetUrl(d.photo_url),
+        })),
+        ttl
+      );
+    }
+    if (Array.isArray(body.services)) {
+      writeCache(
+        buildPublicUrl("/api/v1/public/services"),
+        body.services.map((s: StorefrontCustomServiceRecord) => ({
+          ...s,
+          image_url: resolvePublicAssetUrl(s.image_url),
+        })),
+        ttl
+      );
+    }
+    if (body.reviews && Array.isArray(body.reviews.reviews)) {
+      writeCache(
+        buildPublicUrl("/api/v1/public/reviews"),
+        {
+          reviews: body.reviews.reviews as StorefrontReviewRecord[],
+          summary: body.reviews.summary || { count: 0, average_rating: 0 },
+        },
+        120_000
+      );
+    }
+    if (body.products && Array.isArray(body.products.items)) {
+      // Matches the URL fetchPublicProducts() builds for the default (featured, 24) home page.
+      writeCache(
+        buildPublicUrl("/api/v1/public/products", { sort: "featured", limit: "24" }),
+        {
+          items: body.products.items.map(normalizeProductMedia),
+          generic_alternatives: [],
+          matched_generic: null,
+          next_cursor: body.products.next_cursor || null,
+          has_more: Boolean(body.products.has_more),
+          stock_sync_stale: Boolean(body.products.stock_sync_stale),
+          last_sync_at: body.products.last_sync_at || null,
+        },
+        90_000
+      );
+    }
+    return { httpStatus: res.status, data };
+  } catch {
+    return null;
+  }
 }
 
 export async function fetchPublicSettings(): Promise<any> {

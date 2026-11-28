@@ -143,18 +143,30 @@ export const CENTRAL_IMAGES_INDEX_R2_KEY = "central-library/verified-images-inde
 // Hot Per-Isolate RAM Caches (0ms reads, instant invalidation on mutations)
 // ============================================================================
 
-const CATALOG_MEM_TTL_MS = 35_000;
-const CATALOG_MEM_MAX_ENTRIES = 32;
+// Catalog docs are additionally validated against the tenant `config_version` seen by the caller
+// (`expectedConfigVersion`), so a longer TTL never serves a catalog older than the current config.
+const CATALOG_MEM_TTL_MS = 120_000;
+const CATALOG_MEM_MAX_ENTRIES = 48;
 const catalogMemCache = new Map<
   string,
-  { expiresAt: number; doc: R2StorefrontCatalogDoc }
+  { expiresAt: number; doc: R2StorefrontCatalogDoc; configVersion: number }
 >();
 
-const CENTRAL_INDEX_MEM_TTL_MS = 35_000;
+const CENTRAL_INDEX_MEM_TTL_MS = 10 * 60_000;
+const CENTRAL_INDEX_EMPTY_FALLBACK_TTL_MS = 60_000;
 let centralIndexMemCache: {
   expiresAt: number;
   compiled: CompiledCentralImageIndex;
 } | null = null;
+
+// Single-flight dedupe: parallel isolate misses share ONE R2 GET instead of N.
+let centralIndexInflight: Promise<CompiledCentralImageIndex> | null = null;
+const catalogR2Inflight = new Map<string, Promise<CatalogR2FetchResult>>();
+
+type CatalogR2FetchResult =
+  | { kind: "found"; doc: R2StorefrontCatalogDoc }
+  | { kind: "missing" }
+  | { kind: "error"; error: unknown };
 
 export function invalidateCatalogMemCache(storefrontId: string): void {
   catalogMemCache.delete(storefrontId);
@@ -164,7 +176,7 @@ export function invalidateCentralIndexMemCache(): void {
   centralIndexMemCache = null;
 }
 
-function putCatalogMemCache(doc: R2StorefrontCatalogDoc): void {
+function putCatalogMemCache(doc: R2StorefrontCatalogDoc, configVersion = 0): void {
   if (catalogMemCache.size >= CATALOG_MEM_MAX_ENTRIES && !catalogMemCache.has(doc.storefront_id)) {
     const oldestKey = catalogMemCache.keys().next().value;
     if (oldestKey) catalogMemCache.delete(oldestKey);
@@ -172,6 +184,17 @@ function putCatalogMemCache(doc: R2StorefrontCatalogDoc): void {
   catalogMemCache.set(doc.storefront_id, {
     expiresAt: Date.now() + CATALOG_MEM_TTL_MS,
     doc,
+    configVersion: Number(configVersion) || 0,
+  });
+}
+
+function buildEmptyCompiledCentralIndex(): CompiledCentralImageIndex {
+  return compileCentralImageIndex({
+    schema_version: 2,
+    version: 0,
+    updated_at: new Date(0).toISOString(),
+    total_verified: 0,
+    entries: [],
   });
 }
 
@@ -324,38 +347,90 @@ export async function rebuildAndSaveCentralImageIndex(
 }
 
 /**
- * Loads the compiled global central image index from RAM (0ms) -> R2 (~15ms) -> 1-time D1 build.
+ * Loads the compiled global central image index from RAM (0ms) -> R2 (~15ms).
+ *
+ * Read-path safety (Free Tier + correctness):
+ * - R2 errors / corrupt JSON NEVER trigger a D1 rescan + R2 PUT. The last good (stale) index is
+ *   served, or an empty index (cached briefly) when none exists in this isolate.
+ * - Only when the R2 object is truly MISSING (get() returned null) AND `allowRebuild` is not false
+ *   is the index rebuilt from D1 (one-time bootstrap for admin/sync paths). Public visitor paths
+ *   always pass `allowRebuild: false`.
+ * - Parallel misses inside an isolate share a single R2 GET (single-flight).
  */
 export async function getCentralImageIndex(
   env: StorefrontWorkerEnv,
-  options?: { freshFromR2?: boolean }
+  options?: { freshFromR2?: boolean; allowRebuild?: boolean }
 ): Promise<CompiledCentralImageIndex> {
   const now = Date.now();
   if (!options?.freshFromR2 && centralIndexMemCache && centralIndexMemCache.expiresAt > now) {
     return centralIndexMemCache.compiled;
   }
 
-  if (env.MEDIA_BUCKET) {
-    try {
-      const obj = await env.MEDIA_BUCKET.get(CENTRAL_IMAGES_INDEX_R2_KEY);
-      if (obj) {
-        const text = new TextDecoder().decode(await obj.arrayBuffer());
-        const parsed = JSON.parse(text) as R2CentralImageIndexDoc;
-        if (parsed && Array.isArray(parsed.entries)) {
-          const compiled = compileCentralImageIndex(parsed);
-          centralIndexMemCache = {
-            expiresAt: now + CENTRAL_INDEX_MEM_TTL_MS,
-            compiled,
-          };
-          return compiled;
-        }
-      }
-    } catch {
-      // Fall through to D1 build
-    }
+  if (!options?.freshFromR2 && centralIndexInflight) {
+    return centralIndexInflight;
   }
 
-  return await rebuildAndSaveCentralImageIndex(env);
+  const loadPromise = (async (): Promise<CompiledCentralImageIndex> => {
+    const staleCompiled = centralIndexMemCache?.compiled || null;
+    if (!env.MEDIA_BUCKET) {
+      if (staleCompiled) return staleCompiled;
+      if (options?.allowRebuild === false) return buildEmptyCompiledCentralIndex();
+      return await rebuildAndSaveCentralImageIndex(env);
+    }
+
+    let obj: Awaited<ReturnType<NonNullable<StorefrontWorkerEnv["MEDIA_BUCKET"]>["get"]>> = null;
+    try {
+      obj = await env.MEDIA_BUCKET.get(CENTRAL_IMAGES_INDEX_R2_KEY);
+    } catch {
+      // Transient R2 failure: serve stale/empty, never rebuild + overwrite from a read path
+      return serveStaleOrEmptyCentralIndex(staleCompiled);
+    }
+
+    if (!obj) {
+      if (options?.allowRebuild === false) {
+        return serveStaleOrEmptyCentralIndex(staleCompiled);
+      }
+      return await rebuildAndSaveCentralImageIndex(env);
+    }
+
+    try {
+      const text = new TextDecoder().decode(await obj.arrayBuffer());
+      const parsed = JSON.parse(text) as R2CentralImageIndexDoc;
+      if (parsed && Array.isArray(parsed.entries)) {
+        const compiled = compileCentralImageIndex(parsed);
+        centralIndexMemCache = {
+          expiresAt: Date.now() + CENTRAL_INDEX_MEM_TTL_MS,
+          compiled,
+        };
+        return compiled;
+      }
+    } catch {
+      // Corrupt / partial JSON -> fall through to stale/empty
+    }
+    return serveStaleOrEmptyCentralIndex(staleCompiled);
+  })();
+
+  if (options?.freshFromR2) {
+    return loadPromise;
+  }
+
+  centralIndexInflight = loadPromise;
+  try {
+    return await loadPromise;
+  } finally {
+    if (centralIndexInflight === loadPromise) centralIndexInflight = null;
+  }
+}
+
+function serveStaleOrEmptyCentralIndex(
+  staleCompiled: CompiledCentralImageIndex | null
+): CompiledCentralImageIndex {
+  const compiled = staleCompiled || buildEmptyCompiledCentralIndex();
+  centralIndexMemCache = {
+    expiresAt: Date.now() + CENTRAL_INDEX_EMPTY_FALLBACK_TTL_MS,
+    compiled,
+  };
+  return compiled;
 }
 
 /**
@@ -712,7 +787,9 @@ export function hydrateCatalogDocWithCentralIndex(
   }
 
   let updatedCount = 0;
-  let anyChanged = doc.central_index_version !== compiled.doc.version;
+  // A central index version mismatch alone is NOT a content change — only real product image
+  // updates (or forced un-matching) count, so callers never rewrite live.json for a no-op.
+  let anyChanged = false;
   const nowIso = new Date().toISOString();
 
   for (const p of doc.products) {
@@ -790,10 +867,97 @@ export function hydrateCatalogDocWithCentralIndex(
 }
 
 /**
+ * Fetches + parses `storefront-catalogs/{sfId}/live.json`, distinguishing a truly MISSING object
+ * (get() === null) from transient R2 / JSON failures.
+ */
+async function fetchCatalogDocFromR2(
+  env: StorefrontWorkerEnv,
+  storefrontId: string
+): Promise<CatalogR2FetchResult> {
+  if (!env.MEDIA_BUCKET) return { kind: "missing" };
+  let obj: Awaited<ReturnType<NonNullable<StorefrontWorkerEnv["MEDIA_BUCKET"]>["get"]>> = null;
+  try {
+    obj = await env.MEDIA_BUCKET.get(getStorefrontLiveCatalogR2Key(storefrontId));
+  } catch (error) {
+    return { kind: "error", error };
+  }
+  if (!obj) return { kind: "missing" };
+  try {
+    const text = new TextDecoder().decode(await obj.arrayBuffer());
+    const parsed = JSON.parse(text) as R2StorefrontCatalogDoc;
+    if (parsed && parsed.storefront_id === storefrontId && Array.isArray(parsed.products)) {
+      return { kind: "found", doc: parsed };
+    }
+    return { kind: "error", error: new Error("catalog_doc_invalid_shape") };
+  } catch (error) {
+    return { kind: "error", error };
+  }
+}
+
+/** Single-flight wrapper so parallel isolate misses for one tenant share a single R2 GET. */
+function fetchCatalogDocFromR2Deduped(
+  env: StorefrontWorkerEnv,
+  storefrontId: string
+): Promise<CatalogR2FetchResult> {
+  const existing = catalogR2Inflight.get(storefrontId);
+  if (existing) return existing;
+  const p = fetchCatalogDocFromR2(env, storefrontId).finally(() => {
+    if (catalogR2Inflight.get(storefrontId) === p) catalogR2Inflight.delete(storefrontId);
+  });
+  catalogR2Inflight.set(storefrontId, p);
+  return p;
+}
+
+async function buildCatalogDocFromLegacyD1(
+  env: StorefrontWorkerEnv,
+  storefrontId: string,
+  pharmacyId: string
+): Promise<R2StorefrontCatalogDoc> {
+  const legacyRowsRes = await env.DB.prepare(
+    `SELECT * FROM storefront_products
+     WHERE storefront_id = ? AND pharmacy_id = ?
+     ORDER BY name ASC, id ASC`
+  )
+    .bind(storefrontId, pharmacyId)
+    .all<Record<string, unknown>>()
+    .catch(() => ({ results: [] as Record<string, unknown>[] }));
+
+  const mappedProducts = (legacyRowsRes.results || []).map(mapD1RowToR2Product);
+  const sfRow = await env.DB.prepare(
+    `SELECT last_sync_at, config_version FROM storefronts WHERE id = ? LIMIT 1`
+  )
+    .bind(storefrontId)
+    .first<{ last_sync_at: string | null; config_version: number }>()
+    .catch(() => null);
+
+  return recomputeCatalogDocSummaries({
+    schema_version: 2,
+    storefront_id: storefrontId,
+    pharmacy_id: pharmacyId,
+    catalog_version: Number(sfRow?.config_version || 1),
+    central_index_version: 0,
+    updated_at: new Date().toISOString(),
+    last_sync_at: sfRow?.last_sync_at || null,
+    published_count: 0,
+    shared_matched_count: 0,
+    owner_override_count: 0,
+    categories: [],
+    products: mappedProducts,
+  });
+}
+
+/**
  * Loads a pharmacy's authoritative catalog document:
- * 1. Isolate RAM (0ms, 0 D1, 0 R2) — unless `freshFromR2: true` (used before write-merge!)
- * 2. Cloudflare R2 (`storefront-catalogs/{sfId}/live.json`, ~12ms, 0 D1)
- * 3. Automatic 1-time migration from legacy D1 `storefront_products` -> saved to R2 immediately!
+ * 1. Isolate RAM (0ms, 0 D1, 0 R2) — unless `freshFromR2: true` (used before write-merge!) or the
+ *    cached copy predates `expectedConfigVersion`.
+ * 2. Cloudflare R2 (`storefront-catalogs/{sfId}/live.json`, ~12ms, 0 D1) — single-flight deduped.
+ * 3. Legacy D1 `storefront_products` ONLY when the R2 object is truly missing.
+ *
+ * NEVER persists from a read path: central-image hydration is applied in memory only, and the
+ * legacy D1 migration is only written to R2 when the caller explicitly passes
+ * `persistLegacyMigration: true` (sync / maintenance code). R2 errors or corrupt JSON never fall
+ * back to D1 (which could overwrite a good R2 catalog with stale/empty legacy rows): a stale
+ * isolate copy is served when available, otherwise the error is thrown.
  */
 export async function loadStorefrontCatalogDoc(
   env: StorefrontWorkerEnv,
@@ -802,7 +966,14 @@ export async function loadStorefrontCatalogDoc(
   options?: {
     freshFromR2?: boolean;
     hydrateCentralImages?: boolean;
+    /** Kept for backward compatibility; read paths no longer schedule background writes. */
     execCtx?: WorkerExecutionContext;
+    /** Tenant `config_version` observed by the caller; older isolate copies are refetched. */
+    expectedConfigVersion?: number;
+    /** Allow writing the one-time legacy D1 -> R2 migration (non-visitor callers only). */
+    persistLegacyMigration?: boolean;
+    /** Allow rebuilding a MISSING central index from D1 (non-visitor callers only). */
+    allowCentralRebuild?: boolean;
   }
 ): Promise<{
   doc: R2StorefrontCatalogDoc;
@@ -810,116 +981,81 @@ export async function loadStorefrontCatalogDoc(
   centralIndexVersion: number;
 }> {
   const now = Date.now();
+  const expectedVersion = Number(options?.expectedConfigVersion || 0);
   let doc: R2StorefrontCatalogDoc | null = null;
   let source: "isolate" | "r2" | "d1_migrated" | "empty" = "empty";
+  let tagVersion = expectedVersion;
 
-  if (!options?.freshFromR2) {
-    const memHit = catalogMemCache.get(storefrontId);
-    if (memHit && memHit.expiresAt > now) {
+  const memHit = catalogMemCache.get(storefrontId);
+  if (!options?.freshFromR2 && memHit) {
+    const fresh = memHit.expiresAt > now;
+    const versionOk = !expectedVersion || memHit.configVersion >= expectedVersion;
+    if (fresh && versionOk) {
       doc = memHit.doc;
       source = "isolate";
+      tagVersion = memHit.configVersion;
     }
   }
 
-  if (!doc && env.MEDIA_BUCKET) {
-    try {
-      const r2Key = getStorefrontLiveCatalogR2Key(storefrontId);
-      const obj = await env.MEDIA_BUCKET.get(r2Key);
-      if (obj) {
-        const text = new TextDecoder().decode(await obj.arrayBuffer());
-        const parsed = JSON.parse(text) as R2StorefrontCatalogDoc;
-        if (parsed && parsed.storefront_id === storefrontId && Array.isArray(parsed.products)) {
-          doc = parsed;
-          source = "r2";
-        }
-      }
-    } catch {
-      doc = null;
-    }
-  }
-
-  // One-time seamless hydration from legacy D1 `storefront_products` (runs at most ONCE per existing pharmacy!)
   if (!doc) {
-    const legacyRowsRes = await env.DB.prepare(
-      `SELECT * FROM storefront_products
-       WHERE storefront_id = ? AND pharmacy_id = ?
-       ORDER BY name ASC, id ASC`
-    )
-      .bind(storefrontId, pharmacyId)
-      .all<Record<string, unknown>>()
-      .catch(() => ({ results: [] as Record<string, unknown>[] }));
+    const fetched = options?.freshFromR2
+      ? await fetchCatalogDocFromR2(env, storefrontId)
+      : await fetchCatalogDocFromR2Deduped(env, storefrontId);
 
-    const mappedProducts = (legacyRowsRes.results || []).map(mapD1RowToR2Product);
-    const sfRow = await env.DB.prepare(
-      `SELECT last_sync_at, config_version FROM storefronts WHERE id = ? LIMIT 1`
-    )
-      .bind(storefrontId)
-      .first<{ last_sync_at: string | null; config_version: number }>()
-      .catch(() => null);
-
-    doc = recomputeCatalogDocSummaries({
-      schema_version: 2,
-      storefront_id: storefrontId,
-      pharmacy_id: pharmacyId,
-      catalog_version: Number(sfRow?.config_version || 1),
-      central_index_version: 0,
-      updated_at: new Date().toISOString(),
-      last_sync_at: sfRow?.last_sync_at || null,
-      published_count: 0,
-      shared_matched_count: 0,
-      owner_override_count: 0,
-      categories: [],
-      products: mappedProducts,
-    });
-
-    source = mappedProducts.length > 0 ? "d1_migrated" : "empty";
-
-    // Hydrate with central images & persist immediately to R2 so D1 is NEVER queried again for this catalog!
-    try {
-      const centralIndex = await getCentralImageIndex(env);
-      hydrateCatalogDocWithCentralIndex(doc, centralIndex);
-    } catch {
-      // Non-fatal
-    }
-
-    if (env.MEDIA_BUCKET) {
-      await saveStorefrontCatalogDoc(env, doc).catch(() => {});
+    if (fetched.kind === "found") {
+      doc = fetched.doc;
+      source = "r2";
+    } else if (fetched.kind === "error") {
+      // Transient R2 failure / corrupt JSON: serve last known good copy, never fall back to D1.
+      if (memHit && !options?.freshFromR2) {
+        doc = memHit.doc;
+        source = "isolate";
+        tagVersion = memHit.configVersion;
+      } else {
+        throw new Error(
+          `catalog_r2_unavailable: ${
+            fetched.error instanceof Error ? fetched.error.message : String(fetched.error)
+          }`
+        );
+      }
     } else {
-      putCatalogMemCache(doc);
+      // Truly missing in R2 -> legacy D1 hydration (served, not persisted unless explicitly allowed)
+      doc = await buildCatalogDocFromLegacyD1(env, storefrontId, pharmacyId);
+      source = doc.products.length > 0 ? "d1_migrated" : "empty";
+      try {
+        const centralIndex = await getCentralImageIndex(env, {
+          allowRebuild: options?.allowCentralRebuild === true,
+        });
+        hydrateCatalogDocWithCentralIndex(doc, centralIndex);
+      } catch {
+        // Non-fatal
+      }
+      if (options?.persistLegacyMigration && env.MEDIA_BUCKET && doc.products.length > 0) {
+        await saveStorefrontCatalogDoc(env, doc).catch(() => {});
+      }
+      if (!options?.freshFromR2) putCatalogMemCache(doc, tagVersion);
+      return { doc, source, centralIndexVersion: doc.central_index_version };
     }
-
-    return {
-      doc,
-      source,
-      centralIndexVersion: doc.central_index_version,
-    };
   }
 
-  // Optional live Central Image hydration when Super Admin uploaded new shared images
+  // In-memory-only central image hydration (no R2 writes from read paths)
   let centralVersion = doc.central_index_version || 0;
   if (options?.hydrateCentralImages !== false) {
     try {
-      const centralIndex = await getCentralImageIndex(env);
-      centralVersion = centralIndex.doc.version;
-      const { docChanged } = hydrateCatalogDocWithCentralIndex(doc, centralIndex);
-      if (docChanged) {
-        putCatalogMemCache(doc);
-        if (env.MEDIA_BUCKET) {
-          const persistPromise = saveStorefrontCatalogDoc(env, doc).catch(() => {});
-          if (options?.execCtx && typeof options.execCtx.waitUntil === "function") {
-            options.execCtx.waitUntil(persistPromise);
-          } else {
-            await persistPromise;
-          }
-        }
-      } else if (source === "r2") {
-        putCatalogMemCache(doc);
+      const centralIndex = await getCentralImageIndex(env, {
+        allowRebuild: options?.allowCentralRebuild === true,
+      });
+      if (centralIndex.doc.version > 0) {
+        hydrateCatalogDocWithCentralIndex(doc, centralIndex);
+        centralVersion = centralIndex.doc.version;
       }
     } catch {
-      if (source === "r2") putCatalogMemCache(doc);
+      // Non-fatal: serve the catalog without fresh central hydration
     }
-  } else if (source === "r2") {
-    putCatalogMemCache(doc);
+  }
+
+  if (source === "r2" && !options?.freshFromR2) {
+    putCatalogMemCache(doc, tagVersion);
   }
 
   return { doc, source, centralIndexVersion: centralVersion };
@@ -1060,6 +1196,36 @@ export async function syncStorefrontMetadataFromCatalogDoc(
 }
 
 /**
+ * Per-catalog-doc memo of the published product list. Keyed by the doc object (WeakMap, so it is
+ * GC'd with the doc) and validated by a cheap version fingerprint, because hydration / merges can
+ * mutate a doc in place. The returned array is shared and MUST be treated as read-only.
+ */
+const publishedProductsMemo = new WeakMap<
+  R2StorefrontCatalogDoc,
+  { fingerprint: string; products: Array<Record<string, unknown>> }
+>();
+
+function catalogDocFingerprint(doc: R2StorefrontCatalogDoc): string {
+  return `${doc.catalog_version}|${doc.central_index_version}|${doc.updated_at}|${doc.products.length}|${doc.published_count}`;
+}
+
+export function getMemoizedPublishedProducts(
+  doc: R2StorefrontCatalogDoc
+): Array<Record<string, unknown>> {
+  const fingerprint = catalogDocFingerprint(doc);
+  const hit = publishedProductsMemo.get(doc);
+  if (hit && hit.fingerprint === fingerprint) return hit.products;
+  const products: Array<Record<string, unknown>> = [];
+  for (const p of doc.products) {
+    if (p.publish_status === "published" && Number(p.is_controlled_substance || 0) === 0) {
+      products.push(p as unknown as Record<string, unknown>);
+    }
+  }
+  publishedProductsMemo.set(doc, { fingerprint, products });
+  return products;
+}
+
+/**
  * Converts an authoritative `R2StorefrontCatalogDoc` into a public-only snapshot view
  * (strictly published, non-controlled products + visible categories) for public API endpoints.
  */
@@ -1109,12 +1275,7 @@ export function buildPublicSnapshotViewFromCatalogDoc(
       String(a.name || "").localeCompare(String(b.name || ""))
   );
 
-  const publishedProducts: Array<Record<string, unknown>> = [];
-  for (const p of doc.products) {
-    if (p.publish_status === "published" && Number(p.is_controlled_substance || 0) === 0) {
-      publishedProducts.push(p as unknown as Record<string, unknown>);
-    }
-  }
+  const publishedProducts = getMemoizedPublishedProducts(doc);
 
   return {
     version: Number(sf.config_version || doc.catalog_version || 1),

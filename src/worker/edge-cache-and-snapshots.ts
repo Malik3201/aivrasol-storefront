@@ -84,7 +84,13 @@ function getDefaultEdgeCache(): Cache | null {
 
 /**
  * Builds a strict tenant-scoped synthetic cache key Request so Cloudflare Edge Cache
- * can NEVER collide responses across pharmacy hostnames or stale config/central-image versions.
+ * can NEVER collide responses across pharmacy hostnames or stale config versions.
+ *
+ * NOTE: the global central image index version is intentionally NOT part of the key any more —
+ * it changed for every pharmacy whenever any central image was uploaded, wiping every tenant's
+ * edge cache at once. Central image changes that affect a pharmacy bump that pharmacy's
+ * `config_version` (see central-image-service), which rotates its keys precisely.
+ * `centralIndexVersion` is still accepted for backward compatibility but ignored.
  */
 export function buildTenantEdgeCacheKey(
   req: Request,
@@ -98,11 +104,8 @@ export function buildTenantEdgeCacheKey(
   const url = new URL(req.url);
   url.searchParams.set("__sf", tenantScope.storefrontId);
   url.searchParams.set("__v", String(tenantScope.configVersion || 1));
-  if (tenantScope.centralIndexVersion) {
-    url.searchParams.set("__cv", String(tenantScope.centralIndexVersion));
-  }
   url.searchParams.set("__h", tenantScope.hostname || "default");
-  url.searchParams.set("__rk", "img1");
+  url.searchParams.set("__rk", "img2");
   return new Request(url.toString(), { method: "GET" });
 }
 
@@ -123,12 +126,20 @@ export async function getEdgeCachedResponse(cacheKey: Request): Promise<Response
 export function putEdgeCachedResponse(
   cacheKey: Request,
   response: Response,
-  execCtx?: WorkerExecutionContext
+  execCtx?: WorkerExecutionContext,
+  edgeTtlSec?: number
 ): void {
   const cache = getDefaultEdgeCache();
   if (!cache || response.status !== 200) return;
   try {
-    const toStore = response.clone();
+    let toStore = response.clone();
+    if (edgeTtlSec && edgeTtlSec > 0) {
+      // Store with an explicit edge TTL (Cache API honours Cache-Control on the stored copy),
+      // independent of the browser-facing Cache-Control on the live response.
+      const storeHeaders = new Headers(toStore.headers);
+      storeHeaders.set("Cache-Control", `public, max-age=${Math.round(edgeTtlSec)}`);
+      toStore = new Response(toStore.body, { status: toStore.status, headers: storeHeaders });
+    }
     const putPromise = cache.put(cacheKey, toStore).catch(() => {});
     if (execCtx && typeof execCtx.waitUntil === "function") {
       execCtx.waitUntil(putPromise);
@@ -227,6 +238,7 @@ export async function getCatalogSnapshotForTenant(
     loadStorefrontCatalogDoc(env, sf.id, sf.pharmacy_id, {
       hydrateCentralImages: true,
       execCtx,
+      expectedConfigVersion: Number(sf.config_version || 0),
     }),
     getCategoryMetaCached(env.DB, sf.id, sf.pharmacy_id),
   ]);
@@ -254,9 +266,140 @@ function startsWithLetter(name: unknown): boolean {
   return /^[A-Za-z]/.test(String(name || "").trim());
 }
 
+// ============================================================================
+// Per-catalog-version memoized indexes (sorted orders + id/slug maps)
+// Keyed by the memoized published-products array identity, which is stable for a catalog doc
+// version (see getMemoizedPublishedProducts) — so sorts run once per version, not per request.
+// ============================================================================
+
+type SnapshotRow = Record<string, unknown>;
+
+interface SnapshotIndexes {
+  featured?: SnapshotRow[];
+  nameAscImagesFirst?: SnapshotRow[];
+  priceAsc?: SnapshotRow[];
+  priceDesc?: SnapshotRow[];
+  byId?: Map<string, SnapshotRow>;
+  bySlug?: Map<string, SnapshotRow>;
+  byPosId?: Map<string, SnapshotRow>;
+}
+
+const snapshotIndexMemo = new WeakMap<SnapshotRow[], SnapshotIndexes>();
+
+function getSnapshotIndexes(products: SnapshotRow[]): SnapshotIndexes {
+  let idx = snapshotIndexMemo.get(products);
+  if (!idx) {
+    idx = {};
+    snapshotIndexMemo.set(products, idx);
+  }
+  return idx;
+}
+
+function rowPrice(r: SnapshotRow): number {
+  return Number(r.override_price_pkr ?? r.public_selling_price_pkr ?? 0);
+}
+
+function getSortedRows(products: SnapshotRow[], sortBy: string, hasQuery: boolean): SnapshotRow[] {
+  const idx = getSnapshotIndexes(products);
+  if (sortBy === "price_asc") {
+    if (!idx.priceAsc) {
+      idx.priceAsc = [...products].sort(
+        (a, b) => rowPrice(a) - rowPrice(b) || String(a.name || "").localeCompare(String(b.name || ""))
+      );
+    }
+    return idx.priceAsc;
+  }
+  if (sortBy === "price_desc") {
+    if (!idx.priceDesc) {
+      idx.priceDesc = [...products].sort(
+        (a, b) => rowPrice(b) - rowPrice(a) || String(a.name || "").localeCompare(String(b.name || ""))
+      );
+    }
+    return idx.priceDesc;
+  }
+  if (sortBy === "name_asc") {
+    // Strict alphabetical (catalog doc order) when searching; otherwise real-photo items first.
+    if (hasQuery) return products;
+    if (!idx.nameAscImagesFirst) {
+      idx.nameAscImagesFirst = [...products].sort((a, b) => {
+        const imgDiff = Number(hasRealProductImage(b)) - Number(hasRealProductImage(a));
+        if (imgDiff !== 0) return imgDiff;
+        const alphaDiff = Number(startsWithLetter(b.name)) - Number(startsWithLetter(a.name));
+        if (alphaDiff !== 0) return alphaDiff;
+        return String(a.name || "").localeCompare(String(b.name || ""));
+      });
+    }
+    return idx.nameAscImagesFirst;
+  }
+  // Default "featured" merchandising order:
+  // 1. Products WITH real verified/uploaded photos ALWAYS come first (never generic placeholder visuals!)
+  // 2. In-stock products ahead of out-of-stock
+  // 3. Explicitly featured / popular items
+  // 4. Clean alphabetic medicine names ahead of numeric shorthand entries (e.g., 10 LAKH, 1CC, 3CC)
+  // 5. Alphabetical A-Z
+  if (!idx.featured) {
+    idx.featured = [...products].sort((a, b) => {
+      const imgDiff = Number(hasRealProductImage(b)) - Number(hasRealProductImage(a));
+      if (imgDiff !== 0) return imgDiff;
+      const stockDiff = Number(isRowInStock(b)) - Number(isRowInStock(a));
+      if (stockDiff !== 0) return stockDiff;
+      const fa = Number(b.is_featured || 0) - Number(a.is_featured || 0);
+      if (fa !== 0) return fa;
+      const pp = Number(b.is_popular || 0) - Number(a.is_popular || 0);
+      if (pp !== 0) return pp;
+      const alphaDiff = Number(startsWithLetter(b.name)) - Number(startsWithLetter(a.name));
+      if (alphaDiff !== 0) return alphaDiff;
+      return (
+        String(a.name || "").localeCompare(String(b.name || "")) ||
+        String(a.id || "").localeCompare(String(b.id || ""))
+      );
+    });
+  }
+  return idx.featured;
+}
+
+/**
+ * O(1) product lookup by id, slug, or POS product id using memoized per-version maps.
+ */
+export function findProductInSnapshot(
+  snapshot: Pick<StorefrontCatalogSnapshot, "products">,
+  idOrSlug: string,
+  options?: { includePosId?: boolean }
+): SnapshotRow | undefined {
+  const products = snapshot.products;
+  const idx = getSnapshotIndexes(products);
+  if (!idx.byId || !idx.bySlug || !idx.byPosId) {
+    const byId = new Map<string, SnapshotRow>();
+    const bySlug = new Map<string, SnapshotRow>();
+    const byPosId = new Map<string, SnapshotRow>();
+    for (const p of products) {
+      const id = String(p.id || "");
+      const slug = String(p.slug || "");
+      const posId = String(p.pos_product_id || "");
+      if (id && !byId.has(id)) byId.set(id, p);
+      if (slug && !bySlug.has(slug)) bySlug.set(slug, p);
+      if (posId && !byPosId.has(posId)) byPosId.set(posId, p);
+    }
+    idx.byId = byId;
+    idx.bySlug = bySlug;
+    idx.byPosId = byPosId;
+  }
+  const key = String(idOrSlug || "");
+  if (!key) return undefined;
+  // Preserve legacy precedence of `Array.find` over the doc order as closely as possible:
+  // exact id first, then slug, then (optionally) POS product id.
+  return (
+    idx.byId.get(key) ||
+    idx.bySlug.get(key) ||
+    (options?.includePosId ? idx.byPosId.get(key) : undefined)
+  );
+}
+
 /**
  * Helper to filter, sort, and cursor-paginate products directly from an R2 snapshot in memory.
- * Zero D1 reads per search/browse/category/pagination request!
+ * Zero D1 reads per search/browse/category/pagination request! Sort orders are precomputed once
+ * per catalog version; per-request work is a single linear filter pass that stops early once the
+ * requested page (+1 look-ahead) is filled.
  */
 export function queryProductsFromSnapshot(
   snapshot: StorefrontCatalogSnapshot,
@@ -277,7 +420,7 @@ export function queryProductsFromSnapshot(
   const catLower = (options.category || "").trim().toLowerCase();
   const sortBy = options.sortBy || "featured";
 
-  let rows = snapshot.products.filter((r) => {
+  const matches = (r: SnapshotRow): boolean => {
     const avail = String(r.availability_status || "in_stock");
     if (options.hideOutOfStock || options.inStockOnly) {
       if (avail !== "in_stock" && avail !== "low_stock") return false;
@@ -299,72 +442,64 @@ export function queryProductsFromSnapshot(
       if (!hay.includes(qLower)) return false;
     }
     return true;
-  });
+  };
 
-  if (sortBy === "price_asc") {
-    rows = [...rows].sort((a, b) => {
-      const pa = Number(a.override_price_pkr ?? a.public_selling_price_pkr ?? 0);
-      const pb = Number(b.override_price_pkr ?? b.public_selling_price_pkr ?? 0);
-      return pa - pb || String(a.name || "").localeCompare(String(b.name || ""));
-    });
-  } else if (sortBy === "price_desc") {
-    rows = [...rows].sort((a, b) => {
-      const pa = Number(a.override_price_pkr ?? a.public_selling_price_pkr ?? 0);
-      const pb = Number(b.override_price_pkr ?? b.public_selling_price_pkr ?? 0);
-      return pb - pa || String(a.name || "").localeCompare(String(b.name || ""));
-    });
-  } else if (sortBy === "name_asc") {
-    // Still put real-photo items ahead of placeholder items when browsing A-Z with no search query,
-    // while keeping strict alphabetical order inside each group!
-    if (!qLower) {
-      rows = [...rows].sort((a, b) => {
-        const imgDiff = Number(hasRealProductImage(b)) - Number(hasRealProductImage(a));
-        if (imgDiff !== 0) return imgDiff;
-        const alphaDiff = Number(startsWithLetter(b.name)) - Number(startsWithLetter(a.name));
-        if (alphaDiff !== 0) return alphaDiff;
-        return String(a.name || "").localeCompare(String(b.name || ""));
-      });
-    }
-  } else {
-    // Default "featured" merchandising order:
-    // 1. Products WITH real verified/uploaded photos ALWAYS come first (never generic placeholder visuals!)
-    // 2. In-stock products ahead of out-of-stock
-    // 3. Explicitly featured / popular items
-    // 4. Clean alphabetic medicine names ahead of numeric shorthand entries (e.g., 10 LAKH, 1CC, 3CC)
-    // 5. Alphabetical A-Z
-    rows = [...rows].sort((a, b) => {
-      const imgDiff = Number(hasRealProductImage(b)) - Number(hasRealProductImage(a));
-      if (imgDiff !== 0) return imgDiff;
-      const stockDiff = Number(isRowInStock(b)) - Number(isRowInStock(a));
-      if (stockDiff !== 0) return stockDiff;
-      const fa = Number(b.is_featured || 0) - Number(a.is_featured || 0);
-      if (fa !== 0) return fa;
-      const pp = Number(b.is_popular || 0) - Number(a.is_popular || 0);
-      if (pp !== 0) return pp;
-      const alphaDiff = Number(startsWithLetter(b.name)) - Number(startsWithLetter(a.name));
-      if (alphaDiff !== 0) return alphaDiff;
-      return (
-        String(a.name || "").localeCompare(String(b.name || "")) ||
-        String(a.id || "").localeCompare(String(b.id || ""))
-      );
-    });
-  }
+  const sorted = getSortedRows(snapshot.products, sortBy, Boolean(qLower));
 
-  let startIdx = 0;
+  // Offset cursor: skip `startIdx` matches; id cursor: start after the matching id.
+  let offsetToSkip = 0;
+  let afterId: string | null = null;
   if (options.cursor) {
     if (options.cursor.sortValue === "__offset__") {
       const parsed = parseInt(options.cursor.id, 10);
-      if (Number.isFinite(parsed) && parsed > 0) startIdx = parsed;
+      if (Number.isFinite(parsed) && parsed > 0) offsetToSkip = parsed;
     } else {
-      const idx = rows.findIndex((r) => String(r.id || "") === options.cursor!.id);
-      if (idx >= 0) startIdx = idx + 1;
+      afterId = options.cursor.id;
     }
   }
 
-  const sliced = rows.slice(startIdx, startIdx + options.limit);
-  const hasMore = startIdx + options.limit < rows.length;
-  const nextOffset = hasMore ? startIdx + sliced.length : null;
-  return { pageRows: sliced, hasMore, nextOffset };
+  const limit = Math.max(0, options.limit);
+  const pageRows: SnapshotRow[] = [];
+  let matchIndex = 0; // index among filtered rows
+  let startIdx = offsetToSkip;
+  let foundAfterId = afterId === null;
+  let hasMore = false;
+
+  if (afterId !== null) {
+    // Legacy id-cursor semantics: if the id is not present in the filtered list, start from 0.
+    let idPos = -1;
+    let i = 0;
+    for (const r of sorted) {
+      if (!matches(r)) continue;
+      if (String(r.id || "") === afterId) {
+        idPos = i;
+        break;
+      }
+      i++;
+    }
+    startIdx = idPos >= 0 ? idPos + 1 : 0;
+    foundAfterId = true;
+  }
+
+  if (foundAfterId) {
+    for (const r of sorted) {
+      if (!matches(r)) continue;
+      if (matchIndex < startIdx) {
+        matchIndex++;
+        continue;
+      }
+      if (pageRows.length < limit) {
+        pageRows.push(r);
+        matchIndex++;
+        continue;
+      }
+      hasMore = true;
+      break;
+    }
+  }
+
+  const nextOffset = hasMore ? startIdx + pageRows.length : null;
+  return { pageRows, hasMore, nextOffset };
 }
 
 const GENERIC_PLACEHOLDERS = new Set([

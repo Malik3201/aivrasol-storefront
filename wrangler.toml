@@ -2,6 +2,18 @@
 # AivraSol Multi-Tenant Pharmacy Storefront — Cloudflare Worker Configuration
 # Free-Tier-First Architecture: Workers + Static Assets + D1 + R2 Standard
 # No KV, No Queues, No Durable Objects
+#
+# LIVE DEPLOYMENT = `--env staging`  (worker: aivrasol-storefront-staging.aivrasol-storefront.workers.dev)
+#   Deploy:     npm run build ; npx wrangler deploy --env staging
+#   Migrations: npx wrangler d1 migrations apply aivrasol-storefront-staging-db --env staging --remote
+#
+# Only ONE D1 database exists in the Cloudflare account (aivrasol-storefront-staging-db), so the
+# top-level block below points at the same live database and media bucket (verified via
+# `wrangler d1 list` / `wrangler r2 bucket list`). Never create a second D1 unless you plan a
+# real data migration — the Admin panel and POS talk to the staging worker.
+#
+# Custom domain: run  scripts/connect-domain.ps1 -Domain yourdomain.com -ZoneId <zone id>
+# It fills the "managed" blocks below automatically (routes + PLATFORM_BASE_DOMAIN + media URL).
 # ============================================================================
 
 name = "aivrasol-storefront"
@@ -16,29 +28,36 @@ directory = "./dist/client"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
 
-# Cloudflare D1 Database Binding (Production — Shared Multi-Tenant Storefront DB)
+# Cloudflare D1 Database Binding (the single live multi-tenant storefront DB)
 [[d1_databases]]
 binding = "DB"
-database_name = "aivrasol-storefront-db"
-database_id = "00000000-0000-0000-0000-000000000000" # Replace with `npx wrangler d1 create aivrasol-storefront-db` ID
+database_name = "aivrasol-storefront-staging-db"
+database_id = "124a3ef6-2178-4de2-8fdc-97cc906f9716"
 migrations_dir = "migrations"
 
-# Cloudflare R2 Standard Bucket Binding for Optimized Storefront Media
+# Cloudflare R2 Standard Bucket Binding for Optimized Storefront Media (live bucket)
 [[r2_buckets]]
 binding = "MEDIA_BUCKET"
-bucket_name = "aivrasol-storefront-media"
+bucket_name = "aivrasol-storefront-staging-media"
 
 [vars]
-PLATFORM_BASE_DOMAIN = "workers.dev"
 ALLOW_DEV_HOST_OVERRIDE = "false"
+# >>> managed:production-vars (scripts/connect-domain.ps1) — do not edit by hand
+PLATFORM_BASE_DOMAIN = "workers.dev"
+# <<< managed:production-vars
+
+# Daily maintenance: prunes idempotency / sync events / audit / usage rows (src/worker/scheduled.ts)
+[triggers]
+crons = ["17 3 * * *"]
 
 # ============================================================================
-# Isolated Staging Environment (`npx wrangler deploy --env staging`)
-# Safe for pilot testing without affecting customer-facing production domains
+# LIVE Environment (`npx wrangler deploy --env staging`)
 # ============================================================================
 [env.staging]
 name = "aivrasol-storefront-staging"
 workers_dev = true
+# >>> managed:staging-routes (scripts/connect-domain.ps1) — do not edit by hand
+# <<< managed:staging-routes
 
 [env.staging.assets]
 directory = "./dist/client"
@@ -48,7 +67,7 @@ not_found_handling = "single-page-application"
 [[env.staging.d1_databases]]
 binding = "DB"
 database_name = "aivrasol-storefront-staging-db"
-database_id = "124a3ef6-2178-4de2-8fdc-97cc906f9716" # Replace with `npx wrangler d1 create aivrasol-storefront-staging-db` ID
+database_id = "124a3ef6-2178-4de2-8fdc-97cc906f9716"
 migrations_dir = "migrations"
 
 [[env.staging.r2_buckets]]
@@ -56,8 +75,13 @@ binding = "MEDIA_BUCKET"
 bucket_name = "aivrasol-storefront-staging-media"
 
 [env.staging.vars]
-PLATFORM_BASE_DOMAIN = "workers.dev"
 ALLOW_DEV_HOST_OVERRIDE = "false"
+# >>> managed:staging-vars (scripts/connect-domain.ps1) — do not edit by hand
+PLATFORM_BASE_DOMAIN = "workers.dev"
+# <<< managed:staging-vars
+
+[env.staging.triggers]
+crons = ["17 3 * * *"]
 
 # Secrets (set via `npx wrangler secret put <NAME> --env staging`; never committed in plaintext):
 # - STOREFRONT_ADMIN_SECRET

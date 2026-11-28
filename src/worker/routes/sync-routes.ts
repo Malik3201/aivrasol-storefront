@@ -78,7 +78,12 @@ function mapStatusToDbFields(
   return { dbStatus: requestedStatus, fulfillmentOutcome: null };
 }
 import { detectForbiddenPrivateKeys, toUrlSlug } from "../../shared/validation";
-import type { D1Database, StorefrontWorkerEnv, WorkerExecutionContext } from "../env";
+import type {
+  D1Database,
+  D1PreparedStatement,
+  StorefrontWorkerEnv,
+  WorkerExecutionContext,
+} from "../env";
 import {
   buildResponseHeaders,
   sha256Hex,
@@ -97,11 +102,32 @@ import {
 // ============================================================================
 // Lightweight Per-Isolate Caches (Tenant-Scoped, Instant Invalidation on Writes)
 // ============================================================================
-const ORDER_NOTIF_CACHE_TTL_MS = 20_000;
-const orderNotifCache = new Map<string, { expiresAt: number; payload: string }>();
+// Keyed by tenant; each entry remembers the `storefronts.orders_version` it was built for.
+// When orders_version is available (migration 0012) the entry is valid for 60s AND only while the
+// version is unchanged (DB triggers bump it on every order write) → always correct across isolates.
+// Legacy DBs without the column fall back to the previous 20s TTL + explicit invalidation.
+const ORDER_NOTIF_CACHE_TTL_MS = 60_000;
+const ORDER_NOTIF_CACHE_TTL_UNVERSIONED_MS = 20_000;
+const orderNotifCache = new Map<
+  string,
+  { expiresAt: number; payload: string; ordersVersion: number | null }
+>();
 
 export function invalidateOrderNotifCache(storefrontId: string, pharmacyId: string): void {
   orderNotifCache.delete(`${storefrontId}:${pharmacyId}`);
+}
+
+/** Parses optional `?v=<orders_version>` query param. Returns null when absent/invalid. */
+function parseClientOrdersVersion(url: URL): number | null {
+  const raw = url.searchParams.get("v");
+  if (raw === null || raw.trim() === "") return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? Math.floor(n) : null;
+}
+
+function isMissingColumnError(err: unknown): boolean {
+  const msg = String((err as any)?.message || err || "").toLowerCase();
+  return msg.includes("no such column") || msg.includes("has no column");
 }
 
 export async function recalculateStorefrontCatalogCounts(
@@ -300,11 +326,38 @@ export async function handleSyncRoutes(
   }
 
   // Enforce live Super Admin active status on every POS `/api/v1/sync/*` call (blocks cached tokens immediately when disabled/suspended)
-  const activeSfRow = await env.DB.prepare(
-    "SELECT status, website_enabled, entitlement_status FROM storefronts WHERE id = ? AND pharmacy_id = ? LIMIT 1"
-  )
-    .bind(actor.storefrontId, actor.pharmacyId)
-    .first<{ status: string; website_enabled: number; entitlement_status?: string }>();
+  // Same single PK row also returns `orders_version` (migration 0012) for cheap `?v=` short-circuits.
+  type ActiveSfRow = {
+    status: string;
+    website_enabled: number;
+    entitlement_status?: string;
+    orders_version?: number | null;
+  };
+  let activeSfRow: ActiveSfRow | null;
+  try {
+    activeSfRow = await env.DB.prepare(
+      "SELECT status, website_enabled, entitlement_status, orders_version FROM storefronts WHERE id = ? AND pharmacy_id = ? LIMIT 1"
+    )
+      .bind(actor.storefrontId, actor.pharmacyId)
+      .first<ActiveSfRow>();
+  } catch (colErr) {
+    if (!isMissingColumnError(colErr)) throw colErr;
+    // Not-yet-migrated DB (no orders_version column): fall back to the legacy query.
+    activeSfRow = await env.DB.prepare(
+      "SELECT status, website_enabled, entitlement_status FROM storefronts WHERE id = ? AND pharmacy_id = ? LIMIT 1"
+    )
+      .bind(actor.storefrontId, actor.pharmacyId)
+      .first<ActiveSfRow>();
+  }
+  const currentOrdersVersion: number | null =
+    activeSfRow && activeSfRow.orders_version !== undefined && activeSfRow.orders_version !== null
+      ? Number(activeSfRow.orders_version)
+      : null;
+  const clientOrdersVersion = parseClientOrdersVersion(url);
+  const ordersUnchangedForClient =
+    currentOrdersVersion !== null &&
+    clientOrdersVersion !== null &&
+    clientOrdersVersion === currentOrdersVersion;
 
   const isSuspendedOrMissing =
     !activeSfRow ||
@@ -889,10 +942,15 @@ export async function handleSyncRoutes(
       }
 
       // Persist authoritative catalog to R2 (`storefront-catalogs/{sfId}/live.json`) — 1 R2 write, 0 D1 product writes!
+      // Free-tier: skip the R2 PUT (Class A op) entirely when nothing changed in this batch.
+      // NOTE: `central_index_version` is intentionally NOT stamped here. Only the products touched in this
+      // batch were matched against the central index; stamping the version would make the read path skip
+      // re-hydration for every other product (they'd miss newly verified shared images). Leaving the previous
+      // version lets `hydrateCatalogDocWithCentralIndex` re-match the whole catalog in memory on read.
+      const isNoOpBatch = itemsWritten === 0 && !catalogTopologyChanged;
       catalogDoc.products = Array.from(existingByPosId.values());
       catalogDoc.last_sync_at = nowIso;
-      catalogDoc.central_index_version = centralIndex.doc.version;
-      if (itemsWritten > 0 || catalogTopologyChanged || !isIntermediateBatch) {
+      if (!isNoOpBatch) {
         await saveStorefrontCatalogDoc(env, catalogDoc);
       }
 
@@ -970,72 +1028,79 @@ export async function handleSyncRoutes(
       };
 
       const expiresAt = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString();
-      // Batch sync event + idempotency in 1 single D1 round-trip
-      await env.DB.batch([
-        env.DB.prepare(
-          `INSERT INTO storefront_sync_events (
-           id, storefront_id, pharmacy_id, branch_id, idempotency_key,
-           event_type, source_cursor, next_cursor,
-           items_received, items_applied, items_rejected, status, created_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        ).bind(
-          syncEventId,
-          actor.storefrontId,
-          actor.pharmacyId,
-          branchId,
-          idempotencyKey,
-          eventType,
-          body.source_cursor || null,
-          nextCursor,
-          body.items.length,
-          itemsApplied,
-          itemsRejected,
-          status,
-          nowIso
-        ),
-        env.DB.prepare(
-          `INSERT INTO storefront_import_idempotency (
-           storefront_id, pharmacy_id, idempotency_key, request_hash, response_json, created_at, expires_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?)`
-        ).bind(
-          actor.storefrontId,
-          actor.pharmacyId,
-          idempotencyKey,
-          requestHash,
-          JSON.stringify(responsePayload),
-          nowIso,
-          expiresAt
-        ),
-      ]);
+      // Free-tier: a no-op batch (nothing written, nothing rejected) is naturally idempotent — replaying it
+      // yields the same no-op — so skip the sync_events + idempotency inserts (≈4-6 rows written incl. indexes).
+      const skipEventAndIdempotency = isNoOpBatch && itemsRejected === 0;
+      if (!skipEventAndIdempotency) {
+        // Batch sync event + idempotency in 1 single D1 round-trip
+        await env.DB.batch([
+          env.DB.prepare(
+            `INSERT INTO storefront_sync_events (
+             id, storefront_id, pharmacy_id, branch_id, idempotency_key,
+             event_type, source_cursor, next_cursor,
+             items_received, items_applied, items_rejected, status, created_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ).bind(
+            syncEventId,
+            actor.storefrontId,
+            actor.pharmacyId,
+            branchId,
+            idempotencyKey,
+            eventType,
+            body.source_cursor || null,
+            nextCursor,
+            body.items.length,
+            itemsApplied,
+            itemsRejected,
+            status,
+            nowIso
+          ),
+          env.DB.prepare(
+            `INSERT INTO storefront_import_idempotency (
+             storefront_id, pharmacy_id, idempotency_key, request_hash, response_json, created_at, expires_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+          ).bind(
+            actor.storefrontId,
+            actor.pharmacyId,
+            idempotencyKey,
+            requestHash,
+            JSON.stringify(responsePayload),
+            nowIso,
+            expiresAt
+          ),
+        ]);
+      }
 
       if (!isIntermediateBatch) {
-        await recordStorefrontUsage(env.DB, {
-          storefrontId: actor.storefrontId,
-          pharmacyId: actor.pharmacyId,
-          syncRequests: 1,
-          d1RowsReadEst: syncActualRowsRead,
-          d1RowsWrittenEst: 4,
-          r2ClassAOps: 1,
-        });
+        // Buffered usage telemetry (flushes ≤ once / 3 min per tenant instead of 1 write per sync call)
+        await recordBufferedSyncPollUsage(
+          env.DB,
+          actor.storefrontId,
+          actor.pharmacyId,
+          syncActualRowsRead
+        );
 
-        await writeStorefrontAuditLog(env.DB, {
-          storefrontId: actor.storefrontId,
-          pharmacyId: actor.pharmacyId,
-          action: `catalog_sync_${eventType}`,
-          actorType: "pos_sync",
-          actorId: branchId,
-          entityType: "catalog",
-          entityId: syncEventId,
-          summary: `Synced ${itemsApplied} catalog items to R2 (${itemsRejected} rejected); ${publishedCount} total published.`,
-          metadata: {
-            idempotency_key: idempotencyKey,
-            next_cursor: nextCursor,
-            items_received: body.items.length,
-            items_applied: itemsApplied,
-            items_rejected: itemsRejected,
-            storage_engine: "r2_first_v2",
-          },
-        });
+        // Audit only real catalog changes / rejections (no-op heartbeat syncs add no audit rows)
+        if (!skipEventAndIdempotency) {
+          await writeStorefrontAuditLog(env.DB, {
+            storefrontId: actor.storefrontId,
+            pharmacyId: actor.pharmacyId,
+            action: `catalog_sync_${eventType}`,
+            actorType: "pos_sync",
+            actorId: branchId,
+            entityType: "catalog",
+            entityId: syncEventId,
+            summary: `Synced ${itemsApplied} catalog items to R2 (${itemsRejected} rejected); ${publishedCount} total published.`,
+            metadata: {
+              idempotency_key: idempotencyKey,
+              next_cursor: nextCursor,
+              items_received: body.items.length,
+              items_applied: itemsApplied,
+              items_rejected: itemsRejected,
+              storage_engine: "r2_first_v2",
+            },
+          });
+        }
       }
 
       return new Response(JSON.stringify(responsePayload), { status: 200, headers });
@@ -1058,9 +1123,21 @@ export async function handleSyncRoutes(
       (pathname === "/api/v1/sync/orders/inbox" && url.searchParams.get("summary_only") === "1")) &&
     req.method === "GET"
   ) {
+    // `?v=<orders_version>` short-circuit: nothing changed since the client's last poll → 1 PK row read total.
+    if (ordersUnchangedForClient) {
+      return new Response(
+        JSON.stringify({ ok: true, unchanged: true, orders_version: currentOrdersVersion }),
+        { status: 200, headers }
+      );
+    }
+
     const cacheKey = `${actor.storefrontId}:${actor.pharmacyId}`;
     const cached = orderNotifCache.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now()) {
+    if (
+      cached &&
+      cached.expiresAt > Date.now() &&
+      cached.ordersVersion === currentOrdersVersion
+    ) {
       return new Response(cached.payload, { status: 200, headers });
     }
 
@@ -1112,11 +1189,15 @@ export async function handleSyncRoutes(
       latest_updated_at: latestUpdatedAt,
       recent_orders: recentNewOrders,
       latest_orders: recentNewOrders,
+      ...(currentOrdersVersion !== null ? { orders_version: currentOrdersVersion } : {}),
     });
 
     orderNotifCache.set(cacheKey, {
-      expiresAt: Date.now() + ORDER_NOTIF_CACHE_TTL_MS,
+      expiresAt:
+        Date.now() +
+        (currentOrdersVersion !== null ? ORDER_NOTIF_CACHE_TTL_MS : ORDER_NOTIF_CACHE_TTL_UNVERSIONED_MS),
       payload: serialized,
+      ordersVersion: currentOrdersVersion,
     });
 
     return new Response(serialized, { status: 200, headers });
@@ -1133,8 +1214,31 @@ export async function handleSyncRoutes(
     const searchQ = (url.searchParams.get("q") || url.searchParams.get("search") || "")
       .trim()
       .toLowerCase();
-    const includeHistory = url.searchParams.get("include_history") !== "0";
-    const limit = Math.min(250, Math.max(1, Number(url.searchParams.get("limit")) || 120));
+    // History rows are skipped by default for view=active (POS badge/inbox refresh) unless explicitly requested.
+    const includeHistoryParam = url.searchParams.get("include_history");
+    const includeHistory =
+      includeHistoryParam === null
+        ? viewFilter !== "active"
+        : includeHistoryParam !== "0" && includeHistoryParam.toLowerCase() !== "false";
+    const limit = Math.min(120, Math.max(1, Number(url.searchParams.get("limit")) || 120));
+    // Optional delta cursor: only orders changed after this ISO `updated_at` (uses idx_storefront_orders_sf_updated)
+    const sinceCursor = (url.searchParams.get("since") || "").trim();
+    const serverTime = new Date().toISOString();
+
+    if (ordersUnchangedForClient) {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          unchanged: true,
+          storefront_id: actor.storefrontId,
+          pharmacy_id: actor.pharmacyId,
+          orders_version: currentOrdersVersion,
+          server_time: serverTime,
+          orders: [],
+        }),
+        { status: 200, headers }
+      );
+    }
 
     let sql = `
       SELECT *
@@ -1142,6 +1246,11 @@ export async function handleSyncRoutes(
       WHERE storefront_id = ? AND pharmacy_id = ?
     `;
     const params: unknown[] = [actor.storefrontId, actor.pharmacyId];
+
+    if (sinceCursor) {
+      sql += ` AND updated_at > ?`;
+      params.push(sinceCursor);
+    }
 
     if (viewFilter === "active") {
       sql += ` AND status NOT IN ('completed', 'cancelled', 'rejected')`;
@@ -1368,12 +1477,12 @@ export async function handleSyncRoutes(
       rowsRead: Math.max(1, inboxOrders.length * 2),
     });
 
-    await recordStorefrontUsage(env.DB, {
-      storefrontId: actor.storefrontId,
-      pharmacyId: actor.pharmacyId,
-      syncRequests: 1,
-      d1RowsReadEst: inboxRowsRead,
-    });
+    await recordBufferedSyncPollUsage(
+      env.DB,
+      actor.storefrontId,
+      actor.pharmacyId,
+      inboxRowsRead
+    );
 
     return new Response(
       JSON.stringify({
@@ -1381,6 +1490,9 @@ export async function handleSyncRoutes(
         storefront_id: actor.storefrontId,
         pharmacy_id: actor.pharmacyId,
         orders: inboxOrders,
+        ...(currentOrdersVersion !== null ? { orders_version: currentOrdersVersion } : {}),
+        server_time: serverTime,
+        ...(sinceCursor ? { since: sinceCursor } : {}),
       }),
       { status: 200, headers }
     );
@@ -1688,50 +1800,39 @@ export async function handleSyncRoutes(
       historyNote = historyNote || `Order ${dbStatus} from POS Order Inbox.`;
     }
 
-    await env.DB.prepare(
-      `UPDATE storefront_orders
-       SET status = ?,
-           fulfillment_outcome = ?,
-           payment_status = ?,
-           cod_paid_amount_pkr = ?,
-           cod_balance_due_pkr = ?,
-           cod_last_collection_at = ?,
-           cod_collections_json = ?,
-           pos_handoff_status = ?,
-           pos_order_ref = ?,
-           pos_invoice_id = ?,
-           pos_invoice_number = ?,
-           pos_fulfilled_at = ?,
-           pos_fulfilled_by = ?,
-           fulfillment_notes = ?,
-           fulfilled_adjustments_json = ?,
-           updated_at = ?
-       WHERE id = ? AND storefront_id = ? AND pharmacy_id = ?`
-    )
-      .bind(
-        dbStatus,
-        fulfillmentOutcome,
-        nextPaymentStatus,
-        codPaidAmountPkr,
-        codBalanceDuePkr,
-        codLastCollectionAt,
-        codCollectionsJson,
-        nextHandoffStatus,
-        posOrderRef,
-        posInvoiceId,
-        posInvoiceNumber,
-        posFulfilledAt,
-        posFulfilledBy,
-        fulfillmentNotes,
-        fulfilledAdjustmentsJson,
-        nowIso,
-        ord.id,
-        actor.storefrontId,
-        actor.pharmacyId
-      )
-      .run();
-
-    invalidateOrderNotifCache(actor.storefrontId, actor.pharmacyId);
+    // ── Free-tier write diet: only SET columns that actually changed; all writes in ONE D1 batch ──
+    const prevOrdAny = ord as any;
+    const nextOrderValues: Record<string, unknown> = {
+      status: dbStatus,
+      fulfillment_outcome: fulfillmentOutcome,
+      payment_status: nextPaymentStatus,
+      cod_paid_amount_pkr: codPaidAmountPkr,
+      cod_balance_due_pkr: codBalanceDuePkr,
+      cod_last_collection_at: codLastCollectionAt,
+      cod_collections_json: codCollectionsJson,
+      pos_handoff_status: nextHandoffStatus,
+      pos_order_ref: posOrderRef,
+      pos_invoice_id: posInvoiceId,
+      pos_invoice_number: posInvoiceNumber,
+      pos_fulfilled_at: posFulfilledAt,
+      pos_fulfilled_by: posFulfilledBy,
+      fulfillment_notes: fulfillmentNotes,
+      fulfilled_adjustments_json: fulfilledAdjustmentsJson,
+    };
+    const sameDbValue = (a: unknown, b: unknown): boolean => {
+      const aNull = a === null || a === undefined;
+      const bNull = b === null || b === undefined;
+      if (aNull || bNull) return aNull && bNull;
+      if (typeof a === "number" || typeof b === "number") {
+        const na = Number(a);
+        const nb = Number(b);
+        if (Number.isFinite(na) && Number.isFinite(nb)) return Math.abs(na - nb) < 0.000001;
+      }
+      return String(a) === String(b);
+    };
+    const changedOrderCols = Object.keys(nextOrderValues).filter(
+      (col) => !sameDbValue(prevOrdAny[col], nextOrderValues[col])
+    );
 
     const nextDisplayStatus = resolveEffectiveOrderStatusSync({
       status: dbStatus,
@@ -1748,26 +1849,9 @@ export async function handleSyncRoutes(
       action === "load_to_billing" ||
       action === "stage_held_bill";
 
-    if (meaningfulChange) {
-      await env.DB.prepare(
-        `INSERT INTO storefront_order_status_history (
-           id, storefront_id, pharmacy_id, order_id, from_status, to_status,
-           actor_type, actor_id, note, created_at
-         ) VALUES (?, ?, ?, ?, ?, ?, 'pos_operator', ?, ?, ?)`
-      )
-        .bind(
-          `sfosh_${crypto.randomUUID()}`,
-          actor.storefrontId,
-          actor.pharmacyId,
-          ord.id,
-          prevDisplayStatus,
-          nextDisplayStatus,
-          body.operator_name || body.operator_id || "pos_terminal",
-          historyNote,
-          nowIso
-        )
-        .run();
-    }
+    const orderRowChanged = changedOrderCols.length > 0;
+    const isNoOpAck = !orderRowChanged && !meaningfulChange;
+    const effectiveUpdatedAt = orderRowChanged ? nowIso : String(ord.updated_at || nowIso);
 
     const respPayload: PosOrderFulfillmentAckResponse = {
       ok: true,
@@ -1780,44 +1864,113 @@ export async function handleSyncRoutes(
       cod_balance_due_pkr: codBalanceDuePkr,
       pos_handoff_status: nextHandoffStatus,
       pos_invoice_number: posInvoiceNumber,
-      updated_at: nowIso,
+      updated_at: effectiveUpdatedAt,
     };
 
-    const expiresAt = new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString();
-    await env.DB.prepare(
-      `INSERT INTO storefront_import_idempotency (
-         storefront_id, pharmacy_id, idempotency_key, request_hash, response_json, created_at, expires_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?)`
-    )
-      .bind(
-        actor.storefrontId,
-        actor.pharmacyId,
-        idempotencyKey,
-        requestHash,
-        JSON.stringify(respPayload),
-        nowIso,
-        expiresAt
-      )
-      .run();
+    const ackStatements: D1PreparedStatement[] = [];
 
-    await writeStorefrontAuditLog(env.DB, {
-      storefrontId: actor.storefrontId,
-      pharmacyId: actor.pharmacyId,
-      action: `pos_order_${action}`,
-      actorType: "pos_sync",
-      actorId: body.operator_id || actor.branchId,
-      entityType: "order",
-      entityId: ord.id,
-      summary: `POS Order action '${action}' on ${ord.order_number} -> status=${nextDisplayStatus}, payment=${nextPaymentStatus}, handoff=${nextHandoffStatus}.`,
-      metadata: {
-        order_number: ord.order_number,
-        action,
-        status: nextDisplayStatus,
-        payment_status: nextPaymentStatus,
-        pos_order_ref: posOrderRef,
-        pos_invoice_number: posInvoiceNumber,
-      },
-    });
+    if (orderRowChanged) {
+      // `orders_version` is bumped atomically by the storefront_orders AFTER UPDATE trigger (migration 0012).
+      const setSql = changedOrderCols.map((col) => `${col} = ?`).join(", ");
+      ackStatements.push(
+        env.DB.prepare(
+          `UPDATE storefront_orders
+           SET ${setSql}, updated_at = ?
+           WHERE id = ? AND storefront_id = ? AND pharmacy_id = ?`
+        ).bind(
+          ...changedOrderCols.map((col) => nextOrderValues[col]),
+          nowIso,
+          ord.id,
+          actor.storefrontId,
+          actor.pharmacyId
+        )
+      );
+    }
+
+    if (meaningfulChange) {
+      ackStatements.push(
+        env.DB.prepare(
+          `INSERT INTO storefront_order_status_history (
+             id, storefront_id, pharmacy_id, order_id, from_status, to_status,
+             actor_type, actor_id, note, created_at
+           ) VALUES (?, ?, ?, ?, ?, ?, 'pos_operator', ?, ?, ?)`
+        ).bind(
+          `sfosh_${crypto.randomUUID()}`,
+          actor.storefrontId,
+          actor.pharmacyId,
+          ord.id,
+          prevDisplayStatus,
+          nextDisplayStatus,
+          body.operator_name || body.operator_id || "pos_terminal",
+          historyNote,
+          nowIso
+        )
+      );
+    }
+
+    // Idempotency row only for real mutations: replaying a no-op ack is itself a no-op.
+    if (!isNoOpAck) {
+      const expiresAt = new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString();
+      ackStatements.push(
+        env.DB.prepare(
+          `INSERT INTO storefront_import_idempotency (
+             storefront_id, pharmacy_id, idempotency_key, request_hash, response_json, created_at, expires_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+        ).bind(
+          actor.storefrontId,
+          actor.pharmacyId,
+          idempotencyKey,
+          requestHash,
+          JSON.stringify(respPayload),
+          nowIso,
+          expiresAt
+        )
+      );
+    }
+
+    // Audit diet: the status-history row above already records every meaningful POS lifecycle change
+    // (from/to status, operator, note incl. invoice/COD details). A separate audit row is kept ONLY for
+    // cancellations/rejections and returns (exceptional, manually-driven reversals worth a tenant audit trail).
+    const isCancellationOrReturn =
+      (action === "cancel_order" ||
+        dbStatus === "cancelled" ||
+        dbStatus === "rejected" ||
+        fulfillmentOutcome === "returned") &&
+      prevDisplayStatus !== nextDisplayStatus;
+    if (isCancellationOrReturn) {
+      ackStatements.push(
+        env.DB.prepare(
+          `INSERT INTO storefront_audit_logs (
+             id, storefront_id, pharmacy_id, action, actor_type, actor_id, actor_email,
+             entity_type, entity_id, summary, metadata_json, ip_address, created_at
+           ) VALUES (?, ?, ?, ?, 'pos_sync', ?, NULL, 'order', ?, ?, ?, NULL, ?)`
+        ).bind(
+          `sfa_${crypto.randomUUID()}`,
+          actor.storefrontId,
+          actor.pharmacyId,
+          `pos_order_${action}`,
+          body.operator_id || actor.branchId,
+          ord.id,
+          `POS Order action '${action}' on ${ord.order_number} -> status=${nextDisplayStatus}, payment=${nextPaymentStatus}, handoff=${nextHandoffStatus}.`,
+          JSON.stringify({
+            order_number: ord.order_number,
+            action,
+            status: nextDisplayStatus,
+            payment_status: nextPaymentStatus,
+            pos_order_ref: posOrderRef,
+            pos_invoice_number: posInvoiceNumber,
+          }),
+          nowIso
+        )
+      );
+    }
+
+    if (ackStatements.length > 0) {
+      await env.DB.batch(ackStatements);
+    }
+    if (orderRowChanged) {
+      invalidateOrderNotifCache(actor.storefrontId, actor.pharmacyId);
+    }
 
     return new Response(JSON.stringify(respPayload), { status: 200, headers });
   }
